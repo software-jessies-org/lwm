@@ -105,6 +105,37 @@ int XLowerWindow(Window w) {
   return res;
 }
 
+int XAddToSaveSet(Window w) {
+  // https://tronche.com/gui/x/xlib/window-and-session-manager/XAddToSaveSet.html
+  LOGD(w) << "XAddToSaveSet(" << WinID(w) << ")";
+  int res = ::XAddToSaveSet(dpy, w);
+  // Possible errors: BadAccess, BadWindow.
+  return res;
+}
+
+int XRemoveFromSaveSet(Window w) {
+  // https://tronche.com/gui/x/xlib/window-and-session-manager/XRemoveFromSaveSet.html
+  LOGD(w) << "XRemoveFromSaveSet(" << WinID(w) << ")";
+  int res = ::XRemoveFromSaveSet(dpy, w);
+  // Possible errors: BadAccess, BadWindow.
+  return res;
+}
+
+int XSetInputFocus(Window focus, int revert_to, Time time) {
+  // https://tronche.com/gui/x/xlib/input/XSetInputFocus.html
+  LOGD(focus) << "XSetInputFocus(" << WinID(focus) << ")";
+  int res = ::XSetInputFocus(dpy, focus, revert_to, time);
+  // Possible errors: BadMatch, BadValue, BadWindow.
+  return res;
+}
+
+FocusWindow XGetInputFocus() {
+  // https://tronche.com/gui/x/xlib/window-information/XGetInputFocus.html
+  FocusWindow res;
+  ::XGetInputFocus(dpy, &res.window, &res.revert_to);
+  return res;
+}
+
 struct MaskedChanges {
   unsigned int mask;
   XWindowChanges* v;
@@ -210,6 +241,271 @@ WindowGeometry XGetGeometry(Window w) {
   res.bpp = bpp;
   return res;
 }
+
+int XDestroyWindow(Window w) {
+  LOGD(w) << "XDestroyWindow(" << WinID(w) << ")";
+  int res = ::XDestroyWindow(dpy, w);
+  // Possible errors: BadWindow.
+  return res;
+}
+
+int XSetWindowBorderWidth(Window w, unsigned int width) {
+  LOGD(w) << "XSetWindowBorderWidth(" << WinID(w) << ") -> " << width;
+  int res = ::XSetWindowBorderWidth(dpy, w, width);
+  // Possible errors: BadValue, BadWindow.
+  return res;
+}
+
+int XSetWindowBackground(Window w, unsigned long pixel) {
+  LOGD(w) << "XSetWindowBackground(" << WinID(w) << ") -> " << pixel;
+  int res = ::XSetWindowBackground(dpy, w, pixel);
+  // Possible errors: BadWindow.
+  return res;
+}
+
+int XClearWindow(Window w) {
+  LOGD(w) << "XClearWindow(" << WinID(w) << ")";
+  int res = ::XClearWindow(dpy, w);
+  // Possible errors: BadMatch, BadWindow.
+  return res;
+}
+
+int XClearArea(Window w,
+               int x,
+               int y,
+               unsigned int width,
+               unsigned int height,
+               bool exposures) {
+  LOGD(w) << "XClearArea(" << WinID(w) << ") -> " << x << "," << y << " "
+          << width << "x" << height;
+  int res = ::XClearArea(dpy, w, x, y, width, height, exposures);
+  // Possible errors: BadMatch, BadValue, BadWindow.
+  return res;
+}
+
+int XFillRectangle(Window w,
+                   GC gc,
+                   int x,
+                   int y,
+                   unsigned int width,
+                   unsigned int height) {
+  int res = ::XFillRectangle(dpy, w, gc, x, y, width, height);
+  // Possible errors: BadDrawable, BadGC.
+  return res;
+}
+
+int XDrawLine(Window w, GC gc, int x1, int y1, int x2, int y2) {
+  int res = ::XDrawLine(dpy, w, gc, x1, y1, x2, y2);
+  // Possible errors: BadDrawable, BadGC.
+  return res;
+}
+
+int XKillClient(Window w) {
+  LOGD(w) << "XKillClient(" << WinID(w) << ")";
+  int res = ::XKillClient(dpy, w);
+  // Possible errors: BadValue.
+  return res;
+}
+
+int XSendEvent(Window w, bool propagate, long event_mask, XEvent* event) {
+  LOGD(w) << "XSendEvent(" << WinID(w) << ")";
+  int res = ::XSendEvent(dpy, w, propagate, event_mask, event);
+  // Possible errors: BadValue, BadWindow.
+  return res;
+}
+
+int XGrabButton(unsigned int button,
+                unsigned int modifiers,
+                Window grab_window,
+                bool owner_events,
+                unsigned int event_mask,
+                int pointer_mode,
+                int keyboard_mode,
+                Window confine_to,
+                Cursor cursor) {
+  LOGD(grab_window) << "XGrabButton(" << WinID(grab_window) << ")";
+  int res = ::XGrabButton(dpy, button, modifiers, grab_window, owner_events,
+                          event_mask, pointer_mode, keyboard_mode, confine_to,
+                          cursor);
+  // Possible errors: BadCursor, BadValue, BadWindow.
+  return res;
+}
+
+int XUngrabButton(unsigned int button,
+                  unsigned int modifiers,
+                  Window grab_window) {
+  LOGD(grab_window) << "XUngrabButton(" << WinID(grab_window) << ")";
+  int res = ::XUngrabButton(dpy, button, modifiers, grab_window);
+  // Possible errors: BadValue, BadWindow.
+  return res;
+}
+
+Atom XInternAtom(const std::string& name) {
+  return ::XInternAtom(dpy, name.c_str(), false);
+}
+
+int XChangeProperty(Window w,
+                    Atom property,
+                    Atom type,
+                    int format,
+                    int mode,
+                    const unsigned char* data,
+                    int nelements) {
+  LOGD(w) << "XChangeProperty(" << WinID(w) << ") property=" << property;
+  int res =
+      ::XChangeProperty(dpy, w, property, type, format, mode, data, nelements);
+  // Possible errors: BadAlloc, BadAtom, BadMatch, BadPropagate, BadValue,
+  // BadWindow.
+  return res;
+}
+
+WindowProperty XGetWindowProperty(Window w,
+                                  Atom property,
+                                  long length,
+                                  Atom req_type) {
+  WindowProperty res{};
+  res.status =
+      ::XGetWindowProperty(dpy, w, property, 0, length, false, req_type,
+                           &res.actual_type, &res.actual_format, &res.nitems,
+                           &res.bytes_after, &res.data);
+  return res;
+}
+
+XWMHints* XGetWMHints(Window w) {
+  return ::XGetWMHints(dpy, w);
+}
+
+WMProtocols XGetWMProtocols(Window w) {
+  WMProtocols res{};
+  if (::XGetWMProtocols(dpy, w, &res.protocols, &res.count) == 0) {
+    res.protocols = nullptr;
+    res.count = 0;
+  }
+  return res;
+}
+
+Window XGetTransientForHint(Window w) {
+  Window trans = None;
+  ::XGetTransientForHint(dpy, w, &trans);
+  return trans;
+}
+
+bool XGetWMNormalHints(Window w, XSizeHints* hints, long* supplied_return) {
+  return ::XGetWMNormalHints(dpy, w, hints, supplied_return) != 0;
+}
+
+GC XCreateGC(Window w, unsigned long value_mask, XGCValues* values) {
+  return ::XCreateGC(dpy, w, value_mask, values);
+}
+
+int XSetLineAttributes(GC gc,
+                       unsigned int line_width,
+                       int line_style,
+                       int cap_style,
+                       int join_style) {
+  int res =
+      ::XSetLineAttributes(dpy, gc, line_width, line_style, cap_style,
+                           join_style);
+  // Possible errors: BadGC, BadValue.
+  return res;
+}
+
+int XSync(bool discard) {
+  return ::XSync(dpy, discard);
+}
+
+Display* XOpenDisplay() {
+  return ::XOpenDisplay(nullptr);
+}
+
+void XCloseDisplay() {
+  ::XCloseDisplay(dpy);
+}
+
+int XPending() {
+  return ::XPending(dpy);
+}
+
+void XNextEvent(XEvent* event) {
+  ::XNextEvent(dpy, event);
+}
+
+XErrorHandler XSetErrorHandler(XErrorHandler handler) {
+  return ::XSetErrorHandler(handler);
+}
+
+RandRSupport XRRQueryExtension() {
+  RandRSupport res{};
+  res.have_rr = ::XRRQueryExtension(dpy, &res.event_base, &res.error_base);
+  return res;
+}
+
+void XRRSelectInput(Window w, int mask) {
+  ::XRRSelectInput(dpy, w, mask);
+}
+
+XRRScreenResources* XRRGetScreenResourcesCurrent(Window w) {
+  return ::XRRGetScreenResourcesCurrent(dpy, w);
+}
+
+XRRCrtcInfo* XRRGetCrtcInfo(XRRScreenResources* res, RRCrtc crtc) {
+  return ::XRRGetCrtcInfo(dpy, res, crtc);
+}
+
+Cursor XCreateFontCursor(unsigned int shape) {
+  return ::XCreateFontCursor(dpy, shape);
+}
+
+void XRecolorCursor(Cursor c, XColor* fg, XColor* bg) {
+  ::XRecolorCursor(dpy, c, fg, bg);
+}
+
+bool XAllocNamedColor(Colormap cmap,
+                      const std::string& name,
+                      XColor* screen_def,
+                      XColor* exact_def) {
+  return ::XAllocNamedColor(dpy, cmap, name.c_str(), screen_def, exact_def) !=
+         0;
+}
+
+char* XResourceManagerString() {
+  return ::XResourceManagerString(dpy);
+}
+
+void XDeleteProperty(Window w, Atom property) {
+  LOGD(w) << "XDeleteProperty(" << WinID(w) << ")";
+  ::XDeleteProperty(dpy, w, property);
+}
+
+void XChangeActivePointerGrab(unsigned int event_mask,
+                              Cursor cursor,
+                              Time time) {
+  ::XChangeActivePointerGrab(dpy, event_mask, cursor, time);
+}
+
+#ifdef SHAPE
+void XShapeSelectInput(Window w, unsigned long mask) {
+  ::XShapeSelectInput(dpy, w, mask);
+}
+
+XRectangle* XShapeGetRectangles(Window w, int kind, int* count, int* ordering) {
+  return ::XShapeGetRectangles(dpy, w, kind, count, ordering);
+}
+
+void XShapeCombineShape(Window dest,
+                        int dest_kind,
+                        int x_off,
+                        int y_off,
+                        Window src,
+                        int src_kind,
+                        int op) {
+  ::XShapeCombineShape(dpy, dest, dest_kind, x_off, y_off, src, src_kind, op);
+}
+
+int XShapeQueryExtension(int* event_base, int* error_base) {
+  return ::XShapeQueryExtension(dpy, event_base, error_base);
+}
+#endif
 
 std::set<Window> lwm_owned_windows;
 

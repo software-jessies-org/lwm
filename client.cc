@@ -147,7 +147,7 @@ void Client::FocusGained() {
     // on the client's window. We must relinquish this grabbing when we gain
     // focus, otherwise the client itself won't get the events when it is
     // focused.
-    XUngrabButton(dpy, AnyButton, AnyModifier, window);
+    xlib::XUngrabButton(AnyButton, AnyModifier, window);
   }
   DrawBorder();
 }
@@ -159,9 +159,9 @@ void Client::FocusLost() {
     // notably java apps, will grab input focus when clicked on, xterm and
     // many others do not. Thus, we need to grab click notifications ourselves
     // so that we can properly support click-to-focus.
-    XGrabButton(dpy, AnyButton, AnyModifier, window, false,
-                ButtonPressMask | ButtonReleaseMask, GrabModeAsync,
-                GrabModeSync, None, None);
+    xlib::XGrabButton(AnyButton, AnyModifier, window, false,
+                      ButtonPressMask | ButtonReleaseMask, GrabModeAsync,
+                      GrabModeSync, None, None);
   }
   DrawBorder();
 }
@@ -173,16 +173,15 @@ void Client::DrawBorder() {
   }
   const bool active = HasFocus();
 
-  XSetWindowBackground(
-      dpy, parent,
-      active ? LScr::I->ActiveBorder() : LScr::I->InactiveBorder());
-  XClearWindow(dpy, parent);
+  xlib::XSetWindowBackground(
+      parent, active ? LScr::I->ActiveBorder() : LScr::I->InactiveBorder());
+  xlib::XClearWindow(parent);
 
   // Cross for the close icon.
   const Rect r = closeBounds(true);  // true -> get display bounds.
   const GC close_gc = LScr::I->GetCloseIconGC(active);
-  XDrawLine(dpy, parent, close_gc, r.xMin, r.yMin, r.xMax, r.yMax);
-  XDrawLine(dpy, parent, close_gc, r.xMin, r.yMax, r.xMax, r.yMin);
+  xlib::XDrawLine(parent, close_gc, r.xMin, r.yMin, r.xMax, r.yMax);
+  xlib::XDrawLine(parent, close_gc, r.xMin, r.yMax, r.xMax, r.yMin);
   const int bw = borderWidth();
   const int quarter = (titleBarHeight()) / 4;
   if (active) {
@@ -195,7 +194,7 @@ void Client::DrawBorder() {
     const int x = bw + 3 * quarter;
     const int w = FrameRect().width() - 2 * x;
     const int h = textHeight() + bw - topBW;
-    XFillRectangle(dpy, parent, LScr::I->GetTitleGC(), x, topBW, w, h);
+    xlib::XFillRectangle(parent, LScr::I->GetTitleGC(), x, topBW, w, h);
   }
 
   // Find where the title stuff is going to go.
@@ -243,7 +242,7 @@ Rect Client::FrameFromContentRect(const Rect& r) {
 
 void Client::Remove() {
   if (parent != LScr::I->Root()) {
-    XDestroyWindow(dpy, parent);
+    xlib::XDestroyWindow(parent);
   }
   LScr::I->Remove(this);
   ewmh_set_client_list();
@@ -270,7 +269,7 @@ void Client_SizeFeedback() {
 
   // Ensure that the popup contents get redrawn. Eventually, the function
   // size_expose will get called to do the actual redraw.
-  XClearArea(dpy, LScr::I->Popup(), 0, 0, 0, 0, true);
+  xlib::XClearArea(LScr::I->Popup(), 0, 0, 0, 0, true);
 }
 
 void size_expose() {
@@ -321,7 +320,7 @@ void Client::Close() {
   if (proto & Pdelete) {
     xlib::SendClientMessage(window, wm_protocols, wm_delete, CurrentTime);
   } else {
-    XKillClient(dpy, window);
+    xlib::XKillClient(window);
   }
 }
 
@@ -332,8 +331,8 @@ void Client::SetState(int state) {
   data[1] = (long)None;
 
   state_ = state;
-  XChangeProperty(dpy, window, wm_state, wm_state, 32, PropModeReplace,
-                  (unsigned char*)data, 2);
+  xlib::XChangeProperty(window, wm_state, wm_state, 32, PropModeReplace,
+                        (unsigned char*)data, 2);
   ewmh_set_state(this);
 }
 
@@ -445,7 +444,7 @@ void Client::SendConfigureNotify() {
   ce.override_redirect = 0;
   LOGD(this) << "Sending config notify, r=" << content_rect_ << " to "
              << WinID(window);
-  XSendEvent(dpy, window, false, StructureNotifyMask, (XEvent*)&ce);
+  xlib::XSendEvent(window, false, StructureNotifyMask, (XEvent*)&ce);
 }
 
 bool Client::HasFocus() const {

@@ -21,12 +21,9 @@
 
 #include "cursor.h"
 
-Cursor colouredCursor(Display* dpy,
-                      unsigned int shape,
-                      XColor* fg,
-                      XColor* bg) {
-  Cursor res = XCreateFontCursor(dpy, shape);
-  XRecolorCursor(dpy, res, fg, bg);
+Cursor colouredCursor(unsigned int shape, XColor* fg, XColor* bg) {
+  Cursor res = xlib::XCreateFontCursor(shape);
+  xlib::XRecolorCursor(res, fg, bg);
   return res;
 }
 
@@ -36,11 +33,11 @@ static const char kCursorBG[] = "White";  //"Navy Blue";
 CursorMap::CursorMap(Display* dpy) {
   XColor cursorFG, cursorBG, exact;
   Colormap cmp = DefaultColormap(dpy, 0);  // 0 = screen index 0.
-  XAllocNamedColor(dpy, cmp, kCursorFG, &cursorFG, &exact);
-  XAllocNamedColor(dpy, cmp, kCursorBG, &cursorBG, &exact);
-  root_ = colouredCursor(dpy, XC_left_ptr, &cursorFG, &cursorBG);
+  xlib::XAllocNamedColor(cmp, kCursorFG, &cursorFG, &exact);
+  xlib::XAllocNamedColor(cmp, kCursorBG, &cursorBG, &exact);
+  root_ = colouredCursor(XC_left_ptr, &cursorFG, &cursorBG);
 
-#define MC(e, s) edges_[e] = colouredCursor(dpy, s, &cursorFG, &cursorBG)
+#define MC(e, s) edges_[e] = colouredCursor(s, &cursorFG, &cursorBG)
   MC(ETopLeft, XC_top_left_corner);
   MC(ETop, XC_top_side);
   MC(ETopRight, XC_top_right_corner);

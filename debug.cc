@@ -34,8 +34,8 @@ Rect fullScreenRect() {
 
 unsigned long deadColour() {
   XColor colour, exact;
-  XAllocNamedColor(dpy, DefaultColormap(dpy, LScr::kOnlyScreenIndex), "grey",
-                   &colour, &exact);
+  xlib::XAllocNamedColor(DefaultColormap(dpy, LScr::kOnlyScreenIndex), "grey",
+                         &colour, &exact);
   return colour.pixel;
 }
 
@@ -273,7 +273,7 @@ void DebugCLI::ResetDeadZones(const vector<Rect>& visible) {
     dead = new_dead;
   }
   for (Window w : dead_zones_) {
-    XDestroyWindow(dpy, w);
+    xlib::XDestroyWindow(w);
   }
   dead_zones_.clear();
 

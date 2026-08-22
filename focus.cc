@@ -20,7 +20,7 @@ void focusChildrenOf(Client* c, Window parent) {
     const XWindowAttributes attr = xlib::XGetWindowAttributes(win);
     if (attr.all_event_masks & FocusChangeMask) {
       LOGD(c) << "  Focusing child " << WinID(win);
-      XSetInputFocus(dpy, win, RevertToPointerRoot, CurrentTime);
+      xlib::XSetInputFocus(win, RevertToPointerRoot, CurrentTime);
     }
   }
 }
@@ -156,7 +156,7 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
   RemoveFromHistory(c);
   focus_history_.push_front(c);
 
-  XDeleteProperty(dpy, LScr::I->Root(), ewmh_atom[_NET_ACTIVE_WINDOW]);
+  xlib::XDeleteProperty(LScr::I->Root(), ewmh_atom[_NET_ACTIVE_WINDOW]);
   // There was a check for 'c->IsHidden()' here. Needed?
   if (give_focus) {
     if (c->accepts_focus) {
@@ -168,7 +168,7 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
       // hotkeys in) if they lose then regain focus. When a window is newly
       // opened it will respond to keypresses, but not on focus regain.
       LOGD(c) << "Focusing main window " << WinID(c->window);
-      XSetInputFocus(dpy, c->window, RevertToPointerRoot, CurrentTime);
+      xlib::XSetInputFocus(c->window, RevertToPointerRoot, CurrentTime);
       if (c->proto & Ptakefocus) {
         xlib::SendClientMessage(c->window, wm_protocols, wm_take_focus,
                                 CurrentTime);
@@ -183,12 +183,12 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
       focusChildrenOf(c, c->window);
     } else {
       // FIXME: is this sensible?
-      XSetInputFocus(dpy, None, RevertToPointerRoot, CurrentTime);
+      xlib::XSetInputFocus(None, RevertToPointerRoot, CurrentTime);
     }
   }
-  XChangeProperty(dpy, LScr::I->Root(), ewmh_atom[_NET_ACTIVE_WINDOW],
-                  XA_WINDOW, 32, PropModeReplace, (unsigned char*)&c->window,
-                  1);
+  xlib::XChangeProperty(LScr::I->Root(), ewmh_atom[_NET_ACTIVE_WINDOW],
+                        XA_WINDOW, 32, PropModeReplace,
+                        (unsigned char*)&c->window, 1);
 
   if (was_focused && (was_focused != c)) {
     was_focused->FocusLost();

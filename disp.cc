@@ -136,7 +136,7 @@ void EvMapRequest(XEvent* ev) {
         const Point p = c->ContentRect().origin();
         xlib::XReparentWindow(c->window, c->parent, p.x, p.y);
       }
-      XAddToSaveSet(dpy, c->window);
+      xlib::XAddToSaveSet(c->window);
     // FALLTHROUGH
     case NormalState:
       LOGD(c) << "(map) NormalState " << WinID(c->window);
@@ -479,9 +479,8 @@ void EvFocusIn(XEvent* ev) {
   // In practice, XGetInputFocus returns the child window that actually has
   // focus (in Java apps, the 'FocusProxy' window), while the XEvent reports
   // the top-level window.
-  Window focus_window;
-  int revert_to;
-  XGetInputFocus(dpy, &focus_window, &revert_to);
+  xlib::FocusWindow focus = xlib::XGetInputFocus();
+  Window focus_window = focus.window;
   // There seems to be a bug in the Xserver, whereupon for the first focus-in
   // event we receive, XGetInputFocus returns focus_window==1, which doesn't
   // correspond to any actual window. In this case, fall back to the window

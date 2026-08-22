@@ -25,10 +25,7 @@
 #include "lwm.h"
 #include "screen.h"
 #include "shape.h"
-
-#ifdef SHAPE
-#include <X11/extensions/shape.h>
-#endif
+#include "xlib.h"
 
 /*ARGSUSED*/
 extern void setShape(Client* c) {
@@ -36,15 +33,15 @@ extern void setShape(Client* c) {
   if (!shape) {
     return;
   }
-  XShapeSelectInput(dpy, c->window, ShapeNotifyMask);
+  xlib::XShapeSelectInput(c->window, ShapeNotifyMask);
   int order;
   int n;
   XRectangle* rect =
-      XShapeGetRectangles(dpy, c->window, ShapeBounding, &n, &order);
+      xlib::XShapeGetRectangles(c->window, ShapeBounding, &n, &order);
   if (n > 1) {
     int border = borderWidth();
-    XShapeCombineShape(dpy, c->parent, ShapeBounding, border - 1, border - 1,
-                       c->window, ShapeBounding, ShapeSet);
+    xlib::XShapeCombineShape(c->parent, ShapeBounding, border - 1, border - 1,
+                             c->window, ShapeBounding, ShapeSet);
   }
   XFree(rect);
 #else
@@ -74,7 +71,7 @@ extern int isShaped(Window w) {
 #ifdef SHAPE
   int n;
   int order;
-  XFree(XShapeGetRectangles(dpy, w, ShapeBounding, &n, &order));
+  XFree(xlib::XShapeGetRectangles(w, ShapeBounding, &n, &order));
   return (n > 1);
 #else
   w = w;
@@ -85,7 +82,7 @@ extern int isShaped(Window w) {
 extern int serverSupportsShapes() {
 #ifdef SHAPE
   int shape_error;
-  int res = XShapeQueryExtension(dpy, &shape_event, &shape_error);
+  int res = xlib::XShapeQueryExtension(&shape_event, &shape_error);
   LOGI() << "Shape extension supported: " << res << " (event " << shape_event
          << ")";
   return res;

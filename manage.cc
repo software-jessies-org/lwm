@@ -95,7 +95,7 @@ void manage(Client* c) {
   ewmh_get_strut(c);
 
   // Get the hints, window name, and normal hints (see ICCCM section 4.1.2.3).
-  XWMHints* hints = XGetWMHints(dpy, c->window);
+  XWMHints* hints = xlib::XGetWMHints(c->window);
   if (Resources::I->ProcessAppIcons()) {
     if (hints) {
       c->SetIcon(xlib::ImageIcon::Create(hints->icon_pixmap, hints->icon_mask));
@@ -109,17 +109,16 @@ void manage(Client* c) {
   // Scan the list of atoms on WM_PROTOCOLS to see which of the
   // protocols that we understand the client is prepared to
   // participate in. (See ICCCM section 4.1.2.7.)
-  Atom* protocols;
-  int num_protocols;
-  if (XGetWMProtocols(dpy, c->window, &protocols, &num_protocols) != 0) {
-    for (int p = 0; p < num_protocols; p++) {
-      if (protocols[p] == wm_delete) {
-        c->proto |= Pdelete;
-      } else if (protocols[p] == wm_take_focus) {
-        c->proto |= Ptakefocus;
-      }
+  xlib::WMProtocols wm_protos = xlib::XGetWMProtocols(c->window);
+  for (int p = 0; p < wm_protos.count; p++) {
+    if (wm_protos.protocols[p] == wm_delete) {
+      c->proto |= Pdelete;
+    } else if (wm_protos.protocols[p] == wm_take_focus) {
+      c->proto |= Ptakefocus;
     }
-    XFree(protocols);
+  }
+  if (wm_protos.count > 0) {
+    XFree(wm_protos.protocols);
   }
 
   // Get the WM_TRANSIENT_FOR property (see ICCCM section 4.1.2.6).
@@ -174,7 +173,7 @@ void manage(Client* c) {
   // border width at all for InputOnly windows.
   const XWindowAttributes current_attr = xlib::XGetWindowAttributes(c->window);
   if (current_attr.c_class != InputOnly) {
-    XSetWindowBorderWidth(dpy, c->window, 0);
+    xlib::XSetWindowBorderWidth(c->window, 0);
   }
 
   XSetWindowAttributes attr;
@@ -192,7 +191,7 @@ void manage(Client* c) {
 
   setShape(c);
 
-  XAddToSaveSet(dpy, c->window);
+  xlib::XAddToSaveSet(c->window);
   if (state == IconicState) {
     c->Hide();
   } else {
@@ -214,11 +213,8 @@ void manage(Client* c) {
 }
 
 void getTransientFor(Client* c) {
-  Window trans = None;
-  // XGetTransientForHint returns a Status indicating success or failure.
-  // It is important to realise, however, that a zero status does not
-  // necessarily indicate an error, but also occurs when there is no transient
-  // window.
+  // xlib::XGetTransientForHint returns None both on failure and when there is
+  // no transient window.
   // It is therefore vitally important to, on failure, set c->trans to None.
   // If this is not done, it causes a really annoying bug in Terminator, such
   // that if you open a window from another, then open a modal dialog from the
@@ -227,11 +223,9 @@ void getTransientFor(Client* c) {
   // which Java implements modal dialogs.
   // Anyway, you have been warned: do not remove the setting of c->trans to
   // None on failure!
-  if (XGetTransientForHint(dpy, c->window, &trans)) {
-    LOGD(c) << "Transient for window " << WinID(trans);
-    c->trans = trans;
-  } else {
-    c->trans = None;
+  c->trans = xlib::XGetTransientForHint(c->window);
+  if (c->trans != None) {
+    LOGD(c) << "Transient for window " << WinID(c->trans);
   }
 }
 
@@ -245,14 +239,14 @@ void withdraw(Client* c) {
     //    c->size.y);
   }
 
-  XRemoveFromSaveSet(dpy, c->window);
+  xlib::XRemoveFromSaveSet(c->window);
   c->SetState(WithdrawnState);
 
   // Flush and ignore any errors. X11 sends us an UnmapNotify before it
   // sends us a DestroyNotify. That means we can get here without knowing
   // whether the relevant window still exists.
   ScopedIgnoreBadWindow ignorer;
-  XSync(dpy, false);
+  xlib::XSync(false);
 }
 
 /*ARGSUSED*/
@@ -261,12 +255,12 @@ void Terminate(int signal) {
   Client_FreeAll();
 
   // Give up the input focus and the colourmap.
-  XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
+  xlib::XSetInputFocus(PointerRoot, RevertToPointerRoot, CurrentTime);
   // XCloseDisplay (or rather, XSync as called by XCloseDisplay) dumps a load
   // of BadMatch errors into the error handler. That's unhelpful spam, so
   // inform the error handler that it should ignore them.
   ScopedIgnoreBadMatch ignorer;
-  XCloseDisplay(dpy);
+  xlib::XCloseDisplay();
   session_end();
 
   if (signal == SIGHUP) {
@@ -279,22 +273,17 @@ void Terminate(int signal) {
 }
 
 int getProperty(Window w, Atom a, Atom type, long len, unsigned char** p) {
-  Atom real_type = 0;
-  int format = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
-
   // len is in 32-bit multiples.
-  int status = XGetWindowProperty(dpy, w, a, 0L, len, false, type, &real_type,
-                                  &format, &n, &extra, p);
-  if (status != Success || *p == 0) {
+  xlib::WindowProperty prop = xlib::XGetWindowProperty(w, a, len, type);
+  *p = prop.data;
+  if (prop.status != Success || *p == 0) {
     return -1;
   }
-  if (n == 0 && p) {
+  if (prop.nitems == 0 && p) {
     XFree(*p);
   }
-  // could check real_type, format, extra here...
-  return n;
+  // could check prop.actual_type, prop.actual_format, prop.bytes_after here...
+  return prop.nitems;
 }
 
 void getWindowName(Client* c) {

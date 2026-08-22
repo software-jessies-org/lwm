@@ -86,7 +86,7 @@ extern int main(int argc, char* argv[]) {
   setlocale(LC_ALL, "");
 
   // Open a connection to the X server.
-  dpy = XOpenDisplay(NULL);
+  dpy = xlib::XOpenDisplay();
   if (dpy == 0) {
     panic("can't open display.");
   }
@@ -99,7 +99,7 @@ extern int main(int argc, char* argv[]) {
   Resources::Init();
 
   // Set up an error handler.
-  XSetErrorHandler(errorHandler);
+  xlib::XSetErrorHandler(errorHandler);
 
   // Set up signal handlers.
   signal(SIGTERM, Terminate);
@@ -118,14 +118,14 @@ extern int main(int argc, char* argv[]) {
   sigaction(SIGCHLD, &sa, 0);
 
   // Internalize useful atoms.
-  wm_state = XInternAtom(dpy, "WM_STATE", false);
-  wm_change_state = XInternAtom(dpy, "WM_CHANGE_STATE", false);
-  wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", false);
-  wm_delete = XInternAtom(dpy, "WM_DELETE_WINDOW", false);
-  wm_take_focus = XInternAtom(dpy, "WM_TAKE_FOCUS", false);
-  compound_text = XInternAtom(dpy, "COMPOUND_TEXT", false);
-  _mozilla_url = XInternAtom(dpy, "_MOZILLA_URL", false);
-  motif_wm_hints = XInternAtom(dpy, "_MOTIF_WM_HINTS", false);
+  wm_state = xlib::XInternAtom("WM_STATE");
+  wm_change_state = xlib::XInternAtom("WM_CHANGE_STATE");
+  wm_protocols = xlib::XInternAtom("WM_PROTOCOLS");
+  wm_delete = xlib::XInternAtom("WM_DELETE_WINDOW");
+  wm_take_focus = xlib::XInternAtom("WM_TAKE_FOCUS");
+  compound_text = xlib::XInternAtom("COMPOUND_TEXT");
+  _mozilla_url = xlib::XInternAtom("_MOZILLA_URL");
+  motif_wm_hints = xlib::XInternAtom("_MOTIF_WM_HINTS");
 
   ewmh_init();
 
@@ -160,10 +160,11 @@ extern int main(int argc, char* argv[]) {
   is_initialising = false;
 
   // Do we need to support XRandR?
-  int rr_event_base, rr_error_base;
-  bool have_rr = XRRQueryExtension(dpy, &rr_event_base, &rr_error_base);
+  xlib::RandRSupport rr = xlib::XRRQueryExtension();
+  int rr_event_base = rr.event_base;
+  bool have_rr = rr.have_rr;
   if (have_rr) {
-    XRRSelectInput(dpy, LScr::I->Root(), RRScreenChangeNotifyMask);
+    xlib::XRRSelectInput(LScr::I->Root(), RRScreenChangeNotifyMask);
     setScreenAreasFromXRandR();
   }
 
@@ -201,9 +202,9 @@ extern int main(int argc, char* argv[]) {
     }
     if (select(max_fd, &readfds, NULL, NULL, NULL) > -1) {
       if (FD_ISSET(dpy_fd, &readfds)) {
-        while (XPending(dpy)) {
+        while (xlib::XPending()) {
           XEvent ev;
-          XNextEvent(dpy, &ev);
+          xlib::XNextEvent(&ev);
           // xrandr notifications have arbitrary numbers, so check for them
           // before trying the static selection.
           if (ev.type == rr_event_base + RRScreenChangeNotify) {
@@ -228,7 +229,7 @@ extern int main(int argc, char* argv[]) {
         // So call XSync so that we're sure all outstanding messages to, for
         // example, tell the client it has input focus, and redraw its frame,
         // get through.
-        XSync(dpy, false);
+        xlib::XSync(false);
       }
       if (debugCLI && FD_ISSET(STDIN_FILENO, &readfds)) {
         debugCLI->Read();
@@ -268,7 +269,7 @@ void rrScreenChangeNotify(XEvent* ev) {
 }
 
 void setScreenAreasFromXRandR() {
-  XRRScreenResources* res = XRRGetScreenResourcesCurrent(dpy, LScr::I->Root());
+  XRRScreenResources* res = xlib::XRRGetScreenResourcesCurrent(LScr::I->Root());
   if (!res) {
     LOGE() << "Failed to get XRRScreenResources";
     return;
@@ -289,7 +290,7 @@ void setScreenAreasFromXRandR() {
   for (int i = 0; i < res->ncrtc; i++) {
     const RRCrtc crt = res->crtcs[i];
     LOGI() << "Looking up CRT " << i << ": " << crt;
-    XRRCrtcInfo* crtInfo = XRRGetCrtcInfo(dpy, res, crt);
+    XRRCrtcInfo* crtInfo = xlib::XRRGetCrtcInfo(res, crt);
     LOGI() << "  CRT size " << crtInfo->width << "x" << crtInfo->height
            << ", offset " << crtInfo->x << "," << crtInfo->y
            << " (mode=" << crtInfo->mode << ")";

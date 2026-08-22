@@ -318,10 +318,10 @@ DragHandler* getDragHandlerForEvent(XEvent* ev) {
     // (generally middle), then force the mouse pointer to turn into the move
     // pointer, even if it's over an area of the window furniture which usually
     // has another pointer.
-    XChangeActivePointerGrab(dpy,
-                             ButtonMask | PointerMotionHintMask |
-                                 ButtonMotionMask | OwnerGrabButtonMask,
-                             LScr::I->Cursors()->ForEdge(ENone), CurrentTime);
+    xlib::XChangeActivePointerGrab(
+        ButtonMask | PointerMotionHintMask | ButtonMotionMask |
+            OwnerGrabButtonMask,
+        LScr::I->Cursors()->ForEdge(ENone), CurrentTime);
     return new WindowMover(c);
   }
   if (e->button == RESHAPE_BUTTON) {

@@ -17,7 +17,7 @@ LScr::LScr(Display* dpy)
       width_(DisplayWidth(dpy, kOnlyScreenIndex)),
       height_(DisplayHeight(dpy, kOnlyScreenIndex)),
       cursor_map_(new CursorMap(dpy)),
-      utf8_string_atom_(XInternAtom(dpy, "UTF8_STRING", false)),
+      utf8_string_atom_(xlib::XInternAtom("UTF8_STRING")),
       strut_{0, 0, 0, 0} {
   visible_areas_ = std::vector<Rect>(1, Rect{0, 0, width_, height_});
 }
@@ -37,24 +37,25 @@ void LScr::Init() {
   gv.subwindow_mode = IncludeInferiors;
   const unsigned long gv_mask =
       GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
-  menu_gc_ = XCreateGC(dpy_, root_, gv_mask, &gv);
+  menu_gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
 
   // The GC used for the close button is the same as for the menu, except it
   // uses GXcopy, not GXxor, so we draw the chosen colour correctly.
   gv.foreground = Resources::I->GetColour(Resources::CLOSE_ICON_COLOUR);
   gv.background = white();
   gv.function = GXcopy;
-  gc_ = XCreateGC(dpy_, root_, gv_mask, &gv);
-  XSetLineAttributes(dpy, gc_, 2, LineSolid, CapProjecting, JoinMiter);
+  gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
+  xlib::XSetLineAttributes(gc_, 2, LineSolid, CapProjecting, JoinMiter);
 
   gv.foreground =
       Resources::I->GetColour(Resources::INACTIVE_CLOSE_ICON_COLOUR);
-  inactive_gc_ = XCreateGC(dpy_, root_, gv_mask, &gv);
-  XSetLineAttributes(dpy, inactive_gc_, 2, LineSolid, CapProjecting, JoinMiter);
+  inactive_gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
+  xlib::XSetLineAttributes(inactive_gc_, 2, LineSolid, CapProjecting,
+                           JoinMiter);
 
   // The title bar.
   gv.foreground = Resources::I->GetColour(Resources::TITLE_BG_COLOUR);
-  title_gc_ = XCreateGC(dpy_, root_, gv_mask, &gv);
+  title_gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
 
   // Create the popup window, to be used for the resize feedback window,
   // and the menu window.
@@ -65,22 +66,22 @@ void LScr::Init() {
       Resources::I->GetColour(Resources::POPUP_BACKGROUND_COLOUR);
   Rect r{0, 0, 1, 1};
   popup_ = xlib::CreateNamedWindow("LWM size popup", r, 1, fg, bg);
-  XChangeWindowAttributes(dpy_, popup_, CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(popup_, CWEventMask, &attr);
   menu_ = xlib::CreateNamedWindow("LWM unhide menu", r, 1, fg, bg);
-  XChangeWindowAttributes(dpy_, menu_, CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(menu_, CWEventMask, &attr);
 
   // Announce our interest in the root_ window.
   attr.cursor = cursor_map_->Root();
   attr.event_mask = SubstructureRedirectMask | SubstructureNotifyMask |
                     ColormapChangeMask | ButtonPressMask | ButtonReleaseMask |
                     PropertyChangeMask | EnterWindowMask;
-  XChangeWindowAttributes(dpy_, root_, CWCursor | CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(root_, CWCursor | CWEventMask, &attr);
 
   // Tell all the applications what icon sizes we prefer.
   xlib::ImageIcon::ConfigureIconSizes();
 
   // Make sure all our communication to the server got through.
-  XSync(dpy_, false);
+  xlib::XSync(false);
   ScanWindowTree();
   InitEWMH();
 }
@@ -89,35 +90,37 @@ void LScr::InitEWMH() {
   // Announce EWMH compatibility on the screen.
   Rect r{-200, -200, 1, 1};
   ewmh_compat_ = xlib::CreateNamedWindow("LWM EWMH", r, 0, 0, 0);
-  XChangeProperty(dpy_, ewmh_compat_, ewmh_atom[_NET_WM_NAME],
-                  utf8_string_atom_, XA_CURSOR, PropModeReplace,
-                  (const unsigned char*)"lwm", 3);
+  xlib::XChangeProperty(ewmh_compat_, ewmh_atom[_NET_WM_NAME],
+                        utf8_string_atom_, XA_CURSOR, PropModeReplace,
+                        (const unsigned char*)"lwm", 3);
 
   // set root window properties
-  XChangeProperty(dpy_, root_, ewmh_atom[_NET_SUPPORTED], XA_ATOM, 32,
-                  PropModeReplace, (unsigned char*)ewmh_atom, EWMH_ATOM_LAST);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_SUPPORTED], XA_ATOM, 32,
+                        PropModeReplace, (unsigned char*)ewmh_atom,
+                        EWMH_ATOM_LAST);
 
-  XChangeProperty(dpy_, root_, ewmh_atom[_NET_SUPPORTING_WM_CHECK], XA_WINDOW,
-                  32, PropModeReplace, (unsigned char*)&ewmh_compat_, 1);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_SUPPORTING_WM_CHECK], XA_WINDOW,
+                        32, PropModeReplace, (unsigned char*)&ewmh_compat_, 1);
 
   unsigned long data[4];
   data[0] = 1;
-  XChangeProperty(dpy_, root_, ewmh_atom[_NET_NUMBER_OF_DESKTOPS], XA_CARDINAL,
-                  32, PropModeReplace, (unsigned char*)data, 1);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_NUMBER_OF_DESKTOPS],
+                        XA_CARDINAL, 32, PropModeReplace,
+                        (unsigned char*)data, 1);
 
   data[0] = width_;
   data[1] = height_;
-  XChangeProperty(dpy_, root_, ewmh_atom[_NET_DESKTOP_GEOMETRY], XA_CARDINAL,
-                  32, PropModeReplace, (unsigned char*)data, 2);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_DESKTOP_GEOMETRY], XA_CARDINAL,
+                        32, PropModeReplace, (unsigned char*)data, 2);
 
   data[0] = 0;
   data[1] = 0;
-  XChangeProperty(dpy_, root_, ewmh_atom[_NET_DESKTOP_VIEWPORT], XA_CARDINAL,
-                  32, PropModeReplace, (unsigned char*)data, 2);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_DESKTOP_VIEWPORT], XA_CARDINAL,
+                        32, PropModeReplace, (unsigned char*)data, 2);
 
   data[0] = 0;
-  XChangeProperty(dpy_, root_, ewmh_atom[_NET_CURRENT_DESKTOP], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char*)data, 1);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_CURRENT_DESKTOP], XA_CARDINAL,
+                        32, PropModeReplace, (unsigned char*)data, 1);
 
   ewmh_set_strut();
   ewmh_set_client_list();
@@ -169,7 +172,7 @@ Client* LScr::AddClient(Window w, bool is_startup_scan) {
   long msize;
   DimensionLimiter xdl;
   DimensionLimiter ydl;
-  if (XGetWMNormalHints(dpy_, w, &size, &msize)) {
+  if (xlib::XGetWMNormalHints(w, &size, &msize)) {
     xdl = DimensionLimiter(size.flags & PMinSize ? size.min_width : 0,
                            size.flags & PMaxSize ? size.max_width : 0,
                            size.flags & PBaseSize ? size.base_width : 0,
@@ -205,7 +208,7 @@ void LScr::Furnish(Client* c) {
   attr.event_mask = ExposureMask | EnterWindowMask | LeaveWindowMask |
                     ButtonMask | SubstructureRedirectMask |
                     SubstructureNotifyMask | PointerMotionMask;
-  XChangeWindowAttributes(dpy_, c->parent, CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(c->parent, CWEventMask, &attr);
   parents_[c->parent] = c;
 }
 

@@ -75,7 +75,7 @@ void ewmh_init() {
   // Build half a million EWMH atoms.
 #define SET_ATOM(x)                             \
   do {                                          \
-    ewmh_atom[x] = XInternAtom(dpy, #x, false); \
+    ewmh_atom[x] = xlib::XInternAtom(#x);       \
     ewmh_atom_names[x] = #x;                    \
   } while (0)
   SET_ATOM(_NET_SUPPORTED);
@@ -138,19 +138,15 @@ void ewmh_init() {
   SET_ATOM(_NET_WM_ACTION_CHANGE_DESKTOP);
   SET_ATOM(_NET_WM_ACTION_CLOSE);
 #undef SET_ATOM
-  utf8_string = XInternAtom(dpy, "UTF8_STRING", false);
+  utf8_string = xlib::XInternAtom("UTF8_STRING");
 }
 
 EWMHWindowType ewmh_get_window_type(Window w) {
-  Atom rt = 0;
-  Atom* type = nullptr;
-  int fmt = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
-  int i = XGetWindowProperty(dpy, w, ewmh_atom[_NET_WM_WINDOW_TYPE], 0, 100,
-                             false, XA_ATOM, &rt, &fmt, &n, &extra,
-                             (unsigned char**)&type);
-  if (i != Success || type == NULL) {
+  xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      w, ewmh_atom[_NET_WM_WINDOW_TYPE], 100, XA_ATOM);
+  Atom* type = (Atom*)prop.data;
+  unsigned long n = prop.nitems;
+  if (prop.status != Success || type == NULL) {
     return WTypeNone;
   }
   EWMHWindowType ret = WTypeNone;
@@ -193,66 +189,50 @@ EWMHWindowType ewmh_get_window_type(Window w) {
 }
 
 bool ewmh_get_window_name(Client* c) {
-  Atom rt;
-  char* name = nullptr;
-  int fmt = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
-  int i = XGetWindowProperty(dpy, c->window, ewmh_atom[_NET_WM_NAME], 0, 100,
-                             false, LScr::I->GetUTF8StringAtom(), &rt, &fmt, &n,
-                             &extra, (unsigned char**)&name);
-  if (i != Success || name == nullptr) {
+  xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_WM_NAME], 100, LScr::I->GetUTF8StringAtom());
+  if (prop.status != Success || prop.data == nullptr) {
     // While modern X11 displays always work with UTF8, some VNC servers don't.
     // As I'm using 'tightvnc' for testing LWM in a window, it's actually quite
     // useful to be able to fall back to bad old non-UTF8 strings.
-    i = XGetWindowProperty(dpy, c->window, XA_WM_NAME, 0, 100, false,
-                           AnyPropertyType, &rt, &fmt, &n, &extra,
-                           (unsigned char**)&name);
+    prop = xlib::XGetWindowProperty(c->window, XA_WM_NAME, 100,
+                                    AnyPropertyType);
   }
-  if (i != Success || name == nullptr) {
+  if (prop.status != Success || prop.data == nullptr) {
     return false;
   }
-  c->SetName(std::string(name, n));
-  XFree(name);
+  c->SetName(std::string((char*)prop.data, prop.nitems));
+  XFree(prop.data);
   return true;
 }
 
 bool ewmh_get_visible_window_name(Client* c) {
-  Atom rt;
-  char* name = nullptr;
-  int fmt = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
-  int i = XGetWindowProperty(dpy, c->window, ewmh_atom[_NET_WM_VISIBLE_NAME], 0,
-                             100, false, LScr::I->GetUTF8StringAtom(), &rt,
-                             &fmt, &n, &extra, (unsigned char**)&name);
-  if (i != Success || name == nullptr) {
+  xlib::WindowProperty prop =
+      xlib::XGetWindowProperty(c->window, ewmh_atom[_NET_WM_VISIBLE_NAME], 100,
+                               LScr::I->GetUTF8StringAtom());
+  if (prop.status != Success || prop.data == nullptr) {
     return false;
   }
-  c->SetVisibleName(std::string(name, n));
-  XFree(name);
+  c->SetVisibleName(std::string((char*)prop.data, prop.nitems));
+  XFree(prop.data);
   return true;
 }
 
 xlib::ImageIcon* ewmh_get_window_icon(Client* c) {
-  Atom rt;
-  unsigned long* data = NULL;
-  int fmt = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
   // Max allowed size for a window icon is 1MiB.
-  int i = XGetWindowProperty(dpy, c->window, ewmh_atom[_NET_WM_ICON], 0,
-                             1 << 20, false, XA_CARDINAL, &rt, &fmt, &n, &extra,
-                             (unsigned char**)&data);
-  if (i != Success || data == nullptr) {
+  xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_WM_ICON], 1 << 20, XA_CARDINAL);
+  if (prop.status != Success || prop.data == nullptr) {
     return nullptr;
   }
-  xlib::XFreer data_freer(data);
-  if (extra > 0) {
-    fprintf(stderr, "Icon size too large: %d bytes extra\n", int(extra));
+  xlib::XFreer data_freer(prop.data);
+  if (prop.bytes_after > 0) {
+    fprintf(stderr, "Icon size too large: %d bytes extra\n",
+            int(prop.bytes_after));
     return nullptr;
   }
-  return xlib::ImageIcon::CreateFromPixels(data, n);
+  return xlib::ImageIcon::CreateFromPixels((unsigned long*)prop.data,
+                                           prop.nitems);
 }
 
 bool ewmh_hasframe(Client* c) {
@@ -271,15 +251,11 @@ void ewmh_get_state(Client* c) {
   if (c == NULL) {
     return;
   }
-  Atom rt = 0;
-  Atom* state = nullptr;
-  int fmt = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
-  int i = XGetWindowProperty(dpy, c->window, ewmh_atom[_NET_WM_STATE], 0, 100,
-                             false, XA_ATOM, &rt, &fmt, &n, &extra,
-                             (unsigned char**)&state);
-  if (i != Success || state == NULL) {
+  xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_WM_STATE], 100, XA_ATOM);
+  Atom* state = (Atom*)prop.data;
+  unsigned long n = prop.nitems;
+  if (prop.status != Success || state == NULL) {
     return;
   }
   c->wstate.skip_taskbar = false;
@@ -388,8 +364,8 @@ void ewmh_set_state(Client* c) {
   if (atoms > MAX_ATOMS) {
     panic("too many atoms! Change MAX_ATOMS in ewmh_set_state");
   }
-  XChangeProperty(dpy, c->window, ewmh_atom[_NET_WM_STATE], XA_ATOM, 32,
-                  PropModeReplace, (unsigned char*)a, atoms);
+  xlib::XChangeProperty(c->window, ewmh_atom[_NET_WM_STATE], XA_ATOM, 32,
+                        PropModeReplace, (unsigned char*)a, atoms);
 #undef MAX_ATOMS
 }
 
@@ -402,8 +378,8 @@ void ewmh_set_allowed(Client* c) {
   action[1] = ewmh_atom[_NET_WM_ACTION_RESIZE];
   action[2] = ewmh_atom[_NET_WM_ACTION_FULLSCREEN];
   action[3] = ewmh_atom[_NET_WM_ACTION_CLOSE];
-  XChangeProperty(dpy, c->window, ewmh_atom[_NET_WM_ALLOWED_ACTIONS], XA_ATOM,
-                  32, PropModeReplace, (unsigned char*)action, 4);
+  xlib::XChangeProperty(c->window, ewmh_atom[_NET_WM_ALLOWED_ACTIONS], XA_ATOM,
+                        32, PropModeReplace, (unsigned char*)action, 4);
 }
 
 void ewmh_set_strut() {
@@ -422,8 +398,8 @@ void ewmh_set_strut() {
   data[1] = strut.top;
   data[2] = DisplayWidth(dpy, 0) - (strut.left + strut.right);
   data[3] = DisplayHeight(dpy, 0) - (strut.top + strut.bottom);
-  XChangeProperty(dpy, LScr::I->Root(), ewmh_atom[_NET_WORKAREA], XA_CARDINAL,
-                  32, PropModeReplace, (unsigned char*)data, 4);
+  xlib::XChangeProperty(LScr::I->Root(), ewmh_atom[_NET_WORKAREA], XA_CARDINAL,
+                        32, PropModeReplace, (unsigned char*)data, 4);
 
   // ensure no window fully occupy reserved areas
   // XXXXXXXXXXXXXXXXXXXX FIX THIS! Should probably treat the changing of
@@ -455,15 +431,11 @@ void ewmh_get_strut(Client* c) {
   if (c == nullptr) {
     return;
   }
-  Atom rt = 0;
-  unsigned long* strut = nullptr;
-  int fmt = 0;
-  unsigned long n = 0;
-  unsigned long extra = 0;
-  int i = XGetWindowProperty(dpy, c->window, ewmh_atom[_NET_WM_STRUT], 0, 5,
-                             false, XA_CARDINAL, &rt, &fmt, &n, &extra,
-                             (unsigned char**)&strut);
-  if (i != Success || strut == nullptr || n < 4) {
+  xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_WM_STRUT], 5, XA_CARDINAL);
+  unsigned long* strut = (unsigned long*)prop.data;
+  unsigned long n = prop.nitems;
+  if (prop.status != Success || strut == nullptr || n < 4) {
     if (strut) {
       XFree(strut);
     }
@@ -585,11 +557,12 @@ void ewmh_set_client_list() {
       }
     }
   }
-  XChangeProperty(dpy, LScr::I->Root(), ewmh_atom[_NET_CLIENT_LIST], XA_WINDOW,
-                  32, PropModeReplace, (unsigned char*)client_list, no_clients);
-  XChangeProperty(dpy, LScr::I->Root(), ewmh_atom[_NET_CLIENT_LIST_STACKING],
-                  XA_WINDOW, 32, PropModeReplace,
-                  (unsigned char*)stacked_client_list, no_clients);
+  xlib::XChangeProperty(LScr::I->Root(), ewmh_atom[_NET_CLIENT_LIST],
+                        XA_WINDOW, 32, PropModeReplace,
+                        (unsigned char*)client_list, no_clients);
+  xlib::XChangeProperty(LScr::I->Root(), ewmh_atom[_NET_CLIENT_LIST_STACKING],
+                        XA_WINDOW, 32, PropModeReplace,
+                        (unsigned char*)stacked_client_list, no_clients);
   free(client_list);
   free(stacked_client_list);
   recursion_stop = false;

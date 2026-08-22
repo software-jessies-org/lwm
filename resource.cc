@@ -35,7 +35,7 @@ Resources::Resources() {
   ints_.resize(I_END);
 
   XrmDatabase db = nullptr;
-  char* resource_manager = XResourceManagerString(dpy);
+  char* resource_manager = xlib::XResourceManagerString();
   if (resource_manager) {
     XrmInitialize();
     db = XrmGetStringDatabase(resource_manager);
@@ -116,8 +116,8 @@ const std::string& Resources::Get(SR sr) {
 unsigned long Resources::GetColour(SR sr) {
   const std::string name = Get(sr);
   XColor colour, exact;
-  XAllocNamedColor(dpy, DefaultColormap(dpy, LScr::kOnlyScreenIndex),
-                   name.c_str(), &colour, &exact);
+  xlib::XAllocNamedColor(DefaultColormap(dpy, LScr::kOnlyScreenIndex), name,
+                         &colour, &exact);
   return colour.pixel;
 }
 

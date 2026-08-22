@@ -235,9 +235,8 @@ void Hider::OpenMenu(XButtonEvent* e) {
   current_item_ = itemAt(e->x_root, e->y_root);
   showHighlightBox(current_item_);
   mapAndRaise(LScr::I->Menu(), x_min_, y_min_, width_, height_);
-  XChangeActivePointerGrab(dpy,
-                           ButtonMask | ButtonMotionMask | OwnerGrabButtonMask,
-                           None, CurrentTime);
+  xlib::XChangeActivePointerGrab(
+      ButtonMask | ButtonMotionMask | OwnerGrabButtonMask, None, CurrentTime);
 }
 
 int Hider::itemAt(int x, int y) const {
@@ -254,7 +253,7 @@ void Hider::Paint() {
   // it's necessary to first blank the window background, so that we don't
   // corrupt our display when the red highlight box windows open and close over
   // the top of the menu.
-  XClearWindow(dpy, LScr::I->Menu());
+  xlib::XClearWindow(LScr::I->Menu());
   const int itemHeight = menuItemHeight();
   const auto popup = LScr::I->Menu();
   const auto gc = LScr::I->GetMenuGC();
@@ -266,8 +265,8 @@ void Hider::Paint() {
     // Show a dotted line to separate the last hidden window from the first
     // non-hidden one.
     if (!open_content_[i].hidden && (i == 0 || open_content_[i - 1].hidden)) {
-      XSetLineAttributes(dpy, gc, 1, LineOnOffDash, CapButt, JoinMiter);
-      XDrawLine(dpy, popup, gc, 0, y, width_, y);
+      xlib::XSetLineAttributes(gc, 1, LineOnOffDash, CapButt, JoinMiter);
+      xlib::XDrawLine(popup, gc, 0, y, width_, y);
     }
 
     Client* c = LScr::I->GetClient(open_content_[i].w);
@@ -285,8 +284,8 @@ void Hider::drawHighlight(int itemIndex) {
   }
   const int ih = menuItemHeight();
   const int y = itemIndex * ih;
-  XFillRectangle(dpy, LScr::I->Menu(), LScr::I->GetMenuGC(), menuLHighlight(),
-                 y, width_ - menuHighlightMargins(), ih);
+  xlib::XFillRectangle(LScr::I->Menu(), LScr::I->GetMenuGC(), menuLHighlight(),
+                       y, width_ - menuHighlightMargins(), ih);
 }
 
 void Hider::MouseMotion(XEvent* ev) {

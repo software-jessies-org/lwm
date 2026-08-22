@@ -18,6 +18,9 @@
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
 #include <X11/extensions/Xrandr.h>
+#ifdef SHAPE
+#include <X11/extensions/shape.h>
+#endif
 
 #include "geometry.h"
 #include "log.h"
@@ -61,6 +64,17 @@ extern int XUnmapWindow(Window w);
 extern int XRaiseWindow(Window w);
 extern int XLowerWindow(Window w);
 
+extern int XAddToSaveSet(Window w);
+extern int XRemoveFromSaveSet(Window w);
+
+extern int XSetInputFocus(Window focus, int revert_to, Time time);
+
+struct FocusWindow {
+  Window window;
+  int revert_to;
+};
+extern FocusWindow XGetInputFocus();
+
 extern int XConfigureWindow(Window w, unsigned int val_mask, XWindowChanges* v);
 extern int XChangeWindowAttributes(Window w,
                                    unsigned int val_mask,
@@ -80,6 +94,145 @@ struct WindowGeometry {
 };
 
 extern WindowGeometry XGetGeometry(Window w);
+
+extern int XDestroyWindow(Window w);
+extern int XSetWindowBorderWidth(Window w, unsigned int width);
+extern int XSetWindowBackground(Window w, unsigned long pixel);
+extern int XClearWindow(Window w);
+extern int XClearArea(Window w,
+                      int x,
+                      int y,
+                      unsigned int width,
+                      unsigned int height,
+                      bool exposures);
+extern int XFillRectangle(Window w,
+                          GC gc,
+                          int x,
+                          int y,
+                          unsigned int width,
+                          unsigned int height);
+extern int XDrawLine(Window w, GC gc, int x1, int y1, int x2, int y2);
+
+extern int XKillClient(Window w);
+extern int XSendEvent(Window w, bool propagate, long event_mask, XEvent* event);
+
+extern int XGrabButton(unsigned int button,
+                       unsigned int modifiers,
+                       Window grab_window,
+                       bool owner_events,
+                       unsigned int event_mask,
+                       int pointer_mode,
+                       int keyboard_mode,
+                       Window confine_to,
+                       Cursor cursor);
+extern int XUngrabButton(unsigned int button,
+                         unsigned int modifiers,
+                         Window grab_window);
+
+extern Atom XInternAtom(const std::string& name);
+
+extern int XChangeProperty(Window w,
+                           Atom property,
+                           Atom type,
+                           int format,
+                           int mode,
+                           const unsigned char* data,
+                           int nelements);
+
+struct WindowProperty {
+  Atom actual_type;
+  int actual_format;
+  unsigned long nitems;
+  unsigned long bytes_after;
+  unsigned char* data;  // Caller must XFree() this if non-null.
+  int status;           // Return code from XGetWindowProperty (Success, ...).
+};
+// Wraps XGetWindowProperty with offset=0 and delete=false, which is what
+// every call site in this codebase wants.
+extern WindowProperty XGetWindowProperty(Window w,
+                                         Atom property,
+                                         long length,
+                                         Atom req_type);
+
+// Caller must XFree() the result if non-null.
+extern XWMHints* XGetWMHints(Window w);
+
+struct WMProtocols {
+  Atom* protocols;  // Caller must XFree() this if count > 0.
+  int count;
+};
+extern WMProtocols XGetWMProtocols(Window w);
+
+// Returns None if the window has no WM_TRANSIENT_FOR hint.
+extern Window XGetTransientForHint(Window w);
+
+extern bool XGetWMNormalHints(Window w,
+                              XSizeHints* hints,
+                              long* supplied_return);
+
+extern GC XCreateGC(Window w, unsigned long value_mask, XGCValues* values);
+extern int XSetLineAttributes(GC gc,
+                              unsigned int line_width,
+                              int line_style,
+                              int cap_style,
+                              int join_style);
+
+extern int XSync(bool discard);
+
+// Returns null on failure, same as the underlying XOpenDisplay.
+extern Display* XOpenDisplay();
+extern void XCloseDisplay();
+
+extern int XPending();
+extern void XNextEvent(XEvent* event);
+extern XErrorHandler XSetErrorHandler(XErrorHandler handler);
+
+struct RandRSupport {
+  bool have_rr;
+  int event_base;
+  int error_base;
+};
+extern RandRSupport XRRQueryExtension();
+extern void XRRSelectInput(Window w, int mask);
+
+// Caller must XFree() the result if non-null.
+extern XRRScreenResources* XRRGetScreenResourcesCurrent(Window w);
+// Caller must XFree() the result if non-null.
+extern XRRCrtcInfo* XRRGetCrtcInfo(XRRScreenResources* res, RRCrtc crtc);
+
+extern Cursor XCreateFontCursor(unsigned int shape);
+extern void XRecolorCursor(Cursor c, XColor* fg, XColor* bg);
+// Returns true if the colour was successfully allocated.
+extern bool XAllocNamedColor(Colormap cmap,
+                             const std::string& name,
+                             XColor* screen_def,
+                             XColor* exact_def);
+
+// Returns null if there's no resource manager string set.
+extern char* XResourceManagerString();
+
+extern void XDeleteProperty(Window w, Atom property);
+
+extern void XChangeActivePointerGrab(unsigned int event_mask,
+                                     Cursor cursor,
+                                     Time time);
+
+#ifdef SHAPE
+extern void XShapeSelectInput(Window w, unsigned long mask);
+// Caller must XFree() the result.
+extern XRectangle* XShapeGetRectangles(Window w,
+                                       int kind,
+                                       int* count,
+                                       int* ordering);
+extern void XShapeCombineShape(Window dest,
+                               int dest_kind,
+                               int x_off,
+                               int y_off,
+                               Window src,
+                               int src_kind,
+                               int op);
+extern int XShapeQueryExtension(int* event_base, int* error_base);
+#endif
 
 // Creates a window with the given properties, whose parent is the root window.
 extern Window CreateNamedWindow(const std::string& name,
