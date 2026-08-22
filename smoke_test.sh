@@ -180,8 +180,14 @@ fi
 
 if [ -n "${CLIENT_ID}" ]; then
   ICON_LOG_MARK=$(wc -l <"${LWM_LOG}")
-  xprop -id "${CLIENT_ID}" -f _NET_WM_ICON 32c \
-    -set _NET_WM_ICON "2,2,4278190335,4278255360,4294901760,4294967295" \
+  # A 4x4 icon of four solid quadrants: red, green, blue, white, fully opaque.
+  # Small enough that lwm won't scale it, so the colours stay exact.
+  RED=4294901760
+  GREEN=4278255360
+  BLUE=4278190335
+  WHITE=4294967295
+  xprop -id "${CLIENT_ID}" -f _NET_WM_ICON 32c -set _NET_WM_ICON \
+    "4,4,${RED},${RED},${GREEN},${GREEN},${RED},${RED},${GREEN},${GREEN},${BLUE},${BLUE},${WHITE},${WHITE},${BLUE},${BLUE},${WHITE},${WHITE}" \
     >/dev/null 2>&1
   sleep 0.4
   if tail -n "+${ICON_LOG_MARK}" "${LWM_LOG}" | grep -q "Invalid width"; then
@@ -190,6 +196,48 @@ if [ -n "${CLIENT_ID}" ]; then
   else
     pass "_NET_WM_ICON read at the right width"
   fi
+fi
+
+# --- the frame is painted in the right colours ------------------------------
+#
+# Everything above this point would pass just as happily with a window manager
+# that drew the whole frame black, which is exactly what happened when
+# AllocNamedColor was handed a "#B87058" it couldn't parse. So look at the
+# actual pixels: the frame background must be the configured borderColour, and
+# the icon set above must actually appear in the title bar.
+#
+# Needs xwd and ImageMagick; skipped, with a note, if they're absent.
+
+frame_pixel() {  # frame_pixel <x> <y> -> "#RRGGBB"
+  convert "${WORKDIR}/frame.xwd" -depth 8 txt:- 2>/dev/null |
+    sed -n "s/^$1,$2: ([^)]*)  *\(#[0-9A-Fa-f]\{6\}\).*/\1/p" | head -1
+}
+
+if [ -n "${FRAME_ID}" ] && command -v xwd >/dev/null 2>&1 &&
+  command -v convert >/dev/null 2>&1; then
+  xdotool windowactivate --sync "${CLIENT_ID}" >/dev/null 2>&1
+  sleep 0.5
+  xwd -id "${FRAME_ID}" -out "${WORKDIR}/frame.xwd" 2>/dev/null
+  # The active frame's border colour, from resource.cc's default for
+  # "borderColour". Pixel (1,1) is inside the frame, clear of the close cross.
+  GOT=$(frame_pixel 1 1)
+  if [ "${GOT}" = "#B87058" ]; then
+    pass "frame is painted in the configured border colour"
+  else
+    fail "frame is painted in the configured border colour (got '${GOT}', want '#B87058')"
+  fi
+
+  # The icon's top-left quadrant is pure red, and nothing else lwm draws is,
+  # so finding it anywhere in the title bar proves the icon was decoded,
+  # scaled and copied to the frame.
+  if convert "${WORKDIR}/frame.xwd" -depth 8 -crop x40+0+0 txt:- 2>/dev/null |
+    grep -q '#FF0000'; then
+    pass "window icon is drawn in the title bar"
+  else
+    fail "window icon is drawn in the title bar (no pure-red pixels found)"
+  fi
+else
+  echo "SKIP: frame colour checks (need xwd and ImageMagick)"
 fi
 
 # --- _NET_WM_STRUT reserves screen area -------------------------------------

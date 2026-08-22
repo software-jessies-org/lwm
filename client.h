@@ -21,7 +21,7 @@ enum { Pdelete = 1, Ptakefocus = 2 };
 class Client {
  public:
   Client(Window w,
-         const XWindowAttributes& attr,
+         const xlib::WindowAttributes& attr,
          const DimensionLimiter& x_limiter,
          const DimensionLimiter& y_limiter);
 

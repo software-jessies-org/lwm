@@ -256,9 +256,9 @@ void RunConfiguredAltCommand(Window w, Edge edge, int button) {
     return;
   }
   std::string command;
-  if (button == Button1) {
+  if (button == XCB_BUTTON_INDEX_1) {
     command = Resources::I->Get(Resources::ALT_BUTTON1_TITLE_COMMAND);
-  } else if (button == Button2) {
+  } else if (button == XCB_BUTTON_INDEX_2) {
     command = Resources::I->Get(Resources::ALT_BUTTON2_TITLE_COMMAND);
   }
   if (command.empty()) {
@@ -274,7 +274,7 @@ void RunConfiguredAltCommand(Window w, Edge edge, int button) {
 DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
   // Deal with root window button presses.
   if (e->event == e->root) {
-    if (e->detail == Button3) {
+    if (e->detail == XCB_BUTTON_INDEX_3) {
       return new MenuDragger;
     }
     return new ShellRunner(e->detail);
@@ -299,7 +299,7 @@ DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
 
   // If the user has alt held, then we run special configured commands as
   // configured in the user's xresources.
-  if (e->state & Mod1Mask) {
+  if (e->state & XCB_MOD_MASK_1) {
     RunConfiguredAltCommand(c->window, edge, e->detail);
   }
 
@@ -309,7 +309,7 @@ DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
 
   // Somewhere in the rest of the frame.
   if (e->detail == HIDE_BUTTON) {
-    if (e->state & ShiftMask) {
+    if (e->state & XCB_MOD_MASK_SHIFT) {
       return new WindowLowerer(c);
     }
     return new WindowHider(c);
@@ -320,9 +320,9 @@ DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
     // pointer, even if it's over an area of the window furniture which usually
     // has another pointer.
     xlib::XChangeActivePointerGrab(
-        ButtonMask | PointerMotionHintMask | ButtonMotionMask |
-            OwnerGrabButtonMask,
-        LScr::I->Cursors()->ForEdge(ENone), CurrentTime);
+        ButtonMask | XCB_EVENT_MASK_POINTER_MOTION_HINT |
+            XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_OWNER_GRAB_BUTTON,
+        LScr::I->Cursors()->ForEdge(ENone), XCB_CURRENT_TIME);
     return new WindowMover(c);
   }
   if (e->detail == RESHAPE_BUTTON) {

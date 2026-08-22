@@ -23,6 +23,7 @@
 
 #include "resource.h"
 #include "screen.h"
+#include "xlib.h"
 
 void Resources::Init() {
   I = new Resources();
@@ -34,12 +35,10 @@ Resources::Resources() {
   strings_.resize(S_END);
   ints_.resize(I_END);
 
-  XrmDatabase db = nullptr;
-  char* resource_manager = xlib::XResourceManagerString();
-  if (resource_manager) {
-    XrmInitialize();
-    db = XrmGetStringDatabase(resource_manager);
-  }
+  // xcb-xrm reads the RESOURCE_MANAGER property off the root window itself,
+  // so there's no separate fetch-the-string step. A null database just means
+  // no resources are set, which every Set() below copes with.
+  xcb_xrm_database_t* db = xcb_xrm_database_from_default(conn);
   // Font used in title bars, and indeed everywhere we have fonts.
   Set(TITLE_FONT, db, "titleFont", "Font", "roboto-16");
   // Command to execute when button 1 (left) is clicked on root window.
@@ -100,6 +99,10 @@ Resources::Resources() {
   // and you may get annoyingly long delays between when you expect to see
   // focus change, and when it does.
   Set(FOCUS_DELAY_MILLIS, db, "focusDelayMillis", "Border", 50);
+
+  if (db) {
+    xcb_xrm_database_free(db);
+  }
 }
 
 const std::string& Resources::Get(SR sr) {
@@ -114,11 +117,7 @@ const std::string& Resources::Get(SR sr) {
 }
 
 unsigned long Resources::GetColour(SR sr) {
-  const std::string name = Get(sr);
-  XColor colour, exact;
-  xlib::XAllocNamedColor(DefaultColormap(dpy, LScr::kOnlyScreenIndex), name,
-                         &colour, &exact);
-  return colour.pixel;
+  return xlib::ColourByName(Get(sr));
 }
 
 // Returns a short comprising two copies of the lowest byte in c.
@@ -142,27 +141,30 @@ int Resources::GetInt(IR ir) {
   return ints_[ir];
 }
 
-bool tryGet(XrmDatabase db,
+bool tryGet(xcb_xrm_database_t* db,
             const std::string& name,
             const char* cls,
             std::string* tgt) {
   if (!db) {
     return false;
   }
-  char* type;
-  XrmValue value;
   const std::string fullName = std::string("lwm.") + name;
-  if (XrmGetResource(db, fullName.c_str(), cls, &type, &value)) {
-    if (!strcmp(type, "String")) {
-      *tgt = std::string(value.addr, value.size);
-      return true;
-    }
+  char* value = nullptr;
+  // Returns 0 on an exact match and 1 on a match found by falling back to the
+  // class name; either will do. Negative means not found.
+  if (xcb_xrm_resource_get_string(db, fullName.c_str(), cls, &value) < 0) {
+    return false;
   }
-  return false;
+  if (!value) {
+    return false;
+  }
+  *tgt = value;
+  free(value);
+  return true;
 }
 
 void Resources::Set(SR res,
-                    XrmDatabase db,
+                    xcb_xrm_database_t* db,
                     const std::string& name,
                     const char* cls,
                     const std::string& dflt) {
@@ -172,7 +174,7 @@ void Resources::Set(SR res,
 }
 
 void Resources::Set(IR res,
-                    XrmDatabase db,
+                    xcb_xrm_database_t* db,
                     const std::string& name,
                     const char* cls,
                     int dflt) {

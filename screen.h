@@ -17,13 +17,12 @@ class CursorMap;
 // Screen information.
 class LScr {
  public:
-  explicit LScr(Display* dpy);
+  LScr();
 
   // Init must be called once, immediately after the global LScr::I instance
   // has been assigned to this instance.
   void Init();
 
-  Display* Dpy() const { return dpy_; }
   Window Root() const { return root_; }
   Window Popup() const { return popup_; }
   Window Menu() const { return menu_; }
@@ -113,10 +112,9 @@ class LScr {
   void InitEWMH();
   void ScanWindowTree();
   Client* AddClient(Window w, bool is_startup_scan);
-  unsigned long black() const { return BlackPixel(dpy_, kOnlyScreenIndex); }
-  unsigned long white() const { return WhitePixel(dpy_, kOnlyScreenIndex); }
+  unsigned long black() const { return xlib::Black(); }
+  unsigned long white() const { return xlib::White(); }
 
-  Display* dpy_ = nullptr;
   Window root_ = 0;
   int width_ = 0;
   int height_ = 0;

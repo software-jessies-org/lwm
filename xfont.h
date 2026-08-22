@@ -3,17 +3,21 @@
 
 #include <string>
 
-#include "xlib.h"
+#include <xcb/xcb.h>
 
-// xfont is lwm's entire text-drawing surface. It exists to keep Xft — and
-// therefore Xlib — out of the rest of the tree: nothing in this header names
-// an Xft or Xlib type, so xfont.cc is the only translation unit that has to
-// include <X11/Xft/Xft.h>. See docs/xcb-migration-plan.md, phase 0 step 1.
+// xfont is lwm's entire text-drawing surface. It exists to keep Xft - and
+// therefore Xlib - out of the rest of the tree.
 //
-// Xft is the one piece of lwm with no XCB equivalent, so it is also the only
-// reason libX11 is still linked. Replacing this implementation with Pango +
-// cairo-xcb (phase 4) would drop libX11 entirely and requires no changes
-// above this interface.
+// Note what this header does *not* include: xlib.h. Xlib and XCB both define
+// `Window`, to different widths, so a translation unit may include one set of
+// headers or the other but never both. xfont.cc picks Xlib, so its interface
+// is spelled in XCB's own types (xcb_window_t is what xlib.h calls Window,
+// so call sites don't notice).
+//
+// Xft is the one piece of lwm with no XCB equivalent, and so the only reason
+// libX11 is still linked. Replacing this implementation with Pango +
+// cairo-xcb (docs/xcb-migration-plan.md, phase 4) would drop libX11 entirely
+// and requires no changes above this interface.
 namespace xfont {
 
 // Which of the three colours a piece of text should be drawn in. The colours
@@ -41,7 +45,7 @@ extern int TextAscent();
 extern int TextWidth(const std::string& s);
 
 // Draws s onto w, with its left edge at x and its baseline at y.
-extern void DrawString(Window w,
+extern void DrawString(xcb_window_t w,
                        int x,
                        int y,
                        const std::string& s,

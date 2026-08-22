@@ -3,7 +3,10 @@
 
 #include <stdint.h>
 
-#include "xlib.h"
+// Deliberately <xcb/xcb.h> rather than "xlib.h": xfont.cc and xbridge.cc need
+// to report errors too, and they're the translation units that include Xlib,
+// which can't coexist with xlib.h's typedefs.
+#include <xcb/xcb.h>
 
 // Some events arrive for windows that have already been destroyed, so a
 // handful of requests are expected to fail some of the time. Create one of

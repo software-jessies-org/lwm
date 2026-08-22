@@ -8,7 +8,7 @@
 
 class CursorMap {
  public:
-  explicit CursorMap(Display* dpy);
+  CursorMap();
 
   // Root() returns the standard pointer cursor we use most places, including
   // over the root window.

@@ -3,14 +3,15 @@
 
 #include "xlib.h"
 
-#define HIDE_BUTTON Button3
-#define MOVE_BUTTON Button2
-#define RESHAPE_BUTTON Button1
+#define HIDE_BUTTON XCB_BUTTON_INDEX_3
+#define MOVE_BUTTON XCB_BUTTON_INDEX_2
+#define RESHAPE_BUTTON XCB_BUTTON_INDEX_1
 
 // MOVING_BUTTON_MASK describes the bits which are set in the mouse statis mask
 // value while either of the mouse buttons we can use for dragging/reshaping
 // is down.
-#define MOVING_BUTTON_MASK (Button1Mask | Button2Mask)
+#define MOVING_BUTTON_MASK \
+  (XCB_KEY_BUT_MASK_BUTTON_1 | XCB_KEY_BUT_MASK_BUTTON_2)
 
 #define EDGE_RESIST 32
 

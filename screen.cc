@@ -12,12 +12,11 @@
 // The static LScr instance.
 LScr* LScr::I;
 
-LScr::LScr(Display* dpy)
-    : dpy_(dpy),
-      root_(RootWindow(dpy, kOnlyScreenIndex)),
-      width_(DisplayWidth(dpy, kOnlyScreenIndex)),
-      height_(DisplayHeight(dpy, kOnlyScreenIndex)),
-      cursor_map_(new CursorMap(dpy)),
+LScr::LScr()
+    : root_(xlib::Root()),
+      width_(xlib::ScreenWidth()),
+      height_(xlib::ScreenHeight()),
+      cursor_map_(new CursorMap()),
       utf8_string_atom_(xlib::XInternAtom("UTF8_STRING")),
       strut_{0, 0, 0, 0} {
   visible_areas_ = std::vector<Rect>(1, Rect{0, 0, width_, height_});
@@ -30,60 +29,83 @@ void LScr::Init() {
   // The graphics context used for the menu is a simple exclusive OR which will
   // toggle pixels between black and white. This allows us to implement
   // highlights really easily.
-  XGCValues gv;
-  gv.foreground = black() ^ white();
-  gv.background = white();
-  gv.function = GXxor;
-  gv.line_width = 2;
-  gv.subwindow_mode = IncludeInferiors;
-  const unsigned long gv_mask =
-      GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode;
-  menu_gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
+  // Note the ValueList builders: XCB takes a bare array of values which must
+  // be in increasing order of their mask bits, and checks nothing, so nothing
+  // here writes one by hand.
+  xlib::GCValues menu_gv;
+  menu_gv.Foreground(black() ^ white())
+      .Background(white())
+      .Function(XCB_GX_XOR)
+      .LineWidth(2)
+      .SubwindowMode(XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS);
+  menu_gc_ = xlib::XCreateGC(root_, menu_gv);
 
   // The GC used for the close button is the same as for the menu, except it
-  // uses GXcopy, not GXxor, so we draw the chosen colour correctly.
-  gv.foreground = Resources::I->GetColour(Resources::CLOSE_ICON_COLOUR);
-  gv.background = white();
-  gv.function = GXcopy;
-  gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
-  xlib::XSetLineAttributes(gc_, 2, LineSolid, CapProjecting, JoinMiter);
+  // uses GXcopy, not GXxor, so we draw the chosen colour correctly. The line
+  // style is set at creation now, rather than by a follow-up
+  // XSetLineAttributes.
+  xlib::GCValues close_gv;
+  close_gv.Foreground(Resources::I->GetColour(Resources::CLOSE_ICON_COLOUR))
+      .Background(white())
+      .Function(XCB_GX_COPY)
+      .LineWidth(2)
+      .LineStyle(XCB_LINE_STYLE_SOLID)
+      .CapStyle(XCB_CAP_STYLE_PROJECTING)
+      .JoinStyle(XCB_JOIN_STYLE_MITER)
+      .SubwindowMode(XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS);
+  gc_ = xlib::XCreateGC(root_, close_gv);
 
-  gv.foreground =
-      Resources::I->GetColour(Resources::INACTIVE_CLOSE_ICON_COLOUR);
-  inactive_gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
-  xlib::XSetLineAttributes(inactive_gc_, 2, LineSolid, CapProjecting,
-                           JoinMiter);
+  xlib::GCValues inactive_gv;
+  inactive_gv
+      .Foreground(
+          Resources::I->GetColour(Resources::INACTIVE_CLOSE_ICON_COLOUR))
+      .Background(white())
+      .Function(XCB_GX_COPY)
+      .LineWidth(2)
+      .LineStyle(XCB_LINE_STYLE_SOLID)
+      .CapStyle(XCB_CAP_STYLE_PROJECTING)
+      .JoinStyle(XCB_JOIN_STYLE_MITER)
+      .SubwindowMode(XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS);
+  inactive_gc_ = xlib::XCreateGC(root_, inactive_gv);
 
   // The title bar.
-  gv.foreground = Resources::I->GetColour(Resources::TITLE_BG_COLOUR);
-  title_gc_ = xlib::XCreateGC(root_, gv_mask, &gv);
+  xlib::GCValues title_gv;
+  title_gv.Foreground(Resources::I->GetColour(Resources::TITLE_BG_COLOUR))
+      .Background(white())
+      .Function(XCB_GX_COPY)
+      .LineWidth(2)
+      .SubwindowMode(XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS);
+  title_gc_ = xlib::XCreateGC(root_, title_gv);
 
   // Create the popup window, to be used for the resize feedback window,
   // and the menu window.
-  XSetWindowAttributes attr;
-  attr.event_mask = ButtonMask | ButtonMotionMask | ExposureMask;
+  const uint32_t popup_events =
+      ButtonMask | XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_EXPOSURE;
   const unsigned int fg = Resources::I->GetColour(Resources::POPUP_TEXT_COLOUR);
   const unsigned int bg =
       Resources::I->GetColour(Resources::POPUP_BACKGROUND_COLOUR);
   Rect r{0, 0, 1, 1};
   popup_ = xlib::CreateNamedWindow("LWM size popup", r, 1, fg, bg);
-  xlib::XChangeWindowAttributes(popup_, CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(popup_,
+                                xlib::WindowAttrs().EventMask(popup_events));
   menu_ = xlib::CreateNamedWindow("LWM unhide menu", r, 1, fg, bg);
-  xlib::XChangeWindowAttributes(menu_, CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(menu_,
+                                xlib::WindowAttrs().EventMask(popup_events));
 
   // Announce our interest in the root window. SubstructureRedirect is the
   // part only one client may hold, so this is also how we find out whether
   // another window manager is already running - and unlike Xlib, we get the
   // answer here rather than as a mystery BadAccess in an error handler.
   const uint32_t root_events =
-      SubstructureRedirectMask | SubstructureNotifyMask | ColormapChangeMask |
-      ButtonPressMask | ButtonReleaseMask | PropertyChangeMask |
-      EnterWindowMask;
+      XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
+      XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY | XCB_EVENT_MASK_COLOR_MAP_CHANGE |
+      XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE |
+      XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_ENTER_WINDOW;
   if (!xlib::SelectRootEvents(root_, root_events)) {
     panic("another window manager is already running.");
   }
-  attr.cursor = cursor_map_->Root();
-  xlib::XChangeWindowAttributes(root_, CWCursor, &attr);
+  xlib::XChangeWindowAttributes(
+      root_, xlib::WindowAttrs().Cursor(cursor_map_->Root()));
 
   // Tell all the applications what icon sizes we prefer.
   xlib::ImageIcon::ConfigureIconSizes();
@@ -99,43 +121,41 @@ void LScr::InitEWMH() {
   Rect r{-200, -200, 1, 1};
   ewmh_compat_ = xlib::CreateNamedWindow("LWM EWMH", r, 0, 0, 0);
   xlib::XChangeProperty(ewmh_compat_, ewmh_atom[_NET_WM_NAME],
-                        utf8_string_atom_, XA_CURSOR, PropModeReplace,
-                        (const unsigned char*)"lwm", 3);
+                        utf8_string_atom_, 8, "lwm", 3);
 
-  // set root window properties
-  xlib::XChangeProperty(root_, ewmh_atom[_NET_SUPPORTED], XA_ATOM, 32,
-                        PropModeReplace, (unsigned char*)ewmh_atom,
-                        EWMH_ATOM_LAST);
+  // set root window properties. Note the 32-bit arrays: these properties are
+  // format 32, and that means uint32_t, not long.
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_SUPPORTED], XCB_ATOM_ATOM, 32,
+                        ewmh_atom, EWMH_ATOM_LAST);
 
-  xlib::XChangeProperty(root_, ewmh_atom[_NET_SUPPORTING_WM_CHECK], XA_WINDOW,
-                        32, PropModeReplace, (unsigned char*)&ewmh_compat_, 1);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_SUPPORTING_WM_CHECK],
+                        XCB_ATOM_WINDOW, 32, &ewmh_compat_, 1);
 
-  unsigned long data[4];
+  uint32_t data[4];
   data[0] = 1;
   xlib::XChangeProperty(root_, ewmh_atom[_NET_NUMBER_OF_DESKTOPS],
-                        XA_CARDINAL, 32, PropModeReplace,
-                        (unsigned char*)data, 1);
+                        XCB_ATOM_CARDINAL, 32, data, 1);
 
   data[0] = width_;
   data[1] = height_;
-  xlib::XChangeProperty(root_, ewmh_atom[_NET_DESKTOP_GEOMETRY], XA_CARDINAL,
-                        32, PropModeReplace, (unsigned char*)data, 2);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_DESKTOP_GEOMETRY],
+                        XCB_ATOM_CARDINAL, 32, data, 2);
 
   data[0] = 0;
   data[1] = 0;
-  xlib::XChangeProperty(root_, ewmh_atom[_NET_DESKTOP_VIEWPORT], XA_CARDINAL,
-                        32, PropModeReplace, (unsigned char*)data, 2);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_DESKTOP_VIEWPORT],
+                        XCB_ATOM_CARDINAL, 32, data, 2);
 
   data[0] = 0;
-  xlib::XChangeProperty(root_, ewmh_atom[_NET_CURRENT_DESKTOP], XA_CARDINAL,
-                        32, PropModeReplace, (unsigned char*)data, 1);
+  xlib::XChangeProperty(root_, ewmh_atom[_NET_CURRENT_DESKTOP],
+                        XCB_ATOM_CARDINAL, 32, data, 1);
 
   ewmh_set_strut();
   ewmh_set_client_list();
 }
 
 void LScr::ScanWindowTree() {
-  xlib::WindowTree wt = xlib::WindowTree::Query(dpy_, root_);
+  xlib::WindowTree wt = xlib::WindowTree::Query(root_);
   for (const Window w : wt.children) {
     if (!xlib::IsLWMWindow(w)) {
       AddClient(w, true);
@@ -166,29 +186,28 @@ Client* LScr::GetOrAddClient(Window w, bool is_startup_scan) {
 }
 
 Client* LScr::AddClient(Window w, bool is_startup_scan) {
-  const XWindowAttributes attr = xlib::XGetWindowAttributes(w);
-  if (attr.override_redirect) {
+  const xlib::WindowAttributes attr = xlib::XGetWindowAttributes(w);
+  if (!attr.ok || attr.override_redirect) {
     return nullptr;
   }
   // The following check prevents us from making random stuff visible, like the
   // currently-not-visible menu window of gummiband, or the icon-containing
   // windows of Java apps.
-  if (is_startup_scan && attr.map_state != IsViewable) {
+  if (is_startup_scan && !attr.viewable) {
     return nullptr;
   }
-  XSizeHints size;
-  long msize;
+  const xlib::NormalHints size = xlib::XGetWMNormalHints(w);
   DimensionLimiter xdl;
   DimensionLimiter ydl;
-  if (xlib::XGetWMNormalHints(w, &size, &msize)) {
-    xdl = DimensionLimiter(size.flags & PMinSize ? size.min_width : 0,
-                           size.flags & PMaxSize ? size.max_width : 0,
-                           size.flags & PBaseSize ? size.base_width : 0,
-                           size.flags & PResizeInc ? size.width_inc : 1);
-    ydl = DimensionLimiter(size.flags & PMinSize ? size.min_height : 0,
-                           size.flags & PMaxSize ? size.max_height : 0,
-                           size.flags & PBaseSize ? size.base_height : 0,
-                           size.flags & PResizeInc ? size.height_inc : 1);
+  if (size.ok) {
+    xdl = DimensionLimiter(size.has_min_size ? size.min_width : 0,
+                           size.has_max_size ? size.max_width : 0,
+                           size.has_base_size ? size.base_width : 0,
+                           size.has_resize_inc ? size.width_inc : 1);
+    ydl = DimensionLimiter(size.has_min_size ? size.min_height : 0,
+                           size.has_max_size ? size.max_height : 0,
+                           size.has_base_size ? size.base_height : 0,
+                           size.has_resize_inc ? size.height_inc : 1);
   }
   Client* c = new Client(w, attr, xdl, ydl);
   // LOGI() << "New client " << attr.width << "x" << attr.height << "+" <<
@@ -208,15 +227,17 @@ void LScr::Furnish(Client* c) {
   LOGD(c) << "Creating frame for client, at " << c->FrameRect();
   c->parent =
       xlib::CreateNamedWindow(name.str(), c->FrameRect(), 1, black(), white());
-  XSetWindowAttributes attr;
-  // DO NOT SET PointerMotionHintMask! Doing so allows X to send just one
+  // DO NOT SET PointerMotionHint! Doing so allows X to send just one
   // notification to the window until the key or button state changes. This
   // prevents us from properly updating the cursor as we move the pointer around
   // our window furniture.
-  attr.event_mask = ExposureMask | EnterWindowMask | LeaveWindowMask |
-                    ButtonMask | SubstructureRedirectMask |
-                    SubstructureNotifyMask | PointerMotionMask;
-  xlib::XChangeWindowAttributes(c->parent, CWEventMask, &attr);
+  const uint32_t frame_events =
+      XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_ENTER_WINDOW |
+      XCB_EVENT_MASK_LEAVE_WINDOW | ButtonMask |
+      XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
+      XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY | XCB_EVENT_MASK_POINTER_MOTION;
+  xlib::XChangeWindowAttributes(c->parent,
+                                xlib::WindowAttrs().EventMask(frame_events));
   parents_[c->parent] = c;
   DebugCLI::NotifyFrameCreated(c);
 }

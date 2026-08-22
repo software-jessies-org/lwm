@@ -21,6 +21,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+// libSM and libICE live under X11/ in the include tree, but neither links
+// libX11 nor defines any of its types, so this doesn't breach the Xlib
+// boundary that xbridge.h describes. It used to arrive via xlib.h.
+#include <X11/SM/SMlib.h>
+
 #include "lwm.h"
 #include "manage.h"
 #include "session.h"

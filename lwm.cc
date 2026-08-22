@@ -36,7 +36,6 @@
 #include "xlib.h"
 
 bool is_initialising;
-Display* dpy;           // Xlib's view of the connection; used only by Xft.
 xcb_connection_t* conn;  // The connection to the X server.
 
 // The event number RandR's ScreenChangeNotify arrives as. Extensions get
@@ -93,11 +92,11 @@ extern int main(int argc, char* argv[]) {
   if (!xlib::OpenDisplay()) {
     panic("can't open display.");
   }
-  if (ScreenCount(dpy) != 1) {
+  if (xlib::ScreenCount() != 1) {
     fprintf(stderr,
             "Sorry, LWM no longer supports multiple screens, and you "
             "have %d set up.\nPlease consider using xrandr.\n",
-            ScreenCount(dpy));
+            xlib::ScreenCount());
   }
   Resources::Init();
 
@@ -135,7 +134,7 @@ extern int main(int argc, char* argv[]) {
 
   xfont::Init();
 
-  LScr::I = new LScr(dpy);
+  LScr::I = new LScr();
   LScr::I->Init();
   session_init(argc, argv);
 
@@ -144,7 +143,7 @@ extern int main(int argc, char* argv[]) {
   rr_event_base = rr.event_base;
   have_rr = rr.have_rr;
   if (have_rr) {
-    xlib::XRRSelectInput(LScr::I->Root(), RRScreenChangeNotifyMask);
+    xlib::XRRSelectInput(LScr::I->Root());
     setScreenAreasFromXRandR();
   }
 
@@ -230,8 +229,9 @@ extern int main(int argc, char* argv[]) {
 bool randrEvent(xcb_generic_event_t* ev) {
   // RandR's events, like Shape's, are numbered from a base the server hands
   // out at run time, so this can't be part of the main switch.
-  if (!have_rr || (ev->response_type & 0x7f) !=
-                      rr_event_base + RRScreenChangeNotify) {
+  if (!have_rr ||
+      (ev->response_type & 0x7f) !=
+          rr_event_base + XCB_RANDR_SCREEN_CHANGE_NOTIFY) {
     return false;
   }
   rrScreenChangeNotify(ev);
@@ -293,16 +293,17 @@ extern void RunCommand(const std::string& command) {
   if (!sh) {
     sh = "/bin/sh";
   }
-  const char* display_str = DisplayString(dpy);
+  const std::string display_str = xlib::DisplayName();
 
   switch (fork()) {
     case 0:  // Child.
-      close(ConnectionNumber(dpy));
-      if (display_str) {
-        const int len = strlen(display_str) + 9;
-        char* str = (char*)malloc(len);
-        snprintf(str, len, "DISPLAY=%s", display_str);
-        putenv(str);
+      close(xlib::ConnectionFD());
+      if (!display_str.empty()) {
+        const std::string env = "DISPLAY=" + display_str;
+        // putenv keeps the pointer it's given, so this has to outlive the
+        // call; strdup is the least surprising way to say that. We're about
+        // to exec anyway.
+        putenv(strdup(env.c_str()));
       }
       execl(sh, sh, "-c", command.c_str(), NULL);
       fprintf(stderr, "%s: can't exec \"%s -c %s\"\n", argv0, sh,
@@ -317,9 +318,9 @@ extern void RunCommand(const std::string& command) {
 
 extern void shell(int button) {
   std::string command;
-  if (button == Button1) {
+  if (button == XCB_BUTTON_INDEX_1) {
     command = Resources::I->Get(Resources::BUTTON1_COMMAND);
-  } else if (button == Button2) {
+  } else if (button == XCB_BUTTON_INDEX_2) {
     command = Resources::I->Get(Resources::BUTTON2_COMMAND);
   }
   if (command.empty()) {

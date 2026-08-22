@@ -21,33 +21,48 @@
 
 #include "cursor.h"
 
-Cursor colouredCursor(unsigned int shape, XColor* fg, XColor* bg) {
-  Cursor res = xlib::XCreateFontCursor(shape);
-  xlib::XRecolorCursor(res, fg, bg);
-  return res;
-}
+namespace {
 
-static const char kCursorFG[] = "Black";  //"Medium Turquoise";
-static const char kCursorBG[] = "White";  //"Navy Blue";
+// Glyph indices into the standard "cursor" font. Xlib spelled these XC_left_ptr
+// and so on in <X11/cursorfont.h>; XCB ships no equivalent header, and these
+// are fixed by the font itself rather than by any library, so here they are.
+// Each cursor occupies two glyphs, the image and its mask, which is why they
+// go up in twos.
+constexpr unsigned int kLeftPtr = 68;
+constexpr unsigned int kTopLeftCorner = 134;
+constexpr unsigned int kTopSide = 138;
+constexpr unsigned int kTopRightCorner = 136;
+constexpr unsigned int kRightSide = 96;
+constexpr unsigned int kFleur = 52;
+constexpr unsigned int kLeftSide = 70;
+constexpr unsigned int kBottomLeftCorner = 12;
+constexpr unsigned int kBottomSide = 16;
+constexpr unsigned int kBottomRightCorner = 14;
+constexpr unsigned int kXCursor = 0;
 
-CursorMap::CursorMap(Display* dpy) {
-  XColor cursorFG, cursorBG, exact;
-  Colormap cmp = DefaultColormap(dpy, 0);  // 0 = screen index 0.
-  xlib::XAllocNamedColor(cmp, kCursorFG, &cursorFG, &exact);
-  xlib::XAllocNamedColor(cmp, kCursorBG, &cursorBG, &exact);
-  root_ = colouredCursor(XC_left_ptr, &cursorFG, &cursorBG);
+const char kCursorFG[] = "Black";  //"Medium Turquoise";
+const char kCursorBG[] = "White";  //"Navy Blue";
 
-#define MC(e, s) edges_[e] = colouredCursor(s, &cursorFG, &cursorBG)
-  MC(ETopLeft, XC_top_left_corner);
-  MC(ETop, XC_top_side);
-  MC(ETopRight, XC_top_right_corner);
-  MC(ERight, XC_right_side);
-  MC(ENone, XC_fleur);
-  MC(ELeft, XC_left_side);
-  MC(EBottomLeft, XC_bottom_left_corner);
-  MC(EBottom, XC_bottom_side);
-  MC(EBottomRight, XC_bottom_right_corner);
-  MC(EClose, XC_X_cursor);
+}  // namespace
+
+CursorMap::CursorMap() {
+  // Unlike Xlib's XCreateFontCursor, the colours are supplied when the cursor
+  // is created, so there's no follow-up recolouring step.
+  const unsigned long fg = xlib::ColourByName(kCursorFG);
+  const unsigned long bg = xlib::ColourByName(kCursorBG);
+  root_ = xlib::CreateFontCursor(kLeftPtr, fg, bg);
+
+#define MC(e, s) edges_[e] = xlib::CreateFontCursor(s, fg, bg)
+  MC(ETopLeft, kTopLeftCorner);
+  MC(ETop, kTopSide);
+  MC(ETopRight, kTopRightCorner);
+  MC(ERight, kRightSide);
+  MC(ENone, kFleur);
+  MC(ELeft, kLeftSide);
+  MC(EBottomLeft, kBottomLeftCorner);
+  MC(EBottom, kBottomSide);
+  MC(EBottomRight, kBottomRightCorner);
+  MC(EClose, kXCursor);
 #undef MC
 }
 

@@ -202,15 +202,12 @@ static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
   // sensible, as the client's making this request.
   Client* c = LScr::I->GetClient(e.window, false);
   if (c == nullptr || c->State() != NormalState || !c->framed) {
-    XWindowChanges wc{};
-    wc.x = e.x;
-    wc.y = e.y;
-    wc.width = e.width;
-    wc.height = e.height;
-    wc.border_width = e.border_width;
-    wc.sibling = e.sibling;
-    wc.stack_mode = e.stack_mode;
-    xlib::XConfigureWindow(e.window, e.value_mask, &wc);
+    // Pass the request straight through, honouring exactly the fields the
+    // client named.
+    xlib::WindowChanges wc;
+    wc.FromRequestMask(e.value_mask, e.x, e.y, e.width, e.height,
+                       e.border_width, e.sibling, e.stack_mode);
+    xlib::XConfigureWindow(e.window, wc);
     return;
   }
   LOGD(c) << "ConfigureRequest: " << e;
@@ -231,7 +228,9 @@ static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
   // the screen.
   // Now intercept the reconfigure and turn it into a move under our system.
   // Only do anything if one of the size/position values changes.
-  if ((e.value_mask & (CWX | CWY | CWWidth | CWHeight)) == 0) {
+  if ((e.value_mask &
+       (XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH |
+        XCB_CONFIG_WINDOW_HEIGHT)) == 0) {
     return;
   }
   Rect new_rect = c->ContentRect();
@@ -252,34 +251,38 @@ static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
   // and to the left by an amount corresponding to the offset from frame to
   // client window.
   const Point offset = c->ContentRectRelative().origin();
-  if (e.value_mask & CWX) {
+  if (e.value_mask & XCB_CONFIG_WINDOW_X) {
     int diff = (e.x + offset.x) - new_rect.xMin;
     new_rect.xMin += diff;
     new_rect.xMax += diff;
   }
-  if (e.value_mask & CWY) {
+  if (e.value_mask & XCB_CONFIG_WINDOW_Y) {
     int diff = (e.y + offset.y) - new_rect.yMin;
     new_rect.yMin += diff;
     new_rect.yMax += diff;
   }
-  if (e.value_mask & CWWidth) {
+  if (e.value_mask & XCB_CONFIG_WINDOW_WIDTH) {
     new_rect.xMax = new_rect.xMin + e.width;
   }
-  if (e.value_mask & CWHeight) {
+  if (e.value_mask & XCB_CONFIG_WINDOW_HEIGHT) {
     new_rect.yMax = new_rect.yMin + e.height;
   }
 
-  XWindowChanges wc{};
-  c->FrameRect().To(wc);
-  wc.border_width = 1;
-  wc.sibling = e.sibling;
-  wc.stack_mode = e.stack_mode;
-  xlib::XConfigureWindow(e.parent, e.value_mask, &wc);
+  // The frame takes the client's stacking request, but our own geometry and
+  // border. Only the fields the client asked about are sent, same as before.
+  const Rect frame = c->FrameRect();
+  xlib::WindowChanges frame_wc;
+  frame_wc.FromRequestMask(e.value_mask, frame.xMin, frame.yMin, frame.width(),
+                           frame.height(), 1, e.sibling, e.stack_mode);
+  xlib::XConfigureWindow(e.parent, frame_wc);
   c->SendConfigureNotify();
 
-  c->ContentRectRelative().To(wc);
-  wc.border_width = 0;
-  xlib::XConfigureWindow(e.window, e.value_mask, &wc);
+  const Rect content = c->ContentRectRelative();
+  xlib::WindowChanges content_wc;
+  content_wc.FromRequestMask(e.value_mask, content.xMin, content.yMin,
+                             content.width(), content.height(), 0, e.sibling,
+                             e.stack_mode);
+  xlib::XConfigureWindow(e.window, content_wc);
 
   if (new_rect.area() == c->ContentRect().area()) {
     c->MoveTo(new_rect);
@@ -353,16 +356,16 @@ void EvClientMessage(xcb_generic_event_t* ev) {
     req.height = data[4];
     req.value_mask = 0;
     if (data[0] & (1 << 8)) {
-      req.value_mask |= CWX;
+      req.value_mask |= XCB_CONFIG_WINDOW_X;
     }
     if (data[0] & (1 << 9)) {
-      req.value_mask |= CWY;
+      req.value_mask |= XCB_CONFIG_WINDOW_Y;
     }
     if (data[0] & (1 << 10)) {
-      req.value_mask |= CWWidth;
+      req.value_mask |= XCB_CONFIG_WINDOW_WIDTH;
     }
     if (data[0] & (1 << 11)) {
-      req.value_mask |= CWHeight;
+      req.value_mask |= XCB_CONFIG_WINDOW_HEIGHT;
     }
     LOGD(c) << "Client message: move/resize -> " << req << " (flags "
             << req.value_mask << ")";
@@ -452,16 +455,16 @@ void EvPropertyNotify(xcb_generic_event_t* ev) {
   // we'll stomp on the printing of error logs.
   ScopedIgnoreBadWindow ignorer;
 
-  if (e->atom == _mozilla_url || e->atom == XA_WM_NAME) {
+  if (e->atom == _mozilla_url || e->atom == XCB_ATOM_WM_NAME) {
     LOGD(c) << "Property change: XA_WM_NAME";
     getWindowName(c);
   } else if (e->atom == ewmh_atom[_NET_WM_VISIBLE_NAME]) {
     LOGD(c) << "Property change: _NET_WM_VISIBLE_NAME";
     getVisibleWindowName(c);
-  } else if (e->atom == XA_WM_TRANSIENT_FOR) {
+  } else if (e->atom == XCB_ATOM_WM_TRANSIENT_FOR) {
     LOGD(c) << "Property change: XA_WM_TRANSIENT_FOR";
     getTransientFor(c);
-  } else if (e->atom == XA_WM_NORMAL_HINTS) {
+  } else if (e->atom == XCB_ATOM_WM_NORMAL_HINTS) {
     LOGD(c) << "Property change: XA_WM_NORMAL_HINTS";
     // XXXXXXXXXXXXXXXXXX Reset the hints used for window sizing.
     // getNormalHints(c);
@@ -539,9 +542,8 @@ void EvEnterNotify(xcb_generic_event_t* ev) {
   if (e->event != c->parent) {
     // TODO: add a SetCursor method to Client, so we don't have to keep
     // repeating this code everywhere.
-    XSetWindowAttributes attr;
-    attr.cursor = LScr::I->Cursors()->Root();
-    xlib::XChangeWindowAttributes(c->parent, CWCursor, &attr);
+    xlib::XChangeWindowAttributes(
+        c->parent, xlib::WindowAttrs().Cursor(LScr::I->Cursors()->Root()));
     // Record that the current cursor is whatever the child window says it is.
     // This has to be different from any Edge we want to trigger when the mouse
     // crosses window furniture, otherwise we may fail to trigger a cursor
@@ -567,9 +569,9 @@ void EvMotionNotify(xcb_generic_event_t* ev) {
   if ((e->event == c->parent) && (e->child != c->window)) {
     Edge edge = c->EdgeAt(e->event, e->event_x, e->event_y);
     if (edge != EContents && c->cursor != edge) {
-      XSetWindowAttributes attr;
-      attr.cursor = LScr::I->Cursors()->ForEdge(edge);
-      xlib::XChangeWindowAttributes(c->parent, CWCursor, &attr);
+      xlib::XChangeWindowAttributes(
+          c->parent,
+          xlib::WindowAttrs().Cursor(LScr::I->Cursors()->ForEdge(edge)));
       c->cursor = edge;
     }
   }

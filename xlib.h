@@ -10,37 +10,32 @@
 #include <type_traits>
 #include <vector>
 
-#include <X11/SM/SMlib.h>
-#include <X11/X.h>
-#include <X11/Xatom.h>
-#include <X11/Xft/Xft.h>
-#include <X11/Xlib.h>
-#include <X11/Xos.h>
-#include <X11/Xproto.h>
-#include <X11/Xresource.h>
-#include <X11/Xutil.h>
-#include <X11/cursorfont.h>
-#include <X11/extensions/Xrandr.h>
-#ifdef SHAPE
-#include <X11/extensions/shape.h>
-#endif
-
 #include <xcb/xcb.h>
+#include <xcb/xcb_icccm.h>
 
 #include "geometry.h"
 #include "log.h"
 
 // The connection to the X server. Opened by xlib::OpenDisplay(), and declared
 // here because nearly every file that touches X needs it.
-//
-// There is only one connection. `dpy` and `conn` are two views of it: we open
-// it with XOpenDisplay, hand the event queue to XCB with XSetEventQueueOwner,
-// and pull the XCB connection out with XGetXCBConnection. Everything goes
-// over `conn`; `dpy` exists solely because Xft has no XCB port, and only
-// xfont.cc may use it (via xlib::XftDisplay(), which is why this declaration
-// is going away rather than growing users).
-extern Display* dpy;
 extern xcb_connection_t* conn;
+
+// X11's resource IDs. These are all 32-bit server-side handles; the distinct
+// names are documentation, since the compiler can't tell them apart.
+typedef xcb_window_t Window;
+typedef xcb_atom_t Atom;
+typedef xcb_cursor_t Cursor;
+typedef xcb_pixmap_t Pixmap;
+typedef xcb_gcontext_t GC;
+typedef xcb_colormap_t Colormap;
+typedef xcb_timestamp_t Time;
+
+// The ICCCM WM_STATE values (section 4.1.3.1). Spelled out rather than used
+// via xcb-icccm's much longer names, because client state is compared against
+// these all over the place and the long form makes it unreadable.
+constexpr int WithdrawnState = XCB_ICCCM_WM_STATE_WITHDRAWN;
+constexpr int NormalState = XCB_ICCCM_WM_STATE_NORMAL;
+constexpr int IconicState = XCB_ICCCM_WM_STATE_ICONIC;
 
 struct MousePos {
   int x;
@@ -59,8 +54,7 @@ namespace xlib {
 
 // FreeReplyData releases a block of memory handed to us by the X client
 // library. Which deallocator that means is the library's business, not the
-// caller's: Xlib wants XFree, XCB's replies are plain malloc'd. Defined once,
-// in xlib.cc, so that switching libraries is a one-line change.
+// caller's. Defined once, in xlib.cc.
 extern void FreeReplyData(void* data);
 
 // Reply owns a block of memory returned by the X client library and releases
@@ -102,11 +96,156 @@ class Reply {
   Reply& operator=(const Reply&) = delete;
 };
 
+// ValueList is the fix for one of XCB's sharper edges. Where Xlib took a
+// struct plus a mask and picked out the fields the mask named, XCB takes a
+// bare uint32_t array whose entries must appear in increasing order of their
+// mask bit - and checks nothing. Get the order wrong and you set the wrong
+// attribute to the wrong value, silently.
+//
+// So no caller ever builds one of those arrays by hand. They add (bit, value)
+// pairs in whatever order suits them, and this sorts.
+class ValueList {
+ public:
+  void Add(uint32_t mask_bit, uint32_t value);
+
+  uint32_t Mask() const { return mask_; }
+  // The values, ordered by mask bit, as xcb wants them.
+  const uint32_t* Values() const { return values_; }
+  bool Empty() const { return mask_ == 0; }
+
+ private:
+  // 32 is the widest any of the X11 value lists gets (one entry per mask bit).
+  uint32_t values_[32] = {};
+  uint32_t mask_ = 0;
+};
+
+// The window attributes lwm sets. Wraps a ValueList so that call sites read
+// as prose and can't get the ordering wrong.
+class WindowAttrs {
+ public:
+  WindowAttrs& EventMask(uint32_t mask);
+  WindowAttrs& Cursor(::Cursor c);
+  WindowAttrs& WinGravity(uint32_t gravity);
+  WindowAttrs& DontPropagate(uint32_t mask);
+  WindowAttrs& BackPixel(uint32_t pixel);
+
+  const ValueList& Values() const { return values_; }
+
+ private:
+  ValueList values_;
+};
+
+// The window geometry/stacking changes lwm makes. Same deal.
+class WindowChanges {
+ public:
+  WindowChanges& X(int x);
+  WindowChanges& Y(int y);
+  WindowChanges& Width(int w);
+  WindowChanges& Height(int h);
+  WindowChanges& BorderWidth(int bw);
+  WindowChanges& Sibling(Window w);
+  WindowChanges& StackMode(uint32_t mode);
+
+  // Sets x, y, width and height from a rectangle.
+  WindowChanges& Rectangle(const Rect& r);
+
+  // Sets only the fields named by a client's ConfigureRequest mask, from that
+  // request's values. Used where lwm passes a client's request through.
+  WindowChanges& FromRequestMask(uint16_t value_mask,
+                                 int x,
+                                 int y,
+                                 int width,
+                                 int height,
+                                 int border_width,
+                                 Window sibling,
+                                 uint32_t stack_mode);
+
+  const ValueList& Values() const { return values_; }
+
+ private:
+  ValueList values_;
+};
+
+// The graphics context settings lwm uses.
+class GCValues {
+ public:
+  GCValues& Function(uint32_t fn);
+  GCValues& Foreground(uint32_t pixel);
+  GCValues& Background(uint32_t pixel);
+  GCValues& LineWidth(uint32_t width);
+  GCValues& LineStyle(uint32_t style);
+  GCValues& CapStyle(uint32_t style);
+  GCValues& JoinStyle(uint32_t style);
+  GCValues& SubwindowMode(uint32_t mode);
+
+  const ValueList& Values() const { return values_; }
+
+ private:
+  ValueList values_;
+};
+
+// ---------------------------------------------------------------------------
+// Connection, screen and event queue.
+// ---------------------------------------------------------------------------
+
+// Opens the connection to the X server. Returns false on failure.
+extern bool OpenDisplay();
+extern void CloseDisplay();
+
 // Returns the Xlib Display that backs our connection, as a void* so that this
 // header doesn't have to name an Xlib type. xfont.cc is the only legitimate
 // caller: Xft has no XCB port, so text rendering is the one thing that still
 // needs a real Display. Everything else goes over XCB.
 extern void* XftDisplay();
+
+// Facts about the screen, from the connection setup. lwm supports exactly one
+// screen; ScreenCount() exists only so start-up can complain about the rest.
+extern Window Root();
+extern int ScreenCount();
+extern int ScreenWidth();
+extern int ScreenHeight();
+extern unsigned long Black();
+extern unsigned long White();
+extern Colormap DefaultColourmap();
+extern xcb_visualid_t DefaultVisual();
+extern uint8_t DefaultDepth();
+
+// The DISPLAY value to hand to child processes.
+extern std::string DisplayName();
+
+// Waits for every request issued so far to be processed by the server, so
+// that any errors they provoke have arrived before we carry on. This is a
+// real round trip, so use it sparingly.
+extern void Sync();
+
+// Pushes everything queued to the server. XCB never does this behind your
+// back, so exactly one place calls it: the top of the event loop, just before
+// select(). Individual shim functions must not.
+extern void Flush();
+
+// The file descriptor to select() on for incoming events.
+extern int ConnectionFD();
+
+// True if the connection has been shut down (server exit, protocol error).
+extern bool ConnectionIsBroken();
+
+// Returns the next queued event, or null if there are none. The caller owns
+// the result and must free() it.
+extern xcb_generic_event_t* NextEvent();
+
+// The sequence number the next request issued will get. Used to bracket a
+// range of requests whose errors we intend to ignore; see error.h.
+extern uint32_t NextRequestSequence();
+
+// Selects the given event mask on the root window, which is how a window
+// manager claims the display. Returns false if another window manager
+// already holds it - unlike Xlib, XCB can answer that question immediately
+// rather than via a deferred BadAccess in the error handler.
+extern bool SelectRootEvents(Window root, uint32_t event_mask);
+
+// ---------------------------------------------------------------------------
+// Windows.
+// ---------------------------------------------------------------------------
 
 extern int XMoveResizeWindow(Window w, const Rect& r);
 extern int XMoveResizeWindow(Window w,
@@ -139,14 +278,29 @@ struct FocusWindow {
 };
 extern FocusWindow XGetInputFocus();
 
-extern int XConfigureWindow(Window w, unsigned int val_mask, XWindowChanges* v);
-extern int XChangeWindowAttributes(Window w,
-                                   unsigned int val_mask,
-                                   XSetWindowAttributes* v);
+extern int XConfigureWindow(Window w, const WindowChanges& changes);
+extern int XChangeWindowAttributes(Window w, const WindowAttrs& attrs);
 
 extern void SendClientMessage(Window w, Atom a, long data0, long data1);
 
-extern XWindowAttributes XGetWindowAttributes(Window w);
+// What lwm wants to know about a window. Note that under XCB this needs two
+// requests, since GetWindowAttributes carries no geometry - Xlib was hiding
+// a second round trip here all along.
+struct WindowAttributes {
+  Rect rect;
+  int border_width = 0;
+  bool override_redirect = false;
+  // True if the window is mapped and all its ancestors are mapped.
+  bool viewable = false;
+  // InputOnly windows have no border width to set, among other things.
+  bool input_only = false;
+  // The union of every client's event selections on this window, used to spot
+  // which of a Java app's child windows will accept focus.
+  uint32_t all_event_masks = 0;
+  bool ok = false;
+};
+
+extern WindowAttributes XGetWindowAttributes(Window w);
 
 struct WindowGeometry {
   Window parent;
@@ -206,170 +360,6 @@ void SendEvent(Window w, bool propagate, uint32_t event_mask, const T& event) {
   SendEventRaw(w, propagate, event_mask, buf);
 }
 
-extern int XGrabButton(unsigned int button,
-                       unsigned int modifiers,
-                       Window grab_window,
-                       bool owner_events,
-                       unsigned int event_mask,
-                       int pointer_mode,
-                       int keyboard_mode,
-                       Window confine_to,
-                       Cursor cursor);
-extern int XUngrabButton(unsigned int button,
-                         unsigned int modifiers,
-                         Window grab_window);
-
-extern Atom XInternAtom(const std::string& name);
-
-extern int XChangeProperty(Window w,
-                           Atom property,
-                           Atom type,
-                           int format,
-                           int mode,
-                           const unsigned char* data,
-                           int nelements);
-
-// WindowProperty is the result of reading a property off a window. It owns
-// its data, so there is nothing for the caller to free.
-//
-// Note the deliberate absence of a raw `unsigned char* data`. Xlib expands a
-// format-32 property into an array of `long`, which is 64 bits on LP64, while
-// XCB hands back the actual 32-bit wire data. Call sites that cast the raw
-// bytes to `unsigned long*` are therefore correct under one library and
-// silently wrong under the other, and the symptom is garbage (corrupt icons,
-// nonsense struts) rather than a crash. So the raw pointer is not on offer:
-// read 32-bit properties through Data32(), strings through Data8(), and let
-// this one place own the difference. See docs/xcb-migration-plan.md, hazard 1.
-struct WindowProperty {
-  Atom actual_type = 0;
-  int actual_format = 0;  // Bits per item: 8, 16 or 32.
-  unsigned long nitems = 0;
-  unsigned long bytes_after = 0;
-  int status = 0;  // Success, or an X error code.
-
-  // ok() is true if the property was read and had some content.
-  bool ok() const { return status == Success && nitems > 0; }
-
-  // The property contents as 32-bit words. Empty unless actual_format == 32.
-  const std::vector<uint32_t>& Data32() const { return data32; }
-
-  // The property contents as bytes. Used for string properties (format 8).
-  const std::string& Data8() const { return data8; }
-
-  std::vector<uint32_t> data32;
-  std::string data8;
-};
-
-// Wraps XGetWindowProperty with offset=0 and delete=false, which is what
-// every call site in this codebase wants. length is in 32-bit multiples, as
-// the underlying call defines it.
-extern WindowProperty XGetWindowProperty(Window w,
-                                         Atom property,
-                                         long length,
-                                         Atom req_type);
-
-extern Reply<XWMHints> XGetWMHints(Window w);
-
-// Returns the atoms listed in the window's WM_PROTOCOLS property, or an empty
-// vector if it has none.
-extern std::vector<Atom> XGetWMProtocols(Window w);
-
-// Returns None if the window has no WM_TRANSIENT_FOR hint.
-extern Window XGetTransientForHint(Window w);
-
-extern bool XGetWMNormalHints(Window w,
-                              XSizeHints* hints,
-                              long* supplied_return);
-
-extern GC XCreateGC(Window w, unsigned long value_mask, XGCValues* values);
-extern int XSetLineAttributes(GC gc,
-                              unsigned int line_width,
-                              int line_style,
-                              int cap_style,
-                              int join_style);
-
-// Waits for every request issued so far to be processed by the server, so
-// that any errors they provoke have arrived before we carry on. Under XCB
-// this is a real round trip, not a flush, so use it sparingly.
-extern void Sync();
-
-// Pushes everything queued to the server. XCB, unlike Xlib, never does this
-// behind your back, so exactly one place calls it: the top of the event loop,
-// just before select(). Individual shim functions must not.
-extern void Flush();
-
-// Opens the connection to the X server, filling in both dpy and conn.
-// Returns false if the display couldn't be opened.
-extern bool OpenDisplay();
-extern void CloseDisplay();
-
-// The file descriptor to select() on for incoming events.
-extern int ConnectionFD();
-
-// True if the connection has been shut down (server exit, protocol error).
-// This replaces Xlib's IO error handler, which lwm never had.
-extern bool ConnectionIsBroken();
-
-// Returns the next queued event, or null if there are none. The caller owns
-// the result and must free() it.
-extern xcb_generic_event_t* NextEvent();
-
-// The sequence number the next request issued will get. Used to bracket a
-// range of requests whose errors we intend to ignore; see error.h.
-extern uint32_t NextRequestSequence();
-
-// Selects the given event mask on the root window, which is how a window
-// manager claims the display. Returns false if another window manager
-// already holds it - unlike Xlib, XCB can answer that question immediately
-// rather than via a deferred BadAccess in the error handler.
-extern bool SelectRootEvents(Window root, uint32_t event_mask);
-
-struct RandRSupport {
-  bool have_rr;
-  int event_base;
-  int error_base;
-};
-extern RandRSupport XRRQueryExtension();
-extern void XRRSelectInput(Window w, int mask);
-
-// The visible area of one enabled monitor. setScreenAreasFromXRandR() wants
-// nothing else out of RandR, so the shim reduces the whole CRTC walk to this.
-// Disabled CRTCs (mode == 0) are left out.
-extern std::vector<Rect> XRRGetVisibleAreas(Window root);
-
-extern Cursor XCreateFontCursor(unsigned int shape);
-extern void XRecolorCursor(Cursor c, XColor* fg, XColor* bg);
-// Returns true if the colour was successfully allocated.
-extern bool XAllocNamedColor(Colormap cmap,
-                             const std::string& name,
-                             XColor* screen_def,
-                             XColor* exact_def);
-
-// Returns null if there's no resource manager string set.
-extern char* XResourceManagerString();
-
-extern void XDeleteProperty(Window w, Atom property);
-
-extern void XChangeActivePointerGrab(unsigned int event_mask,
-                                     Cursor cursor,
-                                     Time time);
-
-#ifdef SHAPE
-extern void XShapeSelectInput(Window w, unsigned long mask);
-// Returns how many rectangles make up the window's shape. lwm only ever asks
-// "is this more than one?" (i.e. is the window non-rectangular), so the shim
-// returns the count rather than a list the caller then has to free.
-extern int XShapeCountRectangles(Window w, int kind);
-extern void XShapeCombineShape(Window dest,
-                               int dest_kind,
-                               int x_off,
-                               int y_off,
-                               Window src,
-                               int src_kind,
-                               int op);
-extern int XShapeQueryExtension(int* event_base, int* error_base);
-#endif
-
 // Creates a window with the given properties, whose parent is the root window.
 extern Window CreateNamedWindow(const std::string& name,
                                 const Rect& rect,
@@ -384,15 +374,181 @@ struct WindowTree {
   Window parent;
   Window root;
   std::vector<Window> children;
-  unsigned int num_children;
 
   // Query returns the set of children of the given window.
-  static WindowTree Query(Display* dpy, Window w);
+  static WindowTree Query(Window w);
 
   // Parent returns the parent window of w, or 0 if the parent is the root
   // window.
   static Window ParentOf(Window w);
 };
+
+// ---------------------------------------------------------------------------
+// Input.
+// ---------------------------------------------------------------------------
+
+extern int XGrabButton(unsigned int button,
+                       unsigned int modifiers,
+                       Window grab_window,
+                       bool owner_events,
+                       unsigned int event_mask,
+                       int pointer_mode,
+                       int keyboard_mode,
+                       Window confine_to,
+                       Cursor cursor);
+extern int XUngrabButton(unsigned int button,
+                         unsigned int modifiers,
+                         Window grab_window);
+
+extern void XChangeActivePointerGrab(unsigned int event_mask,
+                                     Cursor cursor,
+                                     Time time);
+
+// ---------------------------------------------------------------------------
+// Properties and ICCCM hints.
+// ---------------------------------------------------------------------------
+
+extern Atom XInternAtom(const std::string& name);
+
+extern int XChangeProperty(Window w,
+                           Atom property,
+                           Atom type,
+                           int format,
+                           const void* data,
+                           int nelements);
+
+extern void XDeleteProperty(Window w, Atom property);
+
+// WindowProperty is the result of reading a property off a window. It owns
+// its data, so there is nothing for the caller to free.
+//
+// Note the deliberate absence of a raw `unsigned char* data`. Xlib expanded a
+// format-32 property into an array of `long`, which is 64 bits on LP64, while
+// XCB hands back the actual 32-bit wire data. Call sites that cast the raw
+// bytes to `unsigned long*` were therefore correct under one library and
+// silently wrong under the other, and the symptom is garbage (corrupt icons,
+// nonsense struts) rather than a crash. So the raw pointer is not on offer:
+// read 32-bit properties through Data32(), strings through Data8(), and let
+// this one place own the difference. See docs/xcb-migration-plan.md, hazard 1.
+struct WindowProperty {
+  Atom actual_type = 0;
+  int actual_format = 0;  // Bits per item: 8, 16 or 32.
+  unsigned long nitems = 0;
+  unsigned long bytes_after = 0;
+  bool success = false;
+
+  // ok() is true if the property was read and had some content.
+  bool ok() const { return success && nitems > 0; }
+
+  // The property contents as 32-bit words. Empty unless actual_format == 32.
+  const std::vector<uint32_t>& Data32() const { return data32; }
+
+  // The property contents as bytes. Used for string properties (format 8).
+  const std::string& Data8() const { return data8; }
+
+  std::vector<uint32_t> data32;
+  std::string data8;
+};
+
+// Reads a property, from offset 0 and without deleting it, which is what
+// every call site in this codebase wants. length is in 32-bit multiples, as
+// the underlying request defines it. Pass type = kAnyPropertyType to accept
+// whatever type the property happens to have.
+extern const Atom kAnyPropertyType;
+extern WindowProperty XGetWindowProperty(Window w,
+                                         Atom property,
+                                         long length,
+                                         Atom req_type);
+
+// The parts of WM_HINTS lwm cares about (ICCCM section 4.1.2.4).
+struct WMHints {
+  bool ok = false;
+  bool has_input = false;
+  bool input = false;
+  bool has_initial_state = false;
+  int initial_state = 0;
+  Pixmap icon_pixmap = 0;
+  Pixmap icon_mask = 0;
+};
+extern WMHints XGetWMHints(Window w);
+
+// The parts of WM_NORMAL_HINTS lwm cares about (ICCCM section 4.1.2.3).
+// A missing field is reported as absent rather than defaulted, because the
+// DimensionLimiter treats "no minimum" differently from "minimum of zero".
+struct NormalHints {
+  bool ok = false;
+  bool has_min_size = false;
+  bool has_max_size = false;
+  bool has_base_size = false;
+  bool has_resize_inc = false;
+  int min_width = 0, min_height = 0;
+  int max_width = 0, max_height = 0;
+  int base_width = 0, base_height = 0;
+  int width_inc = 1, height_inc = 1;
+};
+extern NormalHints XGetWMNormalHints(Window w);
+
+// Returns the atoms listed in the window's WM_PROTOCOLS property, or an empty
+// vector if it has none.
+extern std::vector<Atom> XGetWMProtocols(Window w);
+
+// Returns 0 if the window has no WM_TRANSIENT_FOR hint.
+extern Window XGetTransientForHint(Window w);
+
+// ---------------------------------------------------------------------------
+// Graphics contexts, colours and cursors.
+// ---------------------------------------------------------------------------
+
+extern GC XCreateGC(Window w, const GCValues& values);
+
+// Changes settings on an existing GC. Used for the dotted separator line in
+// the unhide menu, which shares the menu's GC.
+extern void XChangeGC(GC gc, const GCValues& values);
+
+// Looks up a colour by name ("white", "#A0522D", ...) and returns the pixel
+// value to draw with. Returns black if the name can't be resolved.
+extern unsigned long ColourByName(const std::string& name);
+
+// Creates a cursor from the standard cursor font. Unlike Xlib, the colours
+// are given at creation time, so there is no separate recolour step.
+extern Cursor CreateFontCursor(unsigned int shape,
+                               unsigned long fg,
+                               unsigned long bg);
+
+// ---------------------------------------------------------------------------
+// Extensions.
+// ---------------------------------------------------------------------------
+
+struct RandRSupport {
+  bool have_rr;
+  int event_base;
+};
+// Initialises RandR and returns the event number its ScreenChangeNotify will
+// arrive as. Must be called before any other RandR request.
+extern RandRSupport XRRQueryExtension();
+extern void XRRSelectInput(Window w);
+
+// The visible area of each enabled monitor. setScreenAreasFromXRandR() wants
+// nothing else out of RandR, so the shim reduces the whole CRTC walk to this.
+// Disabled CRTCs (mode == 0) are left out.
+extern std::vector<Rect> XRRGetVisibleAreas(Window root);
+
+#ifdef SHAPE
+// Initialises the Shape extension and returns the event number its
+// ShapeNotify will arrive as, or -1 if the server doesn't support it.
+extern int XShapeQueryExtension();
+extern void XShapeSelectInput(Window w);
+// Returns how many rectangles make up the window's bounding shape. lwm only
+// ever asks "is this more than one?" (i.e. is the window non-rectangular), so
+// the shim returns the count rather than a list the caller then has to free.
+extern int XShapeCountRectangles(Window w);
+// Applies src's bounding shape to dest, offset by (x_off, y_off).
+extern void XShapeCombineShape(Window dest, int x_off, int y_off, Window src);
+#endif
+
+// ---------------------------------------------------------------------------
+// Icons.
+// ---------------------------------------------------------------------------
 
 // ImageIcon holds and image, and optionally a mask, for painting an icon on
 // the screen. It is used to draw application icons in the unhide menu, and in
@@ -470,10 +626,11 @@ class ImageIcon {
 }  // namespace xlib
 
 /*
- * This should really have been in X.h --- if you select both ButtonPress
- * and ButtonRelease events, the server makes an automatic grab on the
- * pressed button for you. This is almost always exactly what you want.
+ * This should really have been in the protocol headers --- if you select both
+ * ButtonPress and ButtonRelease events, the server makes an automatic grab on
+ * the pressed button for you. This is almost always exactly what you want.
  */
-#define ButtonMask (ButtonPressMask | ButtonReleaseMask)
+#define ButtonMask \
+  (XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE)
 
 #endif  // LWM_XLIB_H_included

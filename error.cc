@@ -21,6 +21,8 @@
 #include <execinfo.h>
 #endif
 
+#include <unistd.h>
+
 #include <vector>
 
 #include "error.h"

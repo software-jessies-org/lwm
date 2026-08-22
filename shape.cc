@@ -37,11 +37,10 @@ extern void setShape(Client* c) {
   if (!shape) {
     return;
   }
-  xlib::XShapeSelectInput(c->window, ShapeNotifyMask);
-  if (xlib::XShapeCountRectangles(c->window, ShapeBounding) > 1) {
+  xlib::XShapeSelectInput(c->window);
+  if (xlib::XShapeCountRectangles(c->window) > 1) {
     int border = borderWidth();
-    xlib::XShapeCombineShape(c->parent, ShapeBounding, border - 1, border - 1,
-                             c->window, ShapeBounding, ShapeSet);
+    xlib::XShapeCombineShape(c->parent, border - 1, border - 1, c->window);
   }
 #else
   c = c;
@@ -71,7 +70,7 @@ extern int shapeEvent(xcb_generic_event_t* ev) {
 /*ARGSUSED*/
 extern int isShaped(Window w) {
 #ifdef SHAPE
-  return xlib::XShapeCountRectangles(w, ShapeBounding) > 1;
+  return xlib::XShapeCountRectangles(w) > 1;
 #else
   w = w;
   return 0;
@@ -80,11 +79,14 @@ extern int isShaped(Window w) {
 
 extern int serverSupportsShapes() {
 #ifdef SHAPE
-  int shape_error;
-  int res = xlib::XShapeQueryExtension(&shape_event, &shape_error);
-  LOGI() << "Shape extension supported: " << res << " (event " << shape_event
-         << ")";
-  return res;
+  const int first_event = xlib::XShapeQueryExtension();
+  if (first_event < 0) {
+    LOGI() << "Shape extension not supported by the server";
+    return 0;
+  }
+  shape_event = first_event;
+  LOGI() << "Shape extension supported (event " << shape_event << ")";
+  return 1;
 #else
   LOGI() << "Shape support not enabled";
   return 0;

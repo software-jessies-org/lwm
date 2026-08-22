@@ -10,13 +10,13 @@ std::ostream& operator<<(std::ostream& os,
 #define OUT(flag, var)     \
   if (e.value_mask & flag) \
     os << " " #var "->" << e.var;
-  OUT(CWX, x);
-  OUT(CWY, y);
-  OUT(CWWidth, width);
-  OUT(CWHeight, height);
-  OUT(CWBorderWidth, border_width);
-  OUT(CWSibling, sibling);
-  OUT(CWStackMode, stack_mode);
+  OUT(XCB_CONFIG_WINDOW_X, x);
+  OUT(XCB_CONFIG_WINDOW_Y, y);
+  OUT(XCB_CONFIG_WINDOW_WIDTH, width);
+  OUT(XCB_CONFIG_WINDOW_HEIGHT, height);
+  OUT(XCB_CONFIG_WINDOW_BORDER_WIDTH, border_width);
+  OUT(XCB_CONFIG_WINDOW_SIBLING, sibling);
+  OUT(XCB_CONFIG_WINDOW_STACK_MODE, stack_mode);
 #undef OUT
   return os;
 }
@@ -59,9 +59,9 @@ std::string describeFocusMode(int mode) {
 #define CASE_RETURN(x) \
   case x:              \
     return #x
-    CASE_RETURN(NotifyNormal);
-    CASE_RETURN(NotifyGrab);
-    CASE_RETURN(NotifyUngrab);
+    CASE_RETURN(XCB_NOTIFY_MODE_NORMAL);
+    CASE_RETURN(XCB_NOTIFY_MODE_GRAB);
+    CASE_RETURN(XCB_NOTIFY_MODE_UNGRAB);
 #undef CASE_RETURN
   }
   return "Unknown";
@@ -72,14 +72,14 @@ std::string describeFocusDetail(int detail) {
 #define CASE_RETURN(x) \
   case x:              \
     return #x
-    CASE_RETURN(NotifyAncestor);
-    CASE_RETURN(NotifyVirtual);
-    CASE_RETURN(NotifyInferior);
-    CASE_RETURN(NotifyNonlinear);
-    CASE_RETURN(NotifyNonlinearVirtual);
-    CASE_RETURN(NotifyPointer);
-    CASE_RETURN(NotifyPointerRoot);
-    CASE_RETURN(NotifyDetailNone);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_ANCESTOR);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_VIRTUAL);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_INFERIOR);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_NONLINEAR);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_POINTER);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_POINTER_ROOT);
+    CASE_RETURN(XCB_NOTIFY_DETAIL_NONE);
 #undef CASE_RETURN
   }
   return "Unknown";

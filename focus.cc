@@ -15,12 +15,13 @@
 namespace {
 
 void focusChildrenOf(Client* c, Window parent) {
-  xlib::WindowTree wtree = xlib::WindowTree::Query(dpy, parent);
+  xlib::WindowTree wtree = xlib::WindowTree::Query(parent);
   for (Window win : wtree.children) {
-    const XWindowAttributes attr = xlib::XGetWindowAttributes(win);
-    if (attr.all_event_masks & FocusChangeMask) {
+    const xlib::WindowAttributes attr = xlib::XGetWindowAttributes(win);
+    if (attr.all_event_masks & XCB_EVENT_MASK_FOCUS_CHANGE) {
       LOGD(c) << "  Focusing child " << WinID(win);
-      xlib::XSetInputFocus(win, RevertToPointerRoot, CurrentTime);
+      xlib::XSetInputFocus(win, XCB_INPUT_FOCUS_POINTER_ROOT,
+                           XCB_CURRENT_TIME);
     }
   }
 }
@@ -168,10 +169,11 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
       // hotkeys in) if they lose then regain focus. When a window is newly
       // opened it will respond to keypresses, but not on focus regain.
       LOGD(c) << "Focusing main window " << WinID(c->window);
-      xlib::XSetInputFocus(c->window, RevertToPointerRoot, CurrentTime);
+      xlib::XSetInputFocus(c->window, XCB_INPUT_FOCUS_POINTER_ROOT,
+                           XCB_CURRENT_TIME);
       if (c->proto & Ptakefocus) {
         xlib::SendClientMessage(c->window, wm_protocols, wm_take_focus,
-                                CurrentTime);
+                                XCB_CURRENT_TIME);
       }
     } else if (c->proto & Ptakefocus) {
       // Main window doesn't accept focus, but there's an indication that its
@@ -183,12 +185,12 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
       focusChildrenOf(c, c->window);
     } else {
       // FIXME: is this sensible?
-      xlib::XSetInputFocus(None, RevertToPointerRoot, CurrentTime);
+      xlib::XSetInputFocus(XCB_NONE, XCB_INPUT_FOCUS_POINTER_ROOT,
+                           XCB_CURRENT_TIME);
     }
   }
   xlib::XChangeProperty(LScr::I->Root(), ewmh_atom[_NET_ACTIVE_WINDOW],
-                        XA_WINDOW, 32, PropModeReplace,
-                        (unsigned char*)&c->window, 1);
+                        XCB_ATOM_WINDOW, 32, &c->window, 1);
 
   if (was_focused && (was_focused != c)) {
     was_focused->FocusLost();

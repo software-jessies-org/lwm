@@ -1,19 +1,20 @@
 #include "xfont.h"
 
-// This is the one translation unit allowed to know about Xlib and Xft; see
-// the comment in xfont.h. The build enforces it (`make check-x11-boundary`).
+// One of only two translation units allowed to include Xlib; see xfont.h.
+// The build enforces it (`make check-x11-boundary`).
 #include <X11/Xft/Xft.h>
 #include <X11/Xlib.h>
 
 #include "error.h"
 #include "log.h"
 #include "resource.h"
+#include "xbridge.h"
 
 namespace xfont {
 namespace {
 
 // The Xlib display, fetched once in Init(). This is the same connection the
-// rest of lwm talks XCB over; see xlib::XftDisplay().
+// rest of lwm talks XCB over.
 Display* dpy;
 int screen;
 
@@ -37,14 +38,14 @@ XftColor* colourFor(Colour c) {
 void allocColour(Resources::SR res, XftColor* into) {
   const Resources::RGB rgb = Resources::I->GetRGB(res);
   XRenderColor xrc{rgb.r, rgb.g, rgb.b, 0xffff};
-  XftColorAllocValue(dpy, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen),
-                     &xrc, into);
+  XftColorAllocValue(dpy, DefaultVisual(dpy, screen),
+                     DefaultColormap(dpy, screen), &xrc, into);
 }
 
 }  // namespace
 
 void Init() {
-  dpy = static_cast<Display*>(xlib::XftDisplay());
+  dpy = static_cast<Display*>(xbridge::Display());
   screen = DefaultScreen(dpy);
 
   const std::string titleFont = Resources::I->Get(Resources::TITLE_FONT);
@@ -76,7 +77,11 @@ int TextWidth(const std::string& s) {
   return extents.xOff;
 }
 
-void DrawString(Window w, int x, int y, const std::string& s, Colour c) {
+void DrawString(xcb_window_t w,
+                int x,
+                int y,
+                const std::string& s,
+                Colour c) {
   XftDraw* draw = XftDrawCreate(dpy, w, DefaultVisual(dpy, screen),
                                 DefaultColormap(dpy, screen));
   XftDrawStringUtf8(draw, colourFor(c), g_font, x, y,

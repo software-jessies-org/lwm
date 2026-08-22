@@ -239,8 +239,9 @@ void Hider::OpenMenu(const xcb_button_press_event_t* e) {
   current_item_ = itemAt(e->root_x, e->root_y);
   showHighlightBox(current_item_);
   mapAndRaise(LScr::I->Menu(), x_min_, y_min_, width_, height_);
-  xlib::XChangeActivePointerGrab(
-      ButtonMask | ButtonMotionMask | OwnerGrabButtonMask, None, CurrentTime);
+  xlib::XChangeActivePointerGrab(ButtonMask | XCB_EVENT_MASK_BUTTON_MOTION |
+                                     XCB_EVENT_MASK_OWNER_GRAB_BUTTON,
+                                 XCB_NONE, XCB_CURRENT_TIME);
 }
 
 int Hider::itemAt(int x, int y) const {
@@ -269,7 +270,11 @@ void Hider::Paint() {
     // Show a dotted line to separate the last hidden window from the first
     // non-hidden one.
     if (!open_content_[i].hidden && (i == 0 || open_content_[i - 1].hidden)) {
-      xlib::XSetLineAttributes(gc, 1, LineOnOffDash, CapButt, JoinMiter);
+      xlib::XChangeGC(gc, xlib::GCValues()
+                              .LineWidth(1)
+                              .LineStyle(XCB_LINE_STYLE_ON_OFF_DASH)
+                              .CapStyle(XCB_CAP_STYLE_BUTT)
+                              .JoinStyle(XCB_JOIN_STYLE_MITER));
       xlib::XDrawLine(popup, gc, 0, y, width_, y);
     }
 

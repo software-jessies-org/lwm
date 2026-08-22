@@ -6,7 +6,9 @@
 #include <string>
 #include <vector>
 
-#include "xlib.h"
+// Not "xlib.h": xfont.cc reads resources and is one of the two files that
+// includes Xlib, which can't coexist with xlib.h's typedefs.
+#include <xcb/xcb_xrm.h>
 
 class Resources {
  public:
@@ -94,12 +96,12 @@ class Resources {
  private:
   Resources();
   void Set(SR res,
-           XrmDatabase db,
+           xcb_xrm_database_t* db,
            const std::string& name,
            const char* cls,
            const std::string& dflt);
   void Set(IR res,
-           XrmDatabase db,
+           xcb_xrm_database_t* db,
            const std::string& name,
            const char* cls,
            int dflt);

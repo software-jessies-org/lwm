@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 #include "client.h"
 #include "debug.h"
 #include "ewmh.h"
@@ -29,14 +31,11 @@ string nextToken(string& victim) {
 }
 
 Rect fullScreenRect() {
-  return Rect{0, 0, DisplayWidth(dpy, 0), DisplayHeight(dpy, 0)};
+  return Rect{0, 0, xlib::ScreenWidth(), xlib::ScreenHeight()};
 }
 
 unsigned long deadColour() {
-  XColor colour, exact;
-  xlib::XAllocNamedColor(DefaultColormap(dpy, LScr::kOnlyScreenIndex), "grey",
-                         &colour, &exact);
-  return colour.pixel;
+  return xlib::ColourByName("grey");
 }
 
 void DebugCLI::CmdXRandr(string line) {

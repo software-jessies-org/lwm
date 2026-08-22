@@ -56,7 +56,6 @@ struct EWMHWindowState {
 };
 
 std::ostream& operator<<(std::ostream& os, const EWMHWindowState& s);
-std::ostream& operator<<(std::ostream& os, const XSizeHints& s);
 
 /**
  * These are indexes into the ewmh_atom array. Only atoms actually supported

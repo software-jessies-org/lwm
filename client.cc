@@ -148,7 +148,7 @@ void Client::FocusGained() {
     // on the client's window. We must relinquish this grabbing when we gain
     // focus, otherwise the client itself won't get the events when it is
     // focused.
-    xlib::XUngrabButton(AnyButton, AnyModifier, window);
+    xlib::XUngrabButton(XCB_BUTTON_INDEX_ANY, XCB_MOD_MASK_ANY, window);
   }
   DrawBorder();
 }
@@ -160,9 +160,9 @@ void Client::FocusLost() {
     // notably java apps, will grab input focus when clicked on, xterm and
     // many others do not. Thus, we need to grab click notifications ourselves
     // so that we can properly support click-to-focus.
-    xlib::XGrabButton(AnyButton, AnyModifier, window, false,
-                      ButtonPressMask | ButtonReleaseMask, GrabModeAsync,
-                      GrabModeSync, None, None);
+    xlib::XGrabButton(XCB_BUTTON_INDEX_ANY, XCB_MOD_MASK_ANY, window, false,
+                      ButtonMask, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_SYNC,
+                      XCB_NONE, XCB_NONE);
   }
   DrawBorder();
 }
@@ -260,7 +260,8 @@ std::string makeSizeString(int x, int y) {
 void Client_SizeFeedback() {
   // Make the popup 10% wider than the widest string it needs to show.
   popup_width =
-      xfont::TextWidth(makeSizeString(DisplayWidth(dpy, 0), DisplayHeight(dpy, 0)));
+      xfont::TextWidth(makeSizeString(xlib::ScreenWidth(),
+                                      xlib::ScreenHeight()));
   popup_width += popup_width / 10;
 
   // Put the popup in the right place to report on the window's size.
@@ -320,21 +321,19 @@ void Client::Raise() {
 void Client::Close() {
   // Terminate the client nicely if possible. Be brutal otherwise.
   if (proto & Pdelete) {
-    xlib::SendClientMessage(window, wm_protocols, wm_delete, CurrentTime);
+    xlib::SendClientMessage(window, wm_protocols, wm_delete, XCB_CURRENT_TIME);
   } else {
     xlib::XKillClient(window);
   }
 }
 
 void Client::SetState(int state) {
-  long data[2];
-
-  data[0] = (long)state;
-  data[1] = (long)None;
+  // WM_STATE is CARDINAL[2]/32: the state, then the icon window (which lwm
+  // never provides). 32-bit words, not longs - see xlib::WindowProperty.
+  const uint32_t data[2] = {uint32_t(state), XCB_NONE};
 
   state_ = state;
-  xlib::XChangeProperty(window, wm_state, wm_state, 32, PropModeReplace,
-                        (unsigned char*)data, 2);
+  xlib::XChangeProperty(window, wm_state, wm_state, 32, data, 2);
   ewmh_set_state(this);
 }
 
@@ -344,9 +343,8 @@ extern void Client_ResetAllCursors() {
     if (!c->framed) {
       continue;
     }
-    XSetWindowAttributes attr{};
-    attr.cursor = LScr::I->Cursors()->Root();
-    xlib::XChangeWindowAttributes(c->parent, CWCursor, &attr);
+    xlib::XChangeWindowAttributes(
+        c->parent, xlib::WindowAttrs().Cursor(LScr::I->Cursors()->Root()));
     c->cursor = ENone;
   }
 }
@@ -364,12 +362,12 @@ extern void Client_FreeAll() {
 }
 
 Client::Client(Window w,
-               const XWindowAttributes& attr,
+               const xlib::WindowAttributes& attr,
                const DimensionLimiter& x_limiter,
                const DimensionLimiter& y_limiter)
     : window(w),
       parent(LScr::I->Root()),
-      content_rect_(Rect::From<const XWindowAttributes&>(attr)),
+      content_rect_(attr.rect),
       x_limiter_(x_limiter),
       y_limiter_(y_limiter),
       original_border_width_(attr.border_width) {}
@@ -390,9 +388,8 @@ void Client::Release() {
   }
 
   // Give it back its initial border width.
-  XWindowChanges wc{};
-  wc.border_width = original_border_width_;
-  xlib::XConfigureWindow(window, CWBorderWidth, &wc);
+  xlib::XConfigureWindow(
+      window, xlib::WindowChanges().BorderWidth(original_border_width_));
 }
 
 void Client::EnterFullScreen() {

@@ -97,10 +97,10 @@ void manage(Client* c) {
   ewmh_get_strut(c);
 
   // Get the hints, window name, and normal hints (see ICCCM section 4.1.2.3).
-  xlib::Reply<XWMHints> hints = xlib::XGetWMHints(c->window);
+  const xlib::WMHints hints = xlib::XGetWMHints(c->window);
   if (Resources::I->ProcessAppIcons()) {
-    if (hints) {
-      c->SetIcon(xlib::ImageIcon::Create(hints->icon_pixmap, hints->icon_mask));
+    if (hints.ok) {
+      c->SetIcon(xlib::ImageIcon::Create(hints.icon_pixmap, hints.icon_mask));
     }
     c->SetIcon(ewmh_get_window_icon(c));
   }
@@ -123,13 +123,13 @@ void manage(Client* c) {
   getTransientFor(c);
 
   // Work out details for the Client structure from the hints.
-  if (hints && (hints->flags & InputHint)) {
-    c->accepts_focus = hints->input;
+  if (hints.has_input) {
+    c->accepts_focus = hints.input;
   }
 
   int state;
   if (!getWindowState(c->window, &state)) {
-    state = hints ? hints->initial_state : NormalState;
+    state = hints.has_initial_state ? hints.initial_state : NormalState;
   }
 
   // Sort out the window's position.
@@ -165,18 +165,21 @@ void manage(Client* c) {
   //
   // As pointed out by Adrian Colley, we can't change the window
   // border width at all for InputOnly windows.
-  const XWindowAttributes current_attr = xlib::XGetWindowAttributes(c->window);
-  if (current_attr.c_class != InputOnly) {
+  const xlib::WindowAttributes current_attr =
+      xlib::XGetWindowAttributes(c->window);
+  if (!current_attr.input_only) {
     xlib::XSetWindowBorderWidth(c->window, 0);
   }
 
-  XSetWindowAttributes attr;
-  attr.event_mask = ColormapChangeMask | EnterWindowMask | PropertyChangeMask |
-                    FocusChangeMask;
-  attr.win_gravity = StaticGravity;
-  attr.do_not_propagate_mask = ButtonMask;
   xlib::XChangeWindowAttributes(
-      c->window, CWEventMask | CWWinGravity | CWDontPropagate, &attr);
+      c->window,
+      xlib::WindowAttrs()
+          .EventMask(XCB_EVENT_MASK_COLOR_MAP_CHANGE |
+                     XCB_EVENT_MASK_ENTER_WINDOW |
+                     XCB_EVENT_MASK_PROPERTY_CHANGE |
+                     XCB_EVENT_MASK_FOCUS_CHANGE)
+          .WinGravity(XCB_GRAVITY_STATIC)
+          .DontPropagate(ButtonMask));
 
   if (c->framed) {
     xlib::XReparentWindow(c->window, c->parent, borderWidth(),
@@ -218,7 +221,7 @@ void getTransientFor(Client* c) {
   // Anyway, you have been warned: do not remove the setting of c->trans to
   // None on failure!
   c->trans = xlib::XGetTransientForHint(c->window);
-  if (c->trans != None) {
+  if (c->trans != XCB_NONE) {
     LOGD(c) << "Transient for window " << WinID(c->trans);
   }
 }
@@ -251,7 +254,8 @@ void Terminate(int signal) {
   Client_FreeAll();
 
   // Give up the input focus and the colourmap.
-  xlib::XSetInputFocus(PointerRoot, RevertToPointerRoot, CurrentTime);
+  xlib::XSetInputFocus(XCB_INPUT_FOCUS_POINTER_ROOT,
+                       XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME);
   // Closing the display dumps a load of BadMatch errors into the log. That's
   // unhelpful spam on the way out, so say we're not interested.
   ScopedIgnoreBadMatch ignorer;

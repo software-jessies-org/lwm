@@ -27,13 +27,10 @@ DEFINES = -DSHAPE
 # XCB does everything except text rendering. Xft is the one thing with no XCB
 # port, so libX11 stays in the link purely to serve it, bridged to our XCB
 # connection via x11-xcb's XGetXCBConnection. See "The one real blocker: Xft"
-# in docs/xcb-migration-plan.md; dropping these two is phase 4.
-PKGS = xcb xcb-icccm xcb-randr xcb-shape xcb-image xcb-xrm sm ice x11-xcb xft
-
-# Xlib's RandR and Shape bindings. Still needed while xlib.cc's internals are
-# being ported group by group (phase 3); the xcb-randr / xcb-shape entries
-# above are what replace them.
-PKGS += xrandr xext
+# in docs/xcb-migration-plan.md; dropping x11-xcb and xft is phase 4.
+#
+# libSM and libICE are unchanged by any of this: neither links libX11.
+PKGS = xcb xcb-icccm xcb-randr xcb-shape xcb-xrm sm ice x11-xcb xft
 
 PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKGS))
 PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKGS))
@@ -79,6 +76,7 @@ SRCS = \
 	test.cc \
 	tests.cc \
 	xdebugprint.cc \
+	xbridge.cc \
 	xfont.cc \
 	xlib.cc
 
@@ -97,22 +95,32 @@ lwm: $(OBJS)
 
 -include $(DEPS)
 
-# The X11 boundary gate. Only xfont.cc may reach for Xlib itself (it is the
-# Xft holdout), and xlib.h owns the bridge. If Xlib leaks back into the rest
-# of the tree the boundary has rotted; fail loudly rather than quietly.
+# The Xlib boundary gate. Xlib and lwm's own headers both define `Window`, to
+# different widths, so a translation unit may include one or the other but
+# never both - and only two files get to pick Xlib: xbridge.cc, which opens
+# the connection, and xfont.cc, which drives Xft. If Xlib leaks back into the
+# rest of the tree the boundary has rotted; fail loudly rather than quietly.
+#
+# X11/SM and X11/ICE are exempt: session management lives under the same
+# include prefix but is a separate library that doesn't link libX11 or define
+# any of its types.
+#
 # xdbg.cc, ruler.cc and setvisname.cc are standalone tools, not part of lwm,
-# and are deliberately exempt.
-X11_ALLOWED = xfont.cc xfont.h xlib.h xlib.cc
+# and aren't in SRCS at all.
+X11_ALLOWED = xfont.cc xbridge.cc
 check-x11-boundary:
-	@bad=$$(grep -l 'include *[<"]X11/' $(SRCS) *.h 2>/dev/null \
+	@bad=$$(for f in $(SRCS) *.h; do \
+	          if grep -E 'include *[<"]X11/' "$$f" 2>/dev/null \
+	              | grep -qvE 'X11/(SM|ICE)/'; then echo "$$f"; fi; \
+	        done \
 	        | grep -v -x -F -e $(shell echo '$(X11_ALLOWED)' | sed 's/ / -e /g') \
 	        || true); \
 	if [ -n "$$bad" ]; then \
-		echo "X11 headers included outside the allowed set ($(X11_ALLOWED)):" >&2; \
+		echo "Xlib headers included outside the allowed set ($(X11_ALLOWED)):" >&2; \
 		echo "$$bad" >&2; \
 		exit 1; \
 	fi
-	@echo "X11 boundary OK"
+	@echo "Xlib boundary OK"
 
 test: lwm check-x11-boundary
 	./lwm -test
