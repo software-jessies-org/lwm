@@ -226,8 +226,27 @@ void DebugCLI::NotifyClientAdd(Client* c) {
   char buf[64];
   snprintf(buf, sizeof(buf), "auto%d", name_counter++);
   debugCLI->debug_windows_[c->window] = buf;
-  debugCLI->debug_windows_[c->parent] = buf;
+  // Note we deliberately do not register c->parent here. At this point the
+  // client hasn't been through manage() yet, so its parent is still the root
+  // window - registering it would label every root-window operation as
+  // belonging to this client, and would still miss the frame. LScr::Furnish
+  // calls NotifyFrameCreated once the real frame exists.
   LOGD(c) << "Debugging auto-enabled for client";
+}
+
+// static
+void DebugCLI::NotifyFrameCreated(Client* c) {
+  if (!debugCLI || !c) {
+    return;
+  }
+  // Give the frame the same debug label as the client it belongs to, so that
+  // the frame's share of the X traffic - which is most of it - shows up in
+  // the trace under the same name.
+  const std::string name = debugCLI->LookupNameFor(c->window);
+  if (name.empty()) {
+    return;
+  }
+  debugCLI->debug_windows_[c->parent] = name;
 }
 
 // static

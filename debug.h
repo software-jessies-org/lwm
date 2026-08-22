@@ -30,6 +30,11 @@ class DebugCLI {
   static void NotifyClientAdd(Client* c);
   static void NotifyClientRemove(Client* c);
 
+  // Called by LScr::Furnish once a client's frame window exists, so the frame
+  // can inherit the client's debug label. Has no effect if debugging is
+  // disabled for that client.
+  static void NotifyFrameCreated(Client* c);
+
  private:
   void ProcessLine(std::string line);
   void CmdXRandr(std::string line);

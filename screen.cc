@@ -210,6 +210,7 @@ void LScr::Furnish(Client* c) {
                     SubstructureNotifyMask | PointerMotionMask;
   xlib::XChangeWindowAttributes(c->parent, CWEventMask, &attr);
   parents_[c->parent] = c;
+  DebugCLI::NotifyFrameCreated(c);
 }
 
 Client* LScr::GetClient(Window w, bool scan_parents) const {
