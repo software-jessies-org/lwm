@@ -122,16 +122,16 @@ unsigned long Resources::GetColour(SR sr) {
 }
 
 // Returns a short comprising two copies of the lowest byte in c.
-// This converts an 8-bit r, g or b component into a 16-bit value as required
-// by XRenderColor.
+// This converts an 8-bit r, g or b component into the 16-bit value X11 uses
+// for colour components.
 unsigned short extend(unsigned long c) {
   unsigned short result = c & 0xff;
   return result | (result << 8);
 }
 
-XRenderColor Resources::GetXRenderColor(SR sr) {
+Resources::RGB Resources::GetRGB(SR sr) {
   const unsigned long rgb = GetColour(sr);
-  return XRenderColor{extend(rgb >> 16), extend(rgb >> 8), extend(rgb), 0xffff};
+  return RGB{extend(rgb >> 16), extend(rgb >> 8), extend(rgb)};
 }
 
 // Retrieve an int resource.

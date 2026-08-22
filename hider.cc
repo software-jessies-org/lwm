@@ -7,6 +7,7 @@
 #include "menulayout.h"
 #include "resource.h"
 #include "screen.h"
+#include "xfont.h"
 #include "xlib.h"
 
 namespace {
@@ -24,7 +25,7 @@ void mapAndRaise(Window w, int xmin, int ymin, int width, int height) {
 }
 
 MenuStyle CurrentMenuStyle() {
-  return MenuStyle{textHeight()};
+  return MenuStyle{xfont::TextHeight()};
 }
 
 int menuIconYPad() {
@@ -218,7 +219,7 @@ void Hider::OpenMenu(XButtonEvent* e) {
       continue;
     }
     open_content_[i].name = c->MenuName();
-    const int tw = textWidth(open_content_[i].name) + menuMargins();
+    const int tw = xfont::TextWidth(open_content_[i].name) + menuMargins();
     if (tw > width_) {
       width_ = tw;
     }
@@ -259,9 +260,9 @@ void Hider::Paint() {
   const auto gc = LScr::I->GetMenuGC();
   for (int i = 0; i < open_content_.size(); i++) {
     const int y = i * itemHeight;
-    const int textY = y + g_font->ascent + MenuStyle::kYPadding / 2;
-    drawString(popup, menuLMargin(), textY, open_content_[i].name,
-               &g_font_popup_colour);
+    const int textY = y + xfont::TextAscent() + MenuStyle::kYPadding / 2;
+    xfont::DrawString(popup, menuLMargin(), textY, open_content_[i].name,
+                      xfont::Colour::POPUP);
     // Show a dotted line to separate the last hidden window from the first
     // non-hidden one.
     if (!open_content_[i].hidden && (i == 0 || open_content_[i - 1].hidden)) {

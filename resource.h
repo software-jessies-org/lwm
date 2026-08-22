@@ -53,8 +53,18 @@ class Resources {
   // Retrieve a string resource as a colour.
   unsigned long GetColour(SR r);
 
-  // Retrieve a string resource as an XRenderColor (used for Xft fonts).
-  XRenderColor GetXRenderColor(SR r);
+  // A colour split into 16-bit-per-channel components, as X11 wants them.
+  // Used for text rendering, which needs the components rather than a pixel
+  // value. Deliberately not an XRenderColor: resource.h must not name Xlib
+  // types (see docs/xcb-migration-plan.md, phase 0 step 2); xfont.cc converts.
+  struct RGB {
+    unsigned short r;
+    unsigned short g;
+    unsigned short b;
+  };
+
+  // Retrieve a string resource as separate colour components.
+  RGB GetRGB(SR r);
 
   // Retrieve an int resource.
   int GetInt(IR r);

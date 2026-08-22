@@ -30,6 +30,7 @@
 #include "screen.h"
 #include "shape.h"
 #include "xdebugprint.h"
+#include "xfont.h"
 #include "xlib.h"
 
 void EvExpose(XEvent* ev) {
@@ -130,7 +131,7 @@ void EvMapRequest(XEvent* ev) {
       if (c->framed) {
         LOGD(c) << "(map) reparenting framed window " << WinID(c->parent);
         xlib::XReparentWindow(c->window, c->parent, borderWidth(),
-                              borderWidth() + textHeight());
+                              borderWidth() + xfont::TextHeight());
       } else {
         LOGD(c) << "(map) reparenting unframed window " << WinID(c->parent);
         const Point p = c->ContentRect().origin();

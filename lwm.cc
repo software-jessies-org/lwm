@@ -30,15 +30,11 @@
 #include <signal.h>
 
 #include "lwm.h"
+#include "xfont.h"
 #include "xlib.h"
 
 bool is_initialising;
 Display* dpy;  // The connection to the X server.
-
-XftFont* g_font;
-XftColor g_font_active_title;
-XftColor g_font_inactive_title;
-XftColor g_font_popup_colour;
 
 bool shape;       // Does server have Shape Window extension?
 int shape_event;  // ShapeEvent event type.
@@ -129,28 +125,7 @@ extern int main(int argc, char* argv[]) {
 
   ewmh_init();
 
-  int screenID = DefaultScreen(dpy);
-  std::string titleFont = Resources::I->Get(Resources::TITLE_FONT);
-  g_font = XftFontOpenName(dpy, screenID, titleFont.c_str());
-  if (g_font == nullptr) {
-    fprintf(stderr, "Couldn't find font %s; falling back", titleFont.c_str());
-    g_font = XftFontOpenName(dpy, 0, "fixed");
-    if (g_font == nullptr) {
-      panic("Can't find a font");
-    }
-  }
-  XRenderColor xrc = Resources::I->GetXRenderColor(Resources::TITLE_COLOUR);
-  XftColorAllocValue(dpy, DefaultVisual(dpy, screenID),
-                     DefaultColormap(dpy, screenID), &xrc,
-                     &g_font_active_title);
-  xrc = Resources::I->GetXRenderColor(Resources::INACTIVE_TITLE_COLOUR);
-  XftColorAllocValue(dpy, DefaultVisual(dpy, screenID),
-                     DefaultColormap(dpy, screenID), &xrc,
-                     &g_font_inactive_title);
-  xrc = Resources::I->GetXRenderColor(Resources::POPUP_TEXT_COLOUR);
-  XftColorAllocValue(dpy, DefaultVisual(dpy, screenID),
-                     DefaultColormap(dpy, screenID), &xrc,
-                     &g_font_popup_colour);
+  xfont::Init();
 
   LScr::I = new LScr(dpy);
   LScr::I->Init();
@@ -269,39 +244,16 @@ void rrScreenChangeNotify(XEvent* ev) {
 }
 
 void setScreenAreasFromXRandR() {
-  XRRScreenResources* res = xlib::XRRGetScreenResourcesCurrent(LScr::I->Root());
-  if (!res) {
-    LOGE() << "Failed to get XRRScreenResources";
-    return;
-  }
-  xlib::XFreer res_freer((void*)res);
-  if (!res->ncrtc) {
-    LOGE() << "Empty list of CRTs";
-    return;
-  }
-  // Ignore any CRT with mode==0.
-  // Change nScrWidth/nScrHeight according to the total extent of all visible
+  // Change the screen dimensions according to the total extent of all visible
   // areas, and don't rely on the size provided in the event itself. This is
   // because when switching from internal+external monitors to internal only,
   // the first couple of notifications claim the old area. However, querying
   // the CRT info already gets the correct sizes and locations (including
-  // mode=0 for those that are disabled).
-  std::vector<Rect> visible;
-  for (int i = 0; i < res->ncrtc; i++) {
-    const RRCrtc crt = res->crtcs[i];
-    LOGI() << "Looking up CRT " << i << ": " << crt;
-    XRRCrtcInfo* crtInfo = xlib::XRRGetCrtcInfo(res, crt);
-    LOGI() << "  CRT size " << crtInfo->width << "x" << crtInfo->height
-           << ", offset " << crtInfo->x << "," << crtInfo->y
-           << " (mode=" << crtInfo->mode << ")";
-    if (!crtInfo->mode) {
-      continue;
-    }
-    const int xMin = crtInfo->x;
-    const int yMin = crtInfo->y;
-    const int xMax = xMin + crtInfo->width;
-    const int yMax = yMin + crtInfo->height;
-    visible.push_back(Rect{xMin, yMin, xMax, yMax});
+  // mode=0 for those that are disabled, which the shim drops).
+  const std::vector<Rect> visible =
+      xlib::XRRGetVisibleAreas(LScr::I->Root());
+  if (visible.empty()) {
+    return;  // The shim has already logged why.
   }
   LScr::I->SetVisibleAreas(visible);
 }
@@ -344,29 +296,4 @@ extern void shell(int button) {
     return;
   }
   RunCommand(command);
-}
-
-extern int textHeight() {
-  return g_font->height;
-}
-
-extern void drawString(Window w,
-                       int x,
-                       int y,
-                       const std::string& s,
-                       XftColor* c) {
-  int screenID = DefaultScreen(dpy);
-  XftDraw* draw = XftDrawCreate(dpy, w, DefaultVisual(dpy, screenID),
-                                DefaultColormap(dpy, screenID));
-  XftDrawStringUtf8(draw, c, g_font, x, y,
-                    reinterpret_cast<const FcChar8*>(s.c_str()), s.size());
-  XftDrawDestroy(draw);
-}
-
-// Returns the width of the given string in pixels, rendered in the LWM font.
-extern int textWidth(const std::string& s) {
-  XGlyphInfo extents;
-  XftTextExtentsUtf8(dpy, g_font, reinterpret_cast<const FcChar8*>(s.c_str()),
-                     s.size(), &extents);
-  return extents.xOff;
 }

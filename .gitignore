@@ -17,8 +17,8 @@
 *.app
 
 # Other generated Stuffs
-Makefile
-Makefile.bak
+# (The Makefile is hand-written and checked in; imake is gone.)
+*.d
 lwm
 lwm._man
 

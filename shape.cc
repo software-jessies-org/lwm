@@ -34,16 +34,11 @@ extern void setShape(Client* c) {
     return;
   }
   xlib::XShapeSelectInput(c->window, ShapeNotifyMask);
-  int order;
-  int n;
-  XRectangle* rect =
-      xlib::XShapeGetRectangles(c->window, ShapeBounding, &n, &order);
-  if (n > 1) {
+  if (xlib::XShapeCountRectangles(c->window, ShapeBounding) > 1) {
     int border = borderWidth();
     xlib::XShapeCombineShape(c->parent, ShapeBounding, border - 1, border - 1,
                              c->window, ShapeBounding, ShapeSet);
   }
-  XFree(rect);
 #else
   c = c;
 #endif
@@ -69,10 +64,7 @@ extern int shapeEvent(XEvent* ev) {
 /*ARGSUSED*/
 extern int isShaped(Window w) {
 #ifdef SHAPE
-  int n;
-  int order;
-  XFree(xlib::XShapeGetRectangles(w, ShapeBounding, &n, &order));
-  return (n > 1);
+  return xlib::XShapeCountRectangles(w, ShapeBounding) > 1;
 #else
   w = w;
   return 0;

@@ -18,6 +18,14 @@ MousePos getMousePosition() {
 
 namespace xlib {
 
+void FreeReplyData(void* data) {
+  XFree(data);
+}
+
+void* XftDisplay() {
+  return dpy;
+}
+
 extern int XMoveResizeWindow(Window w, const Rect& r) {
   return XMoveResizeWindow(w, r.xMin, r.yMin, r.width(), r.height());
 }
@@ -364,24 +372,46 @@ WindowProperty XGetWindowProperty(Window w,
                                   long length,
                                   Atom req_type) {
   WindowProperty res{};
+  unsigned char* data = nullptr;
   res.status =
       ::XGetWindowProperty(dpy, w, property, 0, length, false, req_type,
                            &res.actual_type, &res.actual_format, &res.nitems,
-                           &res.bytes_after, &res.data);
-  return res;
-}
-
-XWMHints* XGetWMHints(Window w) {
-  return ::XGetWMHints(dpy, w);
-}
-
-WMProtocols XGetWMProtocols(Window w) {
-  WMProtocols res{};
-  if (::XGetWMProtocols(dpy, w, &res.protocols, &res.count) == 0) {
-    res.protocols = nullptr;
-    res.count = 0;
+                           &res.bytes_after, &data);
+  if (res.status != Success || data == nullptr) {
+    res.nitems = 0;
+    return res;
+  }
+  Reply<unsigned char> data_owner(data);
+  // Normalise the contents here, so that no call site has to know how the
+  // underlying library chose to lay them out. In particular, Xlib widens a
+  // format-32 property to an array of `long`, which is 64 bits on LP64; we
+  // narrow it straight back to the 32 bits that were actually on the wire.
+  if (res.actual_format == 32) {
+    const long* words = reinterpret_cast<const long*>(data);
+    res.data32.reserve(res.nitems);
+    for (unsigned long i = 0; i < res.nitems; i++) {
+      res.data32.push_back(static_cast<uint32_t>(words[i]));
+    }
+  } else {
+    const int bytes_per_item = res.actual_format / 8;
+    res.data8.assign(reinterpret_cast<const char*>(data),
+                     res.nitems * bytes_per_item);
   }
   return res;
+}
+
+Reply<XWMHints> XGetWMHints(Window w) {
+  return Reply<XWMHints>(::XGetWMHints(dpy, w));
+}
+
+std::vector<Atom> XGetWMProtocols(Window w) {
+  Atom* protocols = nullptr;
+  int count = 0;
+  if (::XGetWMProtocols(dpy, w, &protocols, &count) == 0) {
+    return {};
+  }
+  Reply<Atom> owner(protocols);
+  return std::vector<Atom>(protocols, protocols + count);
 }
 
 Window XGetTransientForHint(Window w) {
@@ -444,12 +474,34 @@ void XRRSelectInput(Window w, int mask) {
   ::XRRSelectInput(dpy, w, mask);
 }
 
-XRRScreenResources* XRRGetScreenResourcesCurrent(Window w) {
-  return ::XRRGetScreenResourcesCurrent(dpy, w);
-}
-
-XRRCrtcInfo* XRRGetCrtcInfo(XRRScreenResources* res, RRCrtc crtc) {
-  return ::XRRGetCrtcInfo(dpy, res, crtc);
+std::vector<Rect> XRRGetVisibleAreas(Window root) {
+  std::vector<Rect> visible;
+  Reply<XRRScreenResources> res(::XRRGetScreenResourcesCurrent(dpy, root));
+  if (!res) {
+    LOGE() << "Failed to get XRRScreenResources";
+    return visible;
+  }
+  if (!res->ncrtc) {
+    LOGE() << "Empty list of CRTs";
+    return visible;
+  }
+  for (int i = 0; i < res->ncrtc; i++) {
+    const RRCrtc crt = res->crtcs[i];
+    Reply<XRRCrtcInfo> info(::XRRGetCrtcInfo(dpy, res.get(), crt));
+    if (!info) {
+      continue;
+    }
+    LOGI() << "CRT " << i << " (" << crt << "): " << info->width << "x"
+           << info->height << ", offset " << info->x << "," << info->y
+           << " (mode=" << info->mode << ")";
+    // Ignore any CRT with mode==0; that's a disabled output.
+    if (!info->mode) {
+      continue;
+    }
+    visible.push_back(Rect{info->x, info->y, info->x + int(info->width),
+                           info->y + int(info->height)});
+  }
+  return visible;
 }
 
 Cursor XCreateFontCursor(unsigned int shape) {
@@ -488,8 +540,12 @@ void XShapeSelectInput(Window w, unsigned long mask) {
   ::XShapeSelectInput(dpy, w, mask);
 }
 
-XRectangle* XShapeGetRectangles(Window w, int kind, int* count, int* ordering) {
-  return ::XShapeGetRectangles(dpy, w, kind, count, ordering);
+int XShapeCountRectangles(Window w, int kind) {
+  int count = 0;
+  int ordering = 0;
+  Reply<XRectangle> rects(::XShapeGetRectangles(dpy, w, kind, &count,
+                                                &ordering));
+  return rects ? count : 0;
 }
 
 void XShapeCombineShape(Window dest,
@@ -546,7 +602,7 @@ WindowTree WindowTree::Query(Display* dpy, Window w) {
   unsigned int num_ch = 0;
   // It doesn't matter which root window we give this call.
   XQueryTree(dpy, w, &res.root, &res.parent, &ch, &num_ch);
-  XFreer ch_freer(ch);
+  Reply<Window> ch_owner(ch);
   if (res.parent) {
     res.self = w;
   }
@@ -633,9 +689,9 @@ void toCache(unsigned long hash, ImageIcon* icon) {
   // Don't add a refcount here; instead we increment refcounts only on clone.
 }
 
-unsigned long hashData(unsigned long* data, unsigned long len) {
+unsigned long hashData(const uint32_t* data, size_t len) {
   // For simplicity, coerce the data into a string, and then hash it.
-  std::string s((char*)data, len * sizeof(unsigned long));
+  std::string s((const char*)data, len * sizeof(uint32_t));
   std::hash<std::string> h;
   return h(s);
 }
@@ -773,7 +829,7 @@ void xImageDataToImage(XImage* dest,
 }
 
 void pixelDataToImage(XImage* img,
-                      unsigned long* data,
+                      const uint32_t* data,
                       int width,
                       int height,
                       unsigned long background) {
@@ -782,7 +838,7 @@ void pixelDataToImage(XImage* img,
   const unsigned long bgb = background & 0xff;
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
-      const unsigned long argb = *data++;
+      const unsigned long argb = (unsigned long)*data++;
       const unsigned long a = (argb >> 24) & 0xff;  // alpha for foreground.
       const unsigned long bga = 0xff - a;           // alpha for background.
       // Treat the 3 channels separately, to avoid cross-channel bleed (which
@@ -881,7 +937,7 @@ ImageIcon* ImageIcon::Create(Pixmap img, Pixmap mask) {
 
 // Use Google Chrome or Chromium to test CreateFromPixels.
 // static
-ImageIcon* ImageIcon::CreateFromPixels(unsigned long* data, unsigned long len) {
+ImageIcon* ImageIcon::CreateFromPixels(const uint32_t* data, size_t len) {
   if (data == nullptr || len < 2) {
     return nullptr;
   }
@@ -893,7 +949,8 @@ ImageIcon* ImageIcon::CreateFromPixels(unsigned long* data, unsigned long len) {
 
   const int src_width = data[0];
   const int src_height = data[1];
-  if (src_width == 0 || src_height == 0 || len < (2 + src_width * src_height)) {
+  if (src_width <= 0 || src_height <= 0 ||
+      len < size_t(2 + src_width * src_height)) {
     fprintf(stderr, "Invalid width (%d) vs height (%d) vs size (%d)\n",
             src_width, src_height, int(len));
     return nullptr;

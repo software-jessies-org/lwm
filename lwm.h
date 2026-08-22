@@ -45,21 +45,6 @@
 /* lwm.cc */
 extern bool is_initialising;  // Set during start-up, cleared after.
 
-// New, pretty fonts:
-extern XftFont* g_font;
-extern XftColor g_font_active_title;
-extern XftColor g_font_inactive_title;
-extern XftColor g_font_popup_colour;
-
-// Functions for dealing with new pretty fonts:
-extern int textHeight();
-extern int textWidth(const std::string& s);
-extern void drawString(Window w,
-                       int x,
-                       int y,
-                       const std::string& s,
-                       XftColor* c);
-
 extern Atom _mozilla_url;
 extern Atom motif_wm_hints;
 extern Atom wm_state;

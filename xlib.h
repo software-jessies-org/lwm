@@ -1,6 +1,7 @@
 #ifndef LWM_XLIB_H_included
 #define LWM_XLIB_H_included
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -43,6 +44,57 @@ struct MousePos {
 extern MousePos getMousePosition();
 
 namespace xlib {
+
+// FreeReplyData releases a block of memory handed to us by the X client
+// library. Which deallocator that means is the library's business, not the
+// caller's: Xlib wants XFree, XCB's replies are plain malloc'd. Defined once,
+// in xlib.cc, so that switching libraries is a one-line change.
+extern void FreeReplyData(void* data);
+
+// Reply owns a block of memory returned by the X client library and releases
+// it when it goes out of scope, so that functions with several early returns
+// don't need a matching chain of frees down every path.
+// It is safe to construct one holding nullptr.
+template <typename T>
+class Reply {
+ public:
+  Reply() = default;
+  explicit Reply(T* data) : data_(data) {}
+  Reply(Reply&& o) noexcept : data_(o.data_) { o.data_ = nullptr; }
+  Reply& operator=(Reply&& o) noexcept {
+    if (this != &o) {
+      release();
+      data_ = o.data_;
+      o.data_ = nullptr;
+    }
+    return *this;
+  }
+  ~Reply() { release(); }
+
+  T* get() const { return data_; }
+  T* operator->() const { return data_; }
+  T& operator*() const { return *data_; }
+  explicit operator bool() const { return data_ != nullptr; }
+
+ private:
+  void release() {
+    if (data_) {
+      FreeReplyData(data_);
+      data_ = nullptr;
+    }
+  }
+
+  T* data_ = nullptr;
+
+  Reply(const Reply&) = delete;
+  Reply& operator=(const Reply&) = delete;
+};
+
+// Returns the Xlib Display that backs our connection, as a void* so that this
+// header doesn't have to name an Xlib type. xfont.cc is the only legitimate
+// caller: Xft has no XCB port, so text rendering is the one thing that still
+// needs a real Display. Everything else goes over XCB.
+extern void* XftDisplay();
 
 extern int XMoveResizeWindow(Window w, const Rect& r);
 extern int XMoveResizeWindow(Window w,
@@ -139,29 +191,50 @@ extern int XChangeProperty(Window w,
                            const unsigned char* data,
                            int nelements);
 
+// WindowProperty is the result of reading a property off a window. It owns
+// its data, so there is nothing for the caller to free.
+//
+// Note the deliberate absence of a raw `unsigned char* data`. Xlib expands a
+// format-32 property into an array of `long`, which is 64 bits on LP64, while
+// XCB hands back the actual 32-bit wire data. Call sites that cast the raw
+// bytes to `unsigned long*` are therefore correct under one library and
+// silently wrong under the other, and the symptom is garbage (corrupt icons,
+// nonsense struts) rather than a crash. So the raw pointer is not on offer:
+// read 32-bit properties through Data32(), strings through Data8(), and let
+// this one place own the difference. See docs/xcb-migration-plan.md, hazard 1.
 struct WindowProperty {
-  Atom actual_type;
-  int actual_format;
-  unsigned long nitems;
-  unsigned long bytes_after;
-  unsigned char* data;  // Caller must XFree() this if non-null.
-  int status;           // Return code from XGetWindowProperty (Success, ...).
+  Atom actual_type = 0;
+  int actual_format = 0;  // Bits per item: 8, 16 or 32.
+  unsigned long nitems = 0;
+  unsigned long bytes_after = 0;
+  int status = 0;  // Success, or an X error code.
+
+  // ok() is true if the property was read and had some content.
+  bool ok() const { return status == Success && nitems > 0; }
+
+  // The property contents as 32-bit words. Empty unless actual_format == 32.
+  const std::vector<uint32_t>& Data32() const { return data32; }
+
+  // The property contents as bytes. Used for string properties (format 8).
+  const std::string& Data8() const { return data8; }
+
+  std::vector<uint32_t> data32;
+  std::string data8;
 };
+
 // Wraps XGetWindowProperty with offset=0 and delete=false, which is what
-// every call site in this codebase wants.
+// every call site in this codebase wants. length is in 32-bit multiples, as
+// the underlying call defines it.
 extern WindowProperty XGetWindowProperty(Window w,
                                          Atom property,
                                          long length,
                                          Atom req_type);
 
-// Caller must XFree() the result if non-null.
-extern XWMHints* XGetWMHints(Window w);
+extern Reply<XWMHints> XGetWMHints(Window w);
 
-struct WMProtocols {
-  Atom* protocols;  // Caller must XFree() this if count > 0.
-  int count;
-};
-extern WMProtocols XGetWMProtocols(Window w);
+// Returns the atoms listed in the window's WM_PROTOCOLS property, or an empty
+// vector if it has none.
+extern std::vector<Atom> XGetWMProtocols(Window w);
 
 // Returns None if the window has no WM_TRANSIENT_FOR hint.
 extern Window XGetTransientForHint(Window w);
@@ -195,10 +268,10 @@ struct RandRSupport {
 extern RandRSupport XRRQueryExtension();
 extern void XRRSelectInput(Window w, int mask);
 
-// Caller must XFree() the result if non-null.
-extern XRRScreenResources* XRRGetScreenResourcesCurrent(Window w);
-// Caller must XFree() the result if non-null.
-extern XRRCrtcInfo* XRRGetCrtcInfo(XRRScreenResources* res, RRCrtc crtc);
+// The visible area of one enabled monitor. setScreenAreasFromXRandR() wants
+// nothing else out of RandR, so the shim reduces the whole CRTC walk to this.
+// Disabled CRTCs (mode == 0) are left out.
+extern std::vector<Rect> XRRGetVisibleAreas(Window root);
 
 extern Cursor XCreateFontCursor(unsigned int shape);
 extern void XRecolorCursor(Cursor c, XColor* fg, XColor* bg);
@@ -219,11 +292,10 @@ extern void XChangeActivePointerGrab(unsigned int event_mask,
 
 #ifdef SHAPE
 extern void XShapeSelectInput(Window w, unsigned long mask);
-// Caller must XFree() the result.
-extern XRectangle* XShapeGetRectangles(Window w,
-                                       int kind,
-                                       int* count,
-                                       int* ordering);
+// Returns how many rectangles make up the window's shape. lwm only ever asks
+// "is this more than one?" (i.e. is the window non-rectangular), so the shim
+// returns the count rather than a list the caller then has to free.
+extern int XShapeCountRectangles(Window w, int kind);
 extern void XShapeCombineShape(Window dest,
                                int dest_kind,
                                int x_off,
@@ -273,13 +345,15 @@ class ImageIcon {
   // display, or returns null.
   static ImageIcon* Create(Pixmap img, Pixmap mask);
 
-  // Create an ImageIcon from an array of unsigned longs.
+  // Create an ImageIcon from an array of 32-bit words.
   // The format is as used for _NET_WM_ICON, so the first two values are the
   // width and height, and then there's one value per pixel. There may be more
   // than one icon, which appears after the first.
   // Again, returns null if there was a problem.
   // The data is not freed - that's the caller's job.
-  static ImageIcon* CreateFromPixels(unsigned long* data, unsigned long len);
+  // These really are 32 bits per pixel and not `unsigned long`: see the note
+  // on WindowProperty above.
+  static ImageIcon* CreateFromPixels(const uint32_t* data, size_t len);
 
   // Paints the image with the 'inactive' background on the given window,
   // centred within the box given by x, y, w, h.
@@ -327,23 +401,6 @@ class ImageIcon {
   unsigned int img_h_ = 0;
   unsigned int depth_ = 0;
   unsigned long gc_hash_ = 0;
-};
-
-// XFreer calls XFree on the data pointer it's constructed with when its
-// destructor is called. This is useful to avoid a massive chain of XFree calls
-// on every possible return path of a function.
-// It is safe to create one of these with a null pointer.
-class XFreer {
- public:
-  explicit XFreer(void* data) : data_(data) {}
-  ~XFreer() {
-    if (data_) {
-      XFree(data_);
-    }
-  }
-
- private:
-  void* data_;
 };
 
 }  // namespace xlib

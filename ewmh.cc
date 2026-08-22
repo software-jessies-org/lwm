@@ -144,11 +144,11 @@ void ewmh_init() {
 EWMHWindowType ewmh_get_window_type(Window w) {
   xlib::WindowProperty prop = xlib::XGetWindowProperty(
       w, ewmh_atom[_NET_WM_WINDOW_TYPE], 100, XA_ATOM);
-  Atom* type = (Atom*)prop.data;
-  unsigned long n = prop.nitems;
-  if (prop.status != Success || type == NULL) {
+  if (!prop.ok()) {
     return WTypeNone;
   }
+  const std::vector<uint32_t>& type = prop.Data32();
+  size_t n = type.size();
   EWMHWindowType ret = WTypeNone;
   for (; n; n--) {
     if (type[n - 1] == ewmh_atom[_NET_WM_WINDOW_TYPE_DESKTOP]) {
@@ -184,25 +184,23 @@ EWMHWindowType ewmh_get_window_type(Window w) {
       break;
     }
   }
-  XFree(type);
   return ret;
 }
 
 bool ewmh_get_window_name(Client* c) {
   xlib::WindowProperty prop = xlib::XGetWindowProperty(
       c->window, ewmh_atom[_NET_WM_NAME], 100, LScr::I->GetUTF8StringAtom());
-  if (prop.status != Success || prop.data == nullptr) {
+  if (!prop.ok()) {
     // While modern X11 displays always work with UTF8, some VNC servers don't.
     // As I'm using 'tightvnc' for testing LWM in a window, it's actually quite
     // useful to be able to fall back to bad old non-UTF8 strings.
     prop = xlib::XGetWindowProperty(c->window, XA_WM_NAME, 100,
                                     AnyPropertyType);
   }
-  if (prop.status != Success || prop.data == nullptr) {
+  if (!prop.ok()) {
     return false;
   }
-  c->SetName(std::string((char*)prop.data, prop.nitems));
-  XFree(prop.data);
+  c->SetName(prop.Data8());
   return true;
 }
 
@@ -210,11 +208,10 @@ bool ewmh_get_visible_window_name(Client* c) {
   xlib::WindowProperty prop =
       xlib::XGetWindowProperty(c->window, ewmh_atom[_NET_WM_VISIBLE_NAME], 100,
                                LScr::I->GetUTF8StringAtom());
-  if (prop.status != Success || prop.data == nullptr) {
+  if (!prop.ok()) {
     return false;
   }
-  c->SetVisibleName(std::string((char*)prop.data, prop.nitems));
-  XFree(prop.data);
+  c->SetVisibleName(prop.Data8());
   return true;
 }
 
@@ -222,17 +219,18 @@ xlib::ImageIcon* ewmh_get_window_icon(Client* c) {
   // Max allowed size for a window icon is 1MiB.
   xlib::WindowProperty prop = xlib::XGetWindowProperty(
       c->window, ewmh_atom[_NET_WM_ICON], 1 << 20, XA_CARDINAL);
-  if (prop.status != Success || prop.data == nullptr) {
+  if (!prop.ok()) {
     return nullptr;
   }
-  xlib::XFreer data_freer(prop.data);
   if (prop.bytes_after > 0) {
     fprintf(stderr, "Icon size too large: %d bytes extra\n",
             int(prop.bytes_after));
     return nullptr;
   }
-  return xlib::ImageIcon::CreateFromPixels((unsigned long*)prop.data,
-                                           prop.nitems);
+  // _NET_WM_ICON is a CARDINAL[] of 32-bit ARGB pixels. Reading it as
+  // anything wider than 32 bits gets you an icon made of noise.
+  return xlib::ImageIcon::CreateFromPixels(prop.Data32().data(),
+                                           prop.Data32().size());
 }
 
 bool ewmh_hasframe(Client* c) {
@@ -253,11 +251,11 @@ void ewmh_get_state(Client* c) {
   }
   xlib::WindowProperty prop = xlib::XGetWindowProperty(
       c->window, ewmh_atom[_NET_WM_STATE], 100, XA_ATOM);
-  Atom* state = (Atom*)prop.data;
-  unsigned long n = prop.nitems;
-  if (prop.status != Success || state == NULL) {
+  if (!prop.ok()) {
     return;
   }
+  const std::vector<uint32_t>& state = prop.Data32();
+  size_t n = state.size();
   c->wstate.skip_taskbar = false;
   c->wstate.skip_pager = false;
   c->wstate.fullscreen = false;
@@ -280,7 +278,6 @@ void ewmh_get_state(Client* c) {
       c->wstate.below = true;
     }
   }
-  XFree(state);
 }
 
 bool new_state(unsigned long action, bool current) {
@@ -415,7 +412,7 @@ void ewmh_set_strut() {
   //    Client_MakeSane(c, ENone, x, y, 0, 0);
   //    LOGD(c) << "MakeSane done; y=" << c->size.y << "; framed=" << c->framed;
   //    if (c->framed) {
-  //      xlib::XMoveWindow(c->parent, c->size.x, c->size.y - textHeight());
+  //      xlib::XMoveWindow(c->parent, c->size.x, c->size.y - xfont::TextHeight());
   //    } else {
   //      xlib::XMoveWindow(c->parent, c->size.x, c->size.y);
   //    }
@@ -433,19 +430,14 @@ void ewmh_get_strut(Client* c) {
   }
   xlib::WindowProperty prop = xlib::XGetWindowProperty(
       c->window, ewmh_atom[_NET_WM_STRUT], 5, XA_CARDINAL);
-  unsigned long* strut = (unsigned long*)prop.data;
-  unsigned long n = prop.nitems;
-  if (prop.status != Success || strut == nullptr || n < 4) {
-    if (strut) {
-      XFree(strut);
-    }
+  const std::vector<uint32_t>& strut = prop.Data32();
+  if (!prop.ok() || strut.size() < 4) {
     return;
   }
-  c->strut.left = (unsigned int)strut[0];
-  c->strut.right = (unsigned int)strut[1];
-  c->strut.top = (unsigned int)strut[2];
-  c->strut.bottom = (unsigned int)strut[3];
-  XFree(strut);
+  c->strut.left = strut[0];
+  c->strut.right = strut[1];
+  c->strut.top = strut[2];
+  c->strut.bottom = strut[3];
   ewmh_set_strut();
 }
 

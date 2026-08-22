@@ -34,6 +34,7 @@
 #include "lwm.h"
 #include "resource.h"
 #include "screen.h"
+#include "xfont.h"
 #include "xlib.h"
 
 static int popup_width;  // The width of the size-feedback window.
@@ -43,7 +44,7 @@ static int popup_width;  // The width of the size-feedback window.
 // the process lifetime (a config change requires a full restart via SIGHUP),
 // so there's no need to cache this beyond what Resources and Xft already do.
 static FrameStyle CurrentFrameStyle() {
-  return FrameStyle{borderWidth(), topBorderWidth(), textHeight()};
+  return FrameStyle{borderWidth(), topBorderWidth(), xfont::TextHeight()};
 }
 
 // Returns the total height, in pixels, of the window title bar.
@@ -193,13 +194,13 @@ void Client::DrawBorder() {
     const int topBW = topBorderWidth();
     const int x = bw + 3 * quarter;
     const int w = FrameRect().width() - 2 * x;
-    const int h = textHeight() + bw - topBW;
+    const int h = xfont::TextHeight() + bw - topBW;
     xlib::XFillRectangle(parent, LScr::I->GetTitleGC(), x, topBW, w, h);
   }
 
   // Find where the title stuff is going to go.
   int x = bw + 2 + (3 * quarter);
-  int y = bw / 2 + g_font->ascent;
+  int y = bw / 2 + xfont::TextAscent();
 
   // Do we have an icon? If so, draw it to the left of the title text.
   if (Icon() && Resources::I->AppIconInWindowTitle()) {
@@ -212,8 +213,9 @@ void Client::DrawBorder() {
   }
 
   // Draw window title.
-  XftColor* color = active ? &g_font_active_title : &g_font_inactive_title;
-  drawString(parent, x, y, Name(), color);
+  xfont::DrawString(parent, x, y, Name(),
+                    active ? xfont::Colour::ACTIVE_TITLE
+                           : xfont::Colour::INACTIVE_TITLE);
 }
 
 Rect Client::FrameRect() const {
@@ -258,13 +260,13 @@ std::string makeSizeString(int x, int y) {
 void Client_SizeFeedback() {
   // Make the popup 10% wider than the widest string it needs to show.
   popup_width =
-      textWidth(makeSizeString(DisplayWidth(dpy, 0), DisplayHeight(dpy, 0)));
+      xfont::TextWidth(makeSizeString(DisplayWidth(dpy, 0), DisplayHeight(dpy, 0)));
   popup_width += popup_width / 10;
 
   // Put the popup in the right place to report on the window's size.
   const MousePos mp = getMousePosition();
   xlib::XMoveResizeWindow(LScr::I->Popup(), mp.x + 8, mp.y + 8, popup_width,
-                          textHeight() + 1);
+                          xfont::TextHeight() + 1);
   xlib::XMapRaised(LScr::I->Popup());
 
   // Ensure that the popup contents get redrawn. Eventually, the function
@@ -278,9 +280,9 @@ void size_expose() {
     return;
   }
   const std::string text = c->SizeString();
-  const int x = (popup_width - textWidth(text)) / 2;
-  drawString(LScr::I->Popup(), x, g_font->ascent + 1, text,
-             &g_font_popup_colour);
+  const int x = (popup_width - xfont::TextWidth(text)) / 2;
+  xfont::DrawString(LScr::I->Popup(), x, xfont::TextAscent() + 1, text,
+                    xfont::Colour::POPUP);
 }
 
 std::string Client::SizeString() const {

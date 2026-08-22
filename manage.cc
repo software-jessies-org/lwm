@@ -44,23 +44,25 @@
 #include "screen.h"
 #include "session.h"
 #include "shape.h"
+#include "xfont.h"
 #include "xlib.h"
 
-int getProperty(Window, Atom, Atom, long, unsigned char**);
 int getWindowState(Window, int*);
 // void applyGravity(Client*);
 
 std::optional<bool> motifWouldDecorate(Client* c) {
-  unsigned long* p = 0;
-  if (getProperty(c->window, motif_wm_hints, motif_wm_hints, 5L,
-                  (unsigned char**)&p) <= 0) {
+  // _MOTIF_WM_HINTS is a format-32 property; read it as 32-bit words. See the
+  // note on xlib::WindowProperty.
+  const xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, motif_wm_hints, motif_wm_hints, 5L);
+  const std::vector<uint32_t>& p = prop.Data32();
+  if (!prop.ok() || p.size() < 3) {
     return {};
   }
   if ((p[0] & MWM_HINTS_DECORATIONS) &&
       !(p[2] & (MWM_DECOR_BORDER | MWM_DECOR_ALL))) {
     return false;
   }
-  XFree(p);
   return true;
 }
 
@@ -95,7 +97,7 @@ void manage(Client* c) {
   ewmh_get_strut(c);
 
   // Get the hints, window name, and normal hints (see ICCCM section 4.1.2.3).
-  XWMHints* hints = xlib::XGetWMHints(c->window);
+  xlib::Reply<XWMHints> hints = xlib::XGetWMHints(c->window);
   if (Resources::I->ProcessAppIcons()) {
     if (hints) {
       c->SetIcon(xlib::ImageIcon::Create(hints->icon_pixmap, hints->icon_mask));
@@ -109,16 +111,12 @@ void manage(Client* c) {
   // Scan the list of atoms on WM_PROTOCOLS to see which of the
   // protocols that we understand the client is prepared to
   // participate in. (See ICCCM section 4.1.2.7.)
-  xlib::WMProtocols wm_protos = xlib::XGetWMProtocols(c->window);
-  for (int p = 0; p < wm_protos.count; p++) {
-    if (wm_protos.protocols[p] == wm_delete) {
+  for (const Atom proto : xlib::XGetWMProtocols(c->window)) {
+    if (proto == wm_delete) {
       c->proto |= Pdelete;
-    } else if (wm_protos.protocols[p] == wm_take_focus) {
+    } else if (proto == wm_take_focus) {
       c->proto |= Ptakefocus;
     }
-  }
-  if (wm_protos.count > 0) {
-    XFree(wm_protos.protocols);
   }
 
   // Get the WM_TRANSIENT_FOR property (see ICCCM section 4.1.2.6).
@@ -158,10 +156,6 @@ void manage(Client* c) {
   // -specified position, or is_initialising was set. Apparently this is
   // in accordance with section 4.1.2.3 of the ICCCM.
 
-  if (hints) {
-    XFree(hints);
-  }
-
   if (c->framed) {
     c->FurnishAt(rect);
   }
@@ -186,7 +180,7 @@ void manage(Client* c) {
 
   if (c->framed) {
     xlib::XReparentWindow(c->window, c->parent, borderWidth(),
-                          borderWidth() + textHeight());
+                          borderWidth() + xfont::TextHeight());
   }
 
   setShape(c);
@@ -272,20 +266,6 @@ void Terminate(int signal) {
   }
 }
 
-int getProperty(Window w, Atom a, Atom type, long len, unsigned char** p) {
-  // len is in 32-bit multiples.
-  xlib::WindowProperty prop = xlib::XGetWindowProperty(w, a, len, type);
-  *p = prop.data;
-  if (prop.status != Success || *p == 0) {
-    return -1;
-  }
-  if (prop.nitems == 0 && p) {
-    XFree(*p);
-  }
-  // could check prop.actual_type, prop.actual_format, prop.bytes_after here...
-  return prop.nitems;
-}
-
 void getWindowName(Client* c) {
   if (!c) {
     return;
@@ -309,12 +289,12 @@ void getVisibleWindowName(Client* c) {
 }
 
 int getWindowState(Window w, int* state) {
-  long* p = 0;
-
-  if (getProperty(w, wm_state, wm_state, 2L, (unsigned char**)&p) <= 0) {
+  // WM_STATE is CARDINAL[2]/32: the state, then the icon window.
+  const xlib::WindowProperty prop =
+      xlib::XGetWindowProperty(w, wm_state, 2L, wm_state);
+  if (!prop.ok() || prop.Data32().empty()) {
     return 0;
   }
-  *state = (int)*p;
-  XFree(p);
+  *state = int(prop.Data32()[0]);
   return 1;
 }
