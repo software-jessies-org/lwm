@@ -102,7 +102,7 @@ lwm: $(OBJS)
 # of the tree the boundary has rotted; fail loudly rather than quietly.
 # xdbg.cc, ruler.cc and setvisname.cc are standalone tools, not part of lwm,
 # and are deliberately exempt.
-X11_ALLOWED = xfont.cc xfont.h xlib.h
+X11_ALLOWED = xfont.cc xfont.h xlib.h xlib.cc
 check-x11-boundary:
 	@bad=$$(grep -l 'include *[<"]X11/' $(SRCS) *.h 2>/dev/null \
 	        | grep -v -x -F -e $(shell echo '$(X11_ALLOWED)' | sed 's/ / -e /g') \

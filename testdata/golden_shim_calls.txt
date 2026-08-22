@@ -1,3 +1,4 @@
+SendEvent
 XAddToSaveSet
 XChangeProperty
 XChangeWindowAttributes
@@ -11,7 +12,6 @@ XRaiseWindow
 XRemoveFromSaveSet
 XReparentWindow
 XResizeWindow
-XSendEvent
 XSetInputFocus
 XSetWindowBackground
 XSetWindowBorderWidth

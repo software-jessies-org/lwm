@@ -1,8 +1,11 @@
 #include "debug.h"
+#include "error.h"
 #include "hider.h"
 #include "resource.h"
 #include "screen.h"
 #include "xlib.h"
+
+#include <X11/Xlib-xcb.h>
 
 #include <set>
 
@@ -19,7 +22,12 @@ MousePos getMousePosition() {
 namespace xlib {
 
 void FreeReplyData(void* data) {
-  XFree(data);
+  // free() covers both libraries: XCB's replies and errors are plain malloc'd
+  // blocks, and Xlib's XFree is itself a one-line wrapper around free(). That
+  // includes XRRFreeScreenResources and XRRFreeCrtcInfo, which despite the
+  // names do nothing but free a single block. So this stays correct as the
+  // Xlib calls underneath the shim are replaced by XCB ones.
+  free(data);
 }
 
 void* XftDisplay() {
@@ -214,15 +222,16 @@ int XChangeWindowAttributes(Window w,
 
 void SendClientMessage(Window w, Atom a, long data0, long data1) {
   LOGD(w) << "SendClientMessage, atom " << a << ": " << data0 << ", " << data1;
-  XEvent ev{};
-  ev.xclient.type = ClientMessage;
-  ev.xclient.window = w;
-  ev.xclient.message_type = a;
-  ev.xclient.format = 32;
-  ev.xclient.data.l[0] = data0;
-  ev.xclient.data.l[1] = data1;
-  const long mask = (w == LScr::I->Root()) ? SubstructureRedirectMask : 0L;
-  ::XSendEvent(dpy, w, false, mask, &ev);
+  xcb_client_message_event_t ev{};
+  ev.response_type = XCB_CLIENT_MESSAGE;
+  ev.window = w;
+  ev.type = a;
+  ev.format = 32;
+  ev.data.data32[0] = uint32_t(data0);
+  ev.data.data32[1] = uint32_t(data1);
+  const uint32_t mask =
+      (w == LScr::I->Root()) ? XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT : 0;
+  SendEvent(w, false, mask, ev);
 }
 
 extern XWindowAttributes XGetWindowAttributes(Window w) {
@@ -315,11 +324,13 @@ int XKillClient(Window w) {
   return res;
 }
 
-int XSendEvent(Window w, bool propagate, long event_mask, XEvent* event) {
-  LOGD(w) << "XSendEvent(" << WinID(w) << ")";
-  int res = ::XSendEvent(dpy, w, propagate, event_mask, event);
+void SendEventRaw(Window w,
+                  bool propagate,
+                  uint32_t event_mask,
+                  const char* event32) {
+  LOGD(w) << "SendEvent(" << WinID(w) << ")";
+  xcb_send_event(conn, propagate, w, event_mask, event32);
   // Possible errors: BadValue, BadWindow.
-  return res;
 }
 
 int XGrabButton(unsigned int button,
@@ -440,28 +451,104 @@ int XSetLineAttributes(GC gc,
   return res;
 }
 
-int XSync(bool discard) {
-  return ::XSync(dpy, discard);
+void Sync() {
+  // GetInputFocus is the traditional cheap round trip: it takes no arguments
+  // and can't fail, so waiting for its reply means everything issued before
+  // it has been processed, errors included.
+  Flush();
+  free(xcb_get_input_focus_reply(conn, xcb_get_input_focus(conn), nullptr));
 }
 
-Display* XOpenDisplay() {
-  return ::XOpenDisplay(nullptr);
+void Flush() {
+  // Sharing one socket between Xlib and XCB does *not* mean sharing one
+  // output buffer. Requests made through Xlib queue up in Xlib's buffer, and
+  // xcb_flush() knows nothing about it; it pushes only what was issued
+  // through XCB. Flush one and not the other and the requests you didn't
+  // flush sit there until something else happens to force them out - which
+  // presents as lwm freezing until you jiggle the mouse, or worse, as a
+  // client hanging forever waiting for a ConfigureNotify that lwm has already
+  // "sent". So flush both, Xlib first.
+  //
+  // The XFlush half becomes dead weight once nothing under this shim calls
+  // Xlib any more, and goes away with the rest of libX11 in phase 4.
+  XFlush(dpy);
+  xcb_flush(conn);
 }
 
-void XCloseDisplay() {
+// Xlib routes errors for requests *it* made to its own error handler rather
+// than into the XCB event queue, and its default handler prints and then
+// exits the process. lwm has requests on both sides of the bridge, so an
+// error from an Xlib-issued request would kill the window manager outright -
+// which is how a stale window in a save-set, of all things, could take down
+// the whole session. Feed those errors through the same path as the XCB ones
+// instead.
+//
+// Xft is the last thing that will still be making Xlib requests once the shim
+// is fully ported, so this handler outlives phase 3.
+int xlibErrorHandler(Display*, XErrorEvent* e) {
+  xcb_generic_error_t err{};
+  err.error_code = e->error_code;
+  err.resource_id = uint32_t(e->resourceid);
+  err.major_code = e->request_code;
+  err.minor_code = e->minor_code;
+  err.sequence = uint16_t(e->serial);
+  err.full_sequence = uint32_t(e->serial);
+  HandleXError(&err);
+  return 0;
+}
+
+bool OpenDisplay() {
+  dpy = ::XOpenDisplay(nullptr);
+  if (!dpy) {
+    return false;
+  }
+  conn = XGetXCBConnection(dpy);
+  if (!conn) {
+    return false;
+  }
+  ::XSetErrorHandler(xlibErrorHandler);
+  // Hand the event queue to XCB. After this, Xlib's XNextEvent and friends
+  // must not be called - which is the point, since we want a single queue
+  // and it should be the XCB one. Xft only makes requests, never reads
+  // events, so it is unaffected.
+  XSetEventQueueOwner(dpy, XCBOwnsEventQueue);
+  return true;
+}
+
+void CloseDisplay() {
   ::XCloseDisplay(dpy);
 }
 
-int XPending() {
-  return ::XPending(dpy);
+int ConnectionFD() {
+  return xcb_get_file_descriptor(conn);
 }
 
-void XNextEvent(XEvent* event) {
-  ::XNextEvent(dpy, event);
+bool ConnectionIsBroken() {
+  return xcb_connection_has_error(conn) != 0;
 }
 
-XErrorHandler XSetErrorHandler(XErrorHandler handler) {
-  return ::XSetErrorHandler(handler);
+xcb_generic_event_t* NextEvent() {
+  return xcb_poll_for_event(conn);
+}
+
+uint32_t NextRequestSequence() {
+  // XCB has no "what sequence number is next" accessor, so ask for one the
+  // only way available: issue a request that does nothing and take its
+  // sequence. A NoOperation is four bytes on the wire and provokes no reply.
+  return xcb_no_operation(conn).sequence;
+}
+
+bool SelectRootEvents(Window root, uint32_t event_mask) {
+  // Only one client may hold SubstructureRedirect on the root window, so this
+  // request failing with BadAccess *is* the "another window manager is
+  // already running" test. Using the _checked form plus request_check turns
+  // that into an immediate answer, instead of Xlib's arrangement where the
+  // error turns up in a global handler at some unpredictable later point and
+  // has to be recognised by opcode.
+  const xcb_void_cookie_t cookie = xcb_change_window_attributes_checked(
+      conn, root, XCB_CW_EVENT_MASK, &event_mask);
+  Reply<xcb_generic_error_t> err(xcb_request_check(conn, cookie));
+  return !err;
 }
 
 RandRSupport XRRQueryExtension() {

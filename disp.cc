@@ -33,13 +33,21 @@
 #include "xfont.h"
 #include "xlib.h"
 
-void EvExpose(XEvent* ev) {
+// Handlers below take the raw event and cast it themselves, which keeps the
+// dispatch table at the bottom of the file a straight one-liner per type.
+// There is no equivalent of Xlib's XAnyEvent: the window a given event is
+// about sits at a different offset in each struct, and is variously called
+// `window` or `event` depending on the type. That is why each handler names
+// its own struct rather than sharing a common accessor.
+
+void EvExpose(xcb_generic_event_t* ev) {
+  const xcb_expose_event_t* e = (const xcb_expose_event_t*)ev;
   // Only handle the last in a group of Expose events.
-  if (ev->xexpose.count != 0) {
+  if (e->count != 0) {
     return;
   }
 
-  Window w = ev->xexpose.window;
+  Window w = e->window;
 
   // We don't draw on the root window so that people can have
   // their favourite Spice Girls backdrop...
@@ -64,7 +72,7 @@ static DragHandler* current_dragger = nullptr;
 
 // Use this to set or clear the drag handler. Will destroy the old handler if
 // one is present. The new handler's Start() function is called with ev.
-void startDragging(DragHandler* handler, XEvent* ev) {
+void startDragging(DragHandler* handler, xcb_generic_event_t* ev) {
   delete current_dragger;
   current_dragger = handler;
   if (current_dragger) {
@@ -74,37 +82,38 @@ void startDragging(DragHandler* handler, XEvent* ev) {
 
 // Stops the dragging, calling the Stop handler of current_dragger if there is
 // one.
-void stopDragging(XEvent* ev) {
+void stopDragging(xcb_generic_event_t* ev) {
   if (ev && current_dragger) {
     current_dragger->End(ev);
   }
   startDragging(nullptr, nullptr);
 }
 
-void EvButtonPress(XEvent* ev) {
+void EvButtonPress(xcb_generic_event_t* ev) {
   if (current_dragger) {
     LOGI() << "Already doing something";
     return;  // Already doing something.
   }
-  startDragging(getDragHandlerForEvent(ev), ev);
+  startDragging(getDragHandlerForEvent((xcb_button_press_event_t*)ev), ev);
 }
 
-void EvButtonRelease(XEvent* ev) {
+void EvButtonRelease(xcb_generic_event_t* ev) {
   stopDragging(ev);
 }
 
-void EvCirculateRequest(XEvent* ev) {
-  XCirculateRequestEvent* e = &ev->xcirculaterequest;
+void EvCirculateRequest(xcb_generic_event_t* ev) {
+  const xcb_circulate_request_event_t* e =
+      (const xcb_circulate_request_event_t*)ev;
   Client* c = LScr::I->GetClient(e->window);
   LOGD(c) << "CirculateRequest";
   if (c == nullptr) {
-    if (e->place == PlaceOnTop) {
+    if (e->place == XCB_PLACE_ON_TOP) {
       xlib::XRaiseWindow(e->window);
     } else {
       xlib::XLowerWindow(e->window);
     }
   } else {
-    if (e->place == PlaceOnTop) {
+    if (e->place == XCB_PLACE_ON_TOP) {
       c->Raise();
     } else {
       c->Lower();
@@ -112,8 +121,8 @@ void EvCirculateRequest(XEvent* ev) {
   }
 }
 
-void EvMapRequest(XEvent* ev) {
-  XMapRequestEvent* e = &ev->xmaprequest;
+void EvMapRequest(xcb_generic_event_t* ev) {
+  const xcb_map_request_event_t* e = (const xcb_map_request_event_t*)ev;
   Client* c = LScr::I->GetOrAddClient(e->window, false);
   LOGD(c) << "MapRequest";
   if (c->hidden) {
@@ -151,24 +160,24 @@ void EvMapRequest(XEvent* ev) {
   ewmh_set_client_list();
 }
 
-void EvUnmapNotify(XEvent* ev) {
-  const XUnmapEvent& xe = ev->xunmap;
+void EvUnmapNotify(xcb_generic_event_t* ev) {
+  const xcb_unmap_notify_event_t* e = (const xcb_unmap_notify_event_t*)ev;
   // Don't scan the window's parents for a match - we only care about unmapping
   // of top-level client windows, so anything underneath we can ignore.
-  Client* c = LScr::I->GetClient(xe.window, false);
+  Client* c = LScr::I->GetClient(e->window, false);
   if (c == nullptr) {
     return;
   }
   // Be careful here. We only want to respond to unmaps on client windows that
   // we're managing. For example, if this isn't the direct client window,
   // then do nothing.
-  if (c->window != xe.window) {
+  if (c->window != e->window) {
     return;
   }
   // Plus, when we reparent the client window to our frame, we'll receive an
   // unmap notification with window=child window, and parent=root. Check for
   // this, and ignore it.
-  if (xe.event == LScr::I->Root()) {
+  if (e->event == LScr::I->Root()) {
     return;
   }
   // If we got here, then this is a client withdrawing its own window that we
@@ -177,8 +186,9 @@ void EvUnmapNotify(XEvent* ev) {
   withdraw(c);
 }
 
-void EvConfigureRequest(XEvent* ev) {
-  const XConfigureRequestEvent& e = ev->xconfigurerequest;
+// Shared by the real ConfigureRequest event and by _NET_MOVERESIZE_WINDOW,
+// which is defined as meaning the same thing.
+static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
   // There are several situations in which we can receive a configure request.
   // Two of these are:
   //  1: The client is setting up the initial size, before mapping the window.
@@ -198,8 +208,8 @@ void EvConfigureRequest(XEvent* ev) {
     wc.width = e.width;
     wc.height = e.height;
     wc.border_width = e.border_width;
-    wc.sibling = e.above;
-    wc.stack_mode = e.detail;
+    wc.sibling = e.sibling;
+    wc.stack_mode = e.stack_mode;
     xlib::XConfigureWindow(e.window, e.value_mask, &wc);
     return;
   }
@@ -262,8 +272,8 @@ void EvConfigureRequest(XEvent* ev) {
   XWindowChanges wc{};
   c->FrameRect().To(wc);
   wc.border_width = 1;
-  wc.sibling = e.above;
-  wc.stack_mode = e.detail;
+  wc.sibling = e.sibling;
+  wc.stack_mode = e.stack_mode;
   xlib::XConfigureWindow(e.parent, e.value_mask, &wc);
   c->SendConfigureNotify();
 
@@ -278,14 +288,18 @@ void EvConfigureRequest(XEvent* ev) {
   }
 }
 
-void EvConfigureNotify(XEvent*) {}
+void EvConfigureRequest(xcb_generic_event_t* ev) {
+  handleConfigureRequest(*(const xcb_configure_request_event_t*)ev);
+}
 
-void EvDestroyNotify(XEvent* ev) {
-  Window w = ev->xdestroywindow.window;
+void EvConfigureNotify(xcb_generic_event_t*) {}
+
+void EvDestroyNotify(xcb_generic_event_t* ev) {
+  const xcb_destroy_notify_event_t* e = (const xcb_destroy_notify_event_t*)ev;
   // Request the client, but without scanning this window's parents for it.
   // The window is gone, so any attempt to scan the window tree will result in
   // errors.
-  Client* c = LScr::I->GetClient(w, false);
+  Client* c = LScr::I->GetClient(e->window, false);
   if (c == 0) {
     return;
   }
@@ -293,69 +307,72 @@ void EvDestroyNotify(XEvent* ev) {
   c->Remove();
 }
 
-void EvClientMessage(XEvent* ev) {
-  XClientMessageEvent* e = &ev->xclient;
+void EvClientMessage(xcb_generic_event_t* ev) {
+  const xcb_client_message_event_t* e = (const xcb_client_message_event_t*)ev;
   Client* c = LScr::I->GetClient(e->window);
   if (c == 0) {
     return;
   }
-  if (e->message_type == wm_change_state) {
-    if (e->format == 32 && e->data.l[0] == IconicState && c->IsNormal()) {
+  // Note data32, not Xlib's data.l: the wire format is five 32-bit words, and
+  // Xlib's `long` array was only ever a 64-bit-widened view of them.
+  const uint32_t* data = e->data.data32;
+  if (e->type == wm_change_state) {
+    if (e->format == 32 && data[0] == IconicState && c->IsNormal()) {
       LOGD(c) << "Client message: requested hide";
       c->Hide();
     }
     return;
   }
-  if (e->message_type == ewmh_atom[_NET_WM_STATE] && e->format == 32) {
-    LOGD(c) << "Client message: WM state change: " << e->data.l[0] << " -> "
-            << e->data.l[1] << ", " << e->data.l[2];
-    ewmh_change_state(c, e->data.l[0], e->data.l[1]);
-    ewmh_change_state(c, e->data.l[0], e->data.l[2]);
+  if (e->type == ewmh_atom[_NET_WM_STATE] && e->format == 32) {
+    LOGD(c) << "Client message: WM state change: " << data[0] << " -> "
+            << data[1] << ", " << data[2];
+    ewmh_change_state(c, data[0], data[1]);
+    ewmh_change_state(c, data[0], data[2]);
     return;
   }
-  if (e->message_type == ewmh_atom[_NET_ACTIVE_WINDOW] && e->format == 32) {
+  if (e->type == ewmh_atom[_NET_ACTIVE_WINDOW] && e->format == 32) {
     LOGD(c) << "Client message: requested set active: unhiding";
     // An EWMH enabled application has asked for this client to be made the
     // active window. Unhide also raises and gives focus to the window.
     c->Unhide();
     return;
   }
-  if (e->message_type == ewmh_atom[_NET_CLOSE_WINDOW] && e->format == 32) {
+  if (e->type == ewmh_atom[_NET_CLOSE_WINDOW] && e->format == 32) {
     LOGD(c) << "Client message: requested close";
     c->Close();
     return;
   }
-  if (e->message_type == ewmh_atom[_NET_MOVERESIZE_WINDOW] && e->format == 32) {
-    XEvent ev;
-
+  if (e->type == ewmh_atom[_NET_MOVERESIZE_WINDOW] && e->format == 32) {
     // FIXME: ok, so this is a bit of a hack
-    ev.xconfigurerequest.window = e->window;
-    ev.xconfigurerequest.x = e->data.l[1];
-    ev.xconfigurerequest.y = e->data.l[2];
-    ev.xconfigurerequest.width = e->data.l[3];
-    ev.xconfigurerequest.height = e->data.l[4];
-    ev.xconfigurerequest.value_mask = 0;
-    if (e->data.l[0] & (1 << 8)) {
-      ev.xconfigurerequest.value_mask |= CWX;
+    xcb_configure_request_event_t req{};
+    req.window = e->window;
+    req.parent = c->parent;
+    req.x = data[1];
+    req.y = data[2];
+    req.width = data[3];
+    req.height = data[4];
+    req.value_mask = 0;
+    if (data[0] & (1 << 8)) {
+      req.value_mask |= CWX;
     }
-    if (e->data.l[0] & (1 << 9)) {
-      ev.xconfigurerequest.value_mask |= CWY;
+    if (data[0] & (1 << 9)) {
+      req.value_mask |= CWY;
     }
-    if (e->data.l[0] & (1 << 10)) {
-      ev.xconfigurerequest.value_mask |= CWWidth;
+    if (data[0] & (1 << 10)) {
+      req.value_mask |= CWWidth;
     }
-    if (e->data.l[0] & (1 << 11)) {
-      ev.xconfigurerequest.value_mask |= CWHeight;
+    if (data[0] & (1 << 11)) {
+      req.value_mask |= CWHeight;
     }
-    LOGD(c) << "Client message: move/resize -> " << ev.xconfigurerequest
-            << " (flags " << ev.xconfigurerequest.value_mask << ")";
-    EvConfigureRequest(&ev);
+    LOGD(c) << "Client message: move/resize -> " << req << " (flags "
+            << req.value_mask << ")";
+    handleConfigureRequest(req);
     return;
   }
-  if (e->message_type == ewmh_atom[_NET_WM_MOVERESIZE] && e->format == 32) {
+  if (e->type == ewmh_atom[_NET_WM_MOVERESIZE] && e->format == 32) {
     LOGD(c) << "Client message: requested _NET_WM_MOVERESIZE";
     Edge edge = E_LAST;
-    EWMHDirection direction = (EWMHDirection)e->data.l[2];
+    EWMHDirection direction = (EWMHDirection)data[2];
 
     // before we can do any resizing, make the window visible
     if (c->IsHidden()) {
@@ -423,8 +440,9 @@ void EvClientMessage(XEvent* ev) {
   }
 }
 
-void EvPropertyNotify(XEvent* ev) {
-  XPropertyEvent* e = &ev->xproperty;
+void EvPropertyNotify(xcb_generic_event_t* ev) {
+  const xcb_property_notify_event_t* e =
+      (const xcb_property_notify_event_t*)ev;
   Client* c = LScr::I->GetClient(e->window);
   if (c == 0) {
     return;
@@ -462,8 +480,9 @@ void EvPropertyNotify(XEvent* ev) {
   }
 }
 
-void EvReparentNotify(XEvent* ev) {
-  XReparentEvent* e = &ev->xreparent;
+void EvReparentNotify(xcb_generic_event_t* ev) {
+  const xcb_reparent_notify_event_t* e =
+      (const xcb_reparent_notify_event_t*)ev;
   if (e->event != LScr::I->Root() || e->override_redirect ||
       e->parent == LScr::I->Root()) {
     return;
@@ -476,20 +495,21 @@ void EvReparentNotify(XEvent* ev) {
   }
 }
 
-void EvFocusIn(XEvent* ev) {
-  // In practice, XGetInputFocus returns the child window that actually has
-  // focus (in Java apps, the 'FocusProxy' window), while the XEvent reports
+void EvFocusIn(xcb_generic_event_t* ev) {
+  const xcb_focus_in_event_t* e = (const xcb_focus_in_event_t*)ev;
+  // In practice, GetInputFocus returns the child window that actually has
+  // focus (in Java apps, the 'FocusProxy' window), while the event reports
   // the top-level window.
   xlib::FocusWindow focus = xlib::XGetInputFocus();
   Window focus_window = focus.window;
   // There seems to be a bug in the Xserver, whereupon for the first focus-in
-  // event we receive, XGetInputFocus returns focus_window==1, which doesn't
+  // event we receive, GetInputFocus returns focus_window==1, which doesn't
   // correspond to any actual window. In this case, fall back to the window
   // which was specified in the event itself.
   // Without this hack, the first time we change focus after running LWM, we
   // get a spurious error due to trying to look up the parents of window 1.
   if (focus_window == 1) {
-    focus_window = ev->xfocus.window;
+    focus_window = e->event;
   }
   Client* c = LScr::I->GetClient(focus_window);
   if (c) {
@@ -498,24 +518,25 @@ void EvFocusIn(XEvent* ev) {
   }
 }
 
-void EvFocusOut(XEvent*) {}
+void EvFocusOut(xcb_generic_event_t*) {}
 
-void EvEnterNotify(XEvent* ev) {
+void EvEnterNotify(xcb_generic_event_t* ev) {
+  const xcb_enter_notify_event_t* e = (const xcb_enter_notify_event_t*)ev;
   if (current_dragger) {
     return;
   }
-  LScr::I->GetFocuser()->EnterWindow(ev->xcrossing.window);
+  LScr::I->GetFocuser()->EnterWindow(e->event);
   // We receive enter events for our client windows too. When we do, we need
   // to switch the mouse pointer's shape to the default pointer.
   // If we don't do this, then for apps like Rhythmbox which don't
   // aggressively set the pointer to their preferred shape, we end up showing
   // silly icons, such as the 'resize corner' icon, while hovering over the
   // middle of the application window.
-  Client* c = LScr::I->GetClient(ev->xcrossing.window);
+  Client* c = LScr::I->GetClient(e->event);
   if (c == nullptr) {
     return;
   }
-  if (ev->xcrossing.window != c->parent) {
+  if (e->event != c->parent) {
     // TODO: add a SetCursor method to Client, so we don't have to keep
     // repeating this code everywhere.
     XSetWindowAttributes attr;
@@ -531,20 +552,20 @@ void EvEnterNotify(XEvent* ev) {
   }
 }
 
-void EvMotionNotify(XEvent* ev) {
+void EvMotionNotify(xcb_generic_event_t* ev) {
   if (current_dragger) {
     if (!current_dragger->Move(ev)) {
       current_dragger = nullptr;
     }
     return;
   }
-  XMotionEvent* e = &ev->xmotion;
-  Client* c = LScr::I->GetClient(e->window);
+  const xcb_motion_notify_event_t* e = (const xcb_motion_notify_event_t*)ev;
+  Client* c = LScr::I->GetClient(e->event);
   if (c == nullptr) {
     return;
   }
-  if ((e->window == c->parent) && (e->subwindow != c->window)) {
-    Edge edge = c->EdgeAt(e->window, e->x, e->y);
+  if ((e->event == c->parent) && (e->child != c->window)) {
+    Edge edge = c->EdgeAt(e->event, e->event_x, e->event_y);
     if (edge != EContents && c->cursor != edge) {
       XSetWindowAttributes attr;
       attr.cursor = LScr::I->Cursors()->ForEdge(edge);
@@ -554,42 +575,64 @@ void EvMotionNotify(XEvent* ev) {
   }
 }
 
-extern void DispatchXEvent(XEvent* ev) {
-  switch (ev->type) {
-#define EV(x)  \
-  case x:      \
-    Ev##x(ev); \
+extern void DispatchXEvent(xcb_generic_event_t* ev) {
+  // Bit 0x80 means the event was sent by another client with SendEvent rather
+  // than generated by the server. lwm treats both the same, so mask it off.
+  switch (ev->response_type & 0x7f) {
+#define EV(xcb_name, handler) \
+  case xcb_name:              \
+    Ev##handler(ev);          \
     break
 
-    EV(Expose);
-    EV(MotionNotify);
-    EV(ButtonPress);
-    EV(ButtonRelease);
-    EV(FocusIn);
-    EV(FocusOut);
-    EV(MapRequest);
-    EV(ConfigureRequest);
-    EV(UnmapNotify);
-    EV(DestroyNotify);
-    EV(ClientMessage);
-    EV(PropertyNotify);
-    EV(ReparentNotify);
-    EV(EnterNotify);
-    EV(CirculateRequest);
-    EV(ConfigureNotify);
+    EV(XCB_EXPOSE, Expose);
+    EV(XCB_MOTION_NOTIFY, MotionNotify);
+    EV(XCB_BUTTON_PRESS, ButtonPress);
+    EV(XCB_BUTTON_RELEASE, ButtonRelease);
+    EV(XCB_FOCUS_IN, FocusIn);
+    EV(XCB_FOCUS_OUT, FocusOut);
+    EV(XCB_MAP_REQUEST, MapRequest);
+    EV(XCB_CONFIGURE_REQUEST, ConfigureRequest);
+    EV(XCB_UNMAP_NOTIFY, UnmapNotify);
+    EV(XCB_DESTROY_NOTIFY, DestroyNotify);
+    EV(XCB_CLIENT_MESSAGE, ClientMessage);
+    EV(XCB_PROPERTY_NOTIFY, PropertyNotify);
+    EV(XCB_REPARENT_NOTIFY, ReparentNotify);
+    EV(XCB_ENTER_NOTIFY, EnterNotify);
+    EV(XCB_CIRCULATE_REQUEST, CirculateRequest);
+    EV(XCB_CONFIGURE_NOTIFY, ConfigureNotify);
 #undef EV
 
-    case LeaveNotify:
-    case CreateNotify:
-    case GravityNotify:
-    case MapNotify:
-    case MappingNotify:
-    case SelectionClear:
-    case SelectionNotify:
-    case SelectionRequest:
-    case NoExpose:
+    // Response type 0 is not an event at all: it's an error report. Xlib
+    // delivered these to a global handler at an unpredictable time; XCB puts
+    // them in the queue in sequence, which is what makes the suppression in
+    // error.cc precise rather than approximate.
+    case 0:
+      HandleXError((const xcb_generic_error_t*)ev);
+      break;
+
+    case XCB_LEAVE_NOTIFY:
+    case XCB_CREATE_NOTIFY:
+    case XCB_GRAVITY_NOTIFY:
+    case XCB_MAP_NOTIFY:
+    case XCB_MAPPING_NOTIFY:
+    case XCB_SELECTION_CLEAR:
+    case XCB_SELECTION_NOTIFY:
+    case XCB_SELECTION_REQUEST:
+    case XCB_NO_EXPOSURE:
       break;
     default:
-      LOGI_IF(!shapeEvent(ev)) << "unknown event " << ev->type;
+      LOGI_IF(!shapeEvent(ev) && !randrEvent(ev))
+          << "unknown event " << int(ev->response_type & 0x7f);
+  }
+}
+
+extern void ProcessPendingEvents() {
+  while (xcb_generic_event_t* ev = xlib::NextEvent()) {
+    // Every event carries the sequence number of the last request the server
+    // had processed when it was generated, so this is the moment at which we
+    // can tell that an error-suppression range is finished with.
+    RetireIgnoredSequences(ev->full_sequence);
+    DispatchXEvent(ev);
+    free(ev);
   }
 }

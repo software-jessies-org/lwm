@@ -22,10 +22,10 @@ class Hider {
   void Hide(Client* c);
   void Unhide(Client* c);
 
-  void OpenMenu(XButtonEvent* ev);
+  void OpenMenu(const xcb_button_press_event_t* ev);
   void Paint();
-  void MouseMotion(XEvent* ev);
-  void MouseRelease(XEvent* ev);
+  void MouseMotion(const xcb_motion_notify_event_t* ev);
+  void MouseRelease(const xcb_button_release_event_t* ev);
 
  private:
   int itemAt(int x, int y) const;

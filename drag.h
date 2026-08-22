@@ -9,6 +9,6 @@
 // concrete DragHandler subclasses (moving, resizing, closing/hiding/
 // lowering by click, the unhide menu, running a configured shell command)
 // are implementation details of this factory and not exposed here.
-DragHandler* getDragHandlerForEvent(XEvent* ev);
+DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* ev);
 
 #endif  // LWM_DRAG_H_included

@@ -436,17 +436,17 @@ void Client::ExitFullScreen() {
 }
 
 void Client::SendConfigureNotify() {
-  XConfigureEvent ce{};
-  ce.type = ConfigureNotify;
+  xcb_configure_notify_event_t ce{};
+  ce.response_type = XCB_CONFIGURE_NOTIFY;
   ce.event = window;
   ce.window = window;
   content_rect_.To(ce);
   ce.border_width = framed ? 0 : original_border_width_;
-  ce.above = None;
+  ce.above_sibling = XCB_NONE;
   ce.override_redirect = 0;
   LOGD(this) << "Sending config notify, r=" << content_rect_ << " to "
              << WinID(window);
-  xlib::XSendEvent(window, false, StructureNotifyMask, (XEvent*)&ce);
+  xlib::SendEvent(window, false, XCB_EVENT_MASK_STRUCTURE_NOTIFY, ce);
 }
 
 bool Client::HasFocus() const {

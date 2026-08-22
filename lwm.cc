@@ -29,12 +29,20 @@
 
 #include <signal.h>
 
+#include <xcb/randr.h>
+
 #include "lwm.h"
 #include "xfont.h"
 #include "xlib.h"
 
 bool is_initialising;
-Display* dpy;  // The connection to the X server.
+Display* dpy;           // Xlib's view of the connection; used only by Xft.
+xcb_connection_t* conn;  // The connection to the X server.
+
+// The event number RandR's ScreenChangeNotify arrives as. Extensions get
+// their event numbers allocated at run time, so this can't be a constant.
+static int rr_event_base;
+static bool have_rr;
 
 bool shape;       // Does server have Shape Window extension?
 int shape_event;  // ShapeEvent event type.
@@ -57,7 +65,7 @@ Atom motif_wm_hints;
 bool forceRestart;
 char* argv0;
 
-void rrScreenChangeNotify(XEvent* ev);
+void rrScreenChangeNotify(xcb_generic_event_t* ev);
 void setScreenAreasFromXRandR();
 
 /*ARGSUSED*/
@@ -82,8 +90,7 @@ extern int main(int argc, char* argv[]) {
   setlocale(LC_ALL, "");
 
   // Open a connection to the X server.
-  dpy = xlib::XOpenDisplay();
-  if (dpy == 0) {
+  if (!xlib::OpenDisplay()) {
     panic("can't open display.");
   }
   if (ScreenCount(dpy) != 1) {
@@ -94,8 +101,9 @@ extern int main(int argc, char* argv[]) {
   }
   Resources::Init();
 
-  // Set up an error handler.
-  xlib::XSetErrorHandler(errorHandler);
+  // There is no error handler to install: XCB delivers errors on the event
+  // queue, in sequence with everything else, and DispatchXEvent routes them
+  // to HandleXError.
 
   // Set up signal handlers.
   signal(SIGTERM, Terminate);
@@ -131,13 +139,10 @@ extern int main(int argc, char* argv[]) {
   LScr::I->Init();
   session_init(argc, argv);
 
-  // Initialisation is finished; from now on, errors are not going to be fatal.
-  is_initialising = false;
-
   // Do we need to support XRandR?
   xlib::RandRSupport rr = xlib::XRRQueryExtension();
-  int rr_event_base = rr.event_base;
-  bool have_rr = rr.have_rr;
+  rr_event_base = rr.event_base;
+  have_rr = rr.have_rr;
   if (have_rr) {
     xlib::XRRSelectInput(LScr::I->Root(), RRScreenChangeNotifyMask);
     setScreenAreasFromXRandR();
@@ -146,8 +151,19 @@ extern int main(int argc, char* argv[]) {
   // See if the server has the Shape Window extension.
   shape = serverSupportsShapes();
 
+  // Errors from start-up requests are fatal, but under XCB they arrive on the
+  // event queue rather than in a callback, so we have to go and collect them
+  // before deciding that start-up went well. Sync() waits for the server to
+  // have processed everything issued so far, which guarantees any errors are
+  // already queued by the time we drain.
+  xlib::Sync();
+  ProcessPendingEvents();
+
+  // Initialisation is finished; from now on, errors are not going to be fatal.
+  is_initialising = false;
+
   // The main event loop.
-  int dpy_fd = ConnectionNumber(dpy);
+  int dpy_fd = xlib::ConnectionFD();
   int max_fd = dpy_fd + 1;
   int delayed_focus_fd = LScr::I->GetFocuser()->GetTimerFD();
   if (ice_fd >= max_fd) {
@@ -166,6 +182,25 @@ extern int main(int argc, char* argv[]) {
   while (!forceRestart) {
     fd_set readfds;
 
+    // Drain whatever's queued before blocking. xcb_poll_for_event will read
+    // from the socket if it has to, so this covers both events already
+    // buffered and events that arrived while we were busy.
+    ProcessPendingEvents();
+    if (xlib::ConnectionIsBroken()) {
+      // Xlib had an IO error handler for this, which lwm never installed; the
+      // process would just die inside a library call. Say what happened.
+      panic("lost the connection to the X server.");
+    }
+
+    // The one flush, in the one place. XCB never pushes requests to the server
+    // on its own, so anything the handlers above queued would otherwise sit in
+    // the output buffer while we block in select() - which looks like lwm
+    // randomly stopping until you jiggle the mouse. That failure mode used to
+    // have exactly one instance, the delayed focus below, whose old comment
+    // explained it well; under XCB it isn't a special case any more, it's the
+    // rule, so it's handled once here instead.
+    xlib::Flush();
+
     FD_ZERO(&readfds);
     FD_SET(dpy_fd, &readfds);
     FD_SET(delayed_focus_fd, &readfds);
@@ -176,35 +211,11 @@ extern int main(int argc, char* argv[]) {
       FD_SET(STDIN_FILENO, &readfds);
     }
     if (select(max_fd, &readfds, NULL, NULL, NULL) > -1) {
-      if (FD_ISSET(dpy_fd, &readfds)) {
-        while (xlib::XPending()) {
-          XEvent ev;
-          xlib::XNextEvent(&ev);
-          // xrandr notifications have arbitrary numbers, so check for them
-          // before trying the static selection.
-          if (ev.type == rr_event_base + RRScreenChangeNotify) {
-            rrScreenChangeNotify(&ev);
-          } else {
-            DispatchXEvent(&ev);
-          }
-        }
-      }
       if (ice_fd > 0 && FD_ISSET(ice_fd, &readfds)) {
         session_process();
       }
       if (FD_ISSET(delayed_focus_fd, &readfds)) {
         LScr::I->GetFocuser()->TimerFDTriggered();
-        // My best guess as to why we need this is that, because the event we
-        // received didn't come off the Xlib connection (but rather our own
-        // timer file descriptor), messages to the X server don't get flushed
-        // automatically. The effect of this is that the delayed focus granting
-        // sort of happens, but doesn't look like it did until the user does
-        // something that triggers any event in LWM (like moving the mouse by
-        // a pixel).
-        // So call XSync so that we're sure all outstanding messages to, for
-        // example, tell the client it has input focus, and redraw its frame,
-        // get through.
-        xlib::XSync(false);
       }
       if (debugCLI && FD_ISSET(STDIN_FILENO, &readfds)) {
         debugCLI->Read();
@@ -216,8 +227,20 @@ extern int main(int argc, char* argv[]) {
   execvp(argv0, argv);
 }
 
-void rrScreenChangeNotify(XEvent* ev) {
-  XRRScreenChangeNotifyEvent* rrev = (XRRScreenChangeNotifyEvent*)ev;
+bool randrEvent(xcb_generic_event_t* ev) {
+  // RandR's events, like Shape's, are numbered from a base the server hands
+  // out at run time, so this can't be part of the main switch.
+  if (!have_rr || (ev->response_type & 0x7f) !=
+                      rr_event_base + RRScreenChangeNotify) {
+    return false;
+  }
+  rrScreenChangeNotify(ev);
+  return true;
+}
+
+void rrScreenChangeNotify(xcb_generic_event_t* ev) {
+  const xcb_randr_screen_change_notify_event_t* rrev =
+      (const xcb_randr_screen_change_notify_event_t*)ev;
   int nScrWidth = rrev->width;
   int nScrHeight = rrev->height;
   // If my laptop is connected to a screen that is switched off, of I try
@@ -234,12 +257,19 @@ void rrScreenChangeNotify(XEvent* ev) {
     return;
   }
 
-  static long lastSerial;
-  if (rrev->serial == lastSerial) {
-    LOGI() << "Dropping duplicate event for serial " << lastSerial;
-    return;  // Drop duplicate message (we get lots of these).
+  // We get lots of these - the server sends one notification per output
+  // affected by a single reconfiguration - so drop the duplicates. This used
+  // to key on Xlib's per-event serial number, which XCB's event doesn't
+  // carry; config_timestamp is the better key anyway, being the server's own
+  // "when was this screen configuration set" stamp, so every notification
+  // arising from one reconfiguration shares it.
+  static xcb_timestamp_t lastConfigTimestamp;
+  if (rrev->config_timestamp == lastConfigTimestamp) {
+    LOGI() << "Dropping duplicate event for screen config timestamp "
+           << lastConfigTimestamp;
+    return;
   }
-  lastSerial = rrev->serial;
+  lastConfigTimestamp = rrev->config_timestamp;
   setScreenAreasFromXRandR();
 }
 

@@ -14,11 +14,23 @@ This codebase was originally C, but newer parts are written in C++. There are pa
 
 ---
 
+Executed docs/refactoring-plan.md up to stage D (still need to do stage E).
+
+---
+
 Create a plan to migrate lwm from xlib to xcb, which is a superior X11 client library.
 
 ---
 
+Executing docs/xcb-migration-plan.md.
+
+---
+
 **Currently here**
+
+---
+
+I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
 
 ---
 
@@ -31,4 +43,14 @@ Add the following mouse actions, which act when the user performs a mouse action
 Add UI tests, using Xvfb.
 
 ---
+
+**TBD** - Windows-arrow keys should flip focus between windows, by looking at their relative placement and moving focus in the appropriate direction.
+
+---
+
+**TBD** - Maybe have some way of marking a window with a specific hotkey (eg "windows-shift-g') and then be able to switch to it and jump it to the top of the stack with a corresponding hotkey ("windows-g").
+
+---
+
+**TBD** - Maybe some way of recording a state of windows (sizes, locations, which ones are minimised) with some hotkey, and then returning to that state with a corresponding hotkey (maybe "windows-ctrl-shift-g" vs "windows-ctrl-g", similar to above).
 

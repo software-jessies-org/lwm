@@ -15,16 +15,18 @@ class MenuDragger : public DragHandler {
  public:
   MenuDragger() = default;
 
-  virtual void Start(XEvent* ev) {
-    LScr::I->GetHider()->OpenMenu(&ev->xbutton);
+  virtual void Start(xcb_generic_event_t* ev) {
+    LScr::I->GetHider()->OpenMenu((const xcb_button_press_event_t*)ev);
   }
 
-  virtual bool Move(XEvent* ev) {
-    LScr::I->GetHider()->MouseMotion(ev);
+  virtual bool Move(xcb_generic_event_t* ev) {
+    LScr::I->GetHider()->MouseMotion((const xcb_motion_notify_event_t*)ev);
     return true;
   }
 
-  virtual void End(XEvent* ev) { LScr::I->GetHider()->MouseRelease(ev); }
+  virtual void End(xcb_generic_event_t* ev) {
+    LScr::I->GetHider()->MouseRelease((const xcb_button_release_event_t*)ev);
+  }
 };
 
 // WindowDragger handles the shared bit of actions which involve dragging, such
@@ -37,13 +39,13 @@ class WindowDragger : public DragHandler {
  public:
   WindowDragger(Client* c) : window_(c->parent) {}
 
-  virtual void Start(XEvent*) {
+  virtual void Start(xcb_generic_event_t*) {
     start_pos_ = getMousePosition();
     LOGD(LScr::I->GetClient(window_))
         << "Window drag from " << start_pos_.x << ", " << start_pos_.y;
   }
 
-  virtual bool Move(XEvent* ev) {
+  virtual bool Move(xcb_generic_event_t* ev) {
     Client* c = LScr::I->GetClient(window_);
     MousePos mp = getMousePosition();
     // Cancel everything if either the client has disappeared (window closed
@@ -63,7 +65,7 @@ class WindowDragger : public DragHandler {
 
   virtual void moveImpl(Client* c, int dx, int dy) = 0;
 
-  virtual void End(XEvent*) {
+  virtual void End(xcb_generic_event_t*) {
     MousePos mp = getMousePosition();
     LOGD(LScr::I->GetClient(window_))
         << "Window drag to " << mp.x << ", " << mp.y << " (moved "
@@ -182,10 +184,10 @@ class WindowResizer : public WindowDragger {
 class WindowClicker : public DragHandler {
  public:
   WindowClicker(Client* c) : window_(c->parent) {}
-  virtual void Start(XEvent*) { start_pos_ = getMousePosition(); }
-  virtual bool Move(XEvent*) { return true; }
+  virtual void Start(xcb_generic_event_t*) { start_pos_ = getMousePosition(); }
+  virtual bool Move(xcb_generic_event_t*) { return true; }
 
-  virtual void End(XEvent*) {
+  virtual void End(xcb_generic_event_t*) {
     MousePos mp = getMousePosition();
     const int dx = std::abs(start_pos_.x - mp.x);
     const int dy = std::abs(start_pos_.y - mp.y);
@@ -238,9 +240,9 @@ class WindowLowerer : public WindowClicker {
 class ShellRunner : public DragHandler {
  public:
   explicit ShellRunner(int button) : button_(button) {}
-  virtual void Start(XEvent*) { shell(button_); }
-  virtual bool Move(XEvent*) { return false; }
-  virtual void End(XEvent*) {}
+  virtual void Start(xcb_generic_event_t*) { shell(button_); }
+  virtual bool Move(xcb_generic_event_t*) { return false; }
+  virtual void End(xcb_generic_event_t*) {}
 
  private:
   int button_;
@@ -269,17 +271,16 @@ void RunConfiguredAltCommand(Window w, Edge edge, int button) {
 
 }  // namespace
 
-DragHandler* getDragHandlerForEvent(XEvent* ev) {
-  XButtonEvent* e = &ev->xbutton;
+DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
   // Deal with root window button presses.
-  if (e->window == e->root) {
-    if (e->button == Button3) {
+  if (e->event == e->root) {
+    if (e->detail == Button3) {
       return new MenuDragger;
     }
-    return new ShellRunner(e->button);
+    return new ShellRunner(e->detail);
   }
 
-  Client* c = LScr::I->GetClient(e->window);
+  Client* c = LScr::I->GetClient(e->event);
   if (c == nullptr) {
     return nullptr;
   }
@@ -288,10 +289,10 @@ DragHandler* getDragHandlerForEvent(XEvent* ev) {
   }
 
   // move this test up to disable scroll to focus
-  if (e->button >= 4 && e->button <= 7) {
+  if (e->detail >= 4 && e->detail <= 7) {
     return nullptr;
   }
-  const Edge edge = c->EdgeAt(e->window, e->x, e->y);
+  const Edge edge = c->EdgeAt(e->event, e->event_x, e->event_y);
   if (edge == EContents) {
     return nullptr;
   }
@@ -299,7 +300,7 @@ DragHandler* getDragHandlerForEvent(XEvent* ev) {
   // If the user has alt held, then we run special configured commands as
   // configured in the user's xresources.
   if (e->state & Mod1Mask) {
-    RunConfiguredAltCommand(c->window, edge, e->button);
+    RunConfiguredAltCommand(c->window, edge, e->detail);
   }
 
   if (edge == EClose) {
@@ -307,13 +308,13 @@ DragHandler* getDragHandlerForEvent(XEvent* ev) {
   }
 
   // Somewhere in the rest of the frame.
-  if (e->button == HIDE_BUTTON) {
+  if (e->detail == HIDE_BUTTON) {
     if (e->state & ShiftMask) {
       return new WindowLowerer(c);
     }
     return new WindowHider(c);
   }
-  if (e->button == MOVE_BUTTON) {
+  if (e->detail == MOVE_BUTTON) {
     // If we're moving the window because the user has used the 'move' button
     // (generally middle), then force the mouse pointer to turn into the move
     // pointer, even if it's over an area of the window furniture which usually
@@ -324,7 +325,7 @@ DragHandler* getDragHandlerForEvent(XEvent* ev) {
         LScr::I->Cursors()->ForEdge(ENone), CurrentTime);
     return new WindowMover(c);
   }
-  if (e->button == RESHAPE_BUTTON) {
+  if (e->detail == RESHAPE_BUTTON) {
     c->Raise();
     if (edge == ENone) {
       return new WindowMover(c);

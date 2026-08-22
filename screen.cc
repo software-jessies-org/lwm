@@ -5,6 +5,7 @@
 #include "manage.h"
 #include "resource.h"
 #include "screen.h"
+#include "error.h"
 #include "screenlayout.h"
 #include "xlib.h"
 
@@ -70,18 +71,25 @@ void LScr::Init() {
   menu_ = xlib::CreateNamedWindow("LWM unhide menu", r, 1, fg, bg);
   xlib::XChangeWindowAttributes(menu_, CWEventMask, &attr);
 
-  // Announce our interest in the root_ window.
+  // Announce our interest in the root window. SubstructureRedirect is the
+  // part only one client may hold, so this is also how we find out whether
+  // another window manager is already running - and unlike Xlib, we get the
+  // answer here rather than as a mystery BadAccess in an error handler.
+  const uint32_t root_events =
+      SubstructureRedirectMask | SubstructureNotifyMask | ColormapChangeMask |
+      ButtonPressMask | ButtonReleaseMask | PropertyChangeMask |
+      EnterWindowMask;
+  if (!xlib::SelectRootEvents(root_, root_events)) {
+    panic("another window manager is already running.");
+  }
   attr.cursor = cursor_map_->Root();
-  attr.event_mask = SubstructureRedirectMask | SubstructureNotifyMask |
-                    ColormapChangeMask | ButtonPressMask | ButtonReleaseMask |
-                    PropertyChangeMask | EnterWindowMask;
-  xlib::XChangeWindowAttributes(root_, CWCursor | CWEventMask, &attr);
+  xlib::XChangeWindowAttributes(root_, CWCursor, &attr);
 
   // Tell all the applications what icon sizes we prefer.
   xlib::ImageIcon::ConfigureIconSizes();
 
   // Make sure all our communication to the server got through.
-  xlib::XSync(false);
+  xlib::Sync();
   ScanWindowTree();
   InitEWMH();
 }

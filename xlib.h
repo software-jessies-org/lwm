@@ -4,8 +4,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <X11/SM/SMlib.h>
@@ -23,12 +25,22 @@
 #include <X11/extensions/shape.h>
 #endif
 
+#include <xcb/xcb.h>
+
 #include "geometry.h"
 #include "log.h"
 
-// The connection to the X server. Defined and opened in lwm.cc's main(),
-// but declared here since nearly every file that touches X needs it.
+// The connection to the X server. Opened by xlib::OpenDisplay(), and declared
+// here because nearly every file that touches X needs it.
+//
+// There is only one connection. `dpy` and `conn` are two views of it: we open
+// it with XOpenDisplay, hand the event queue to XCB with XSetEventQueueOwner,
+// and pull the XCB connection out with XGetXCBConnection. Everything goes
+// over `conn`; `dpy` exists solely because Xft has no XCB port, and only
+// xfont.cc may use it (via xlib::XftDisplay(), which is why this declaration
+// is going away rather than growing users).
 extern Display* dpy;
+extern xcb_connection_t* conn;
 
 struct MousePos {
   int x;
@@ -166,7 +178,33 @@ extern int XFillRectangle(Window w,
 extern int XDrawLine(Window w, GC gc, int x1, int y1, int x2, int y2);
 
 extern int XKillClient(Window w);
-extern int XSendEvent(Window w, bool propagate, long event_mask, XEvent* event);
+
+// Sends a synthetic event to a window. Takes exactly 32 bytes off the wire,
+// that being the size of every core X11 event.
+extern void SendEventRaw(Window w,
+                         bool propagate,
+                         uint32_t event_mask,
+                         const char* event32);
+
+// Sends a synthetic event, given the appropriate XCB event struct.
+// The padding matters: xcb_send_event always copies 32 bytes from the pointer
+// it's given, whatever the struct's own size, and several event structs are
+// smaller than that (a ConfigureNotify is 28 bytes). Passing one straight in
+// therefore reads off the end of it and puts whatever was next in memory on
+// the wire, so everything goes through this padded buffer instead.
+template <typename T>
+void SendEvent(Window w, bool propagate, uint32_t event_mask, const T& event) {
+  // Pass the event struct, not a pointer to it. Handing this a pointer used
+  // to compile perfectly happily and then memcpy the pointer's own bytes onto
+  // the wire, which the server rejects with a BadValue naming a byte of the
+  // caller's stack address as the "event type".
+  static_assert(!std::is_pointer<T>::value,
+                "pass the event struct by reference, not its address");
+  static_assert(sizeof(T) <= 32, "X11 events are 32 bytes on the wire");
+  char buf[32] = {};
+  memcpy(buf, &event, sizeof(T));
+  SendEventRaw(w, propagate, event_mask, buf);
+}
 
 extern int XGrabButton(unsigned int button,
                        unsigned int modifiers,
@@ -250,15 +288,41 @@ extern int XSetLineAttributes(GC gc,
                               int cap_style,
                               int join_style);
 
-extern int XSync(bool discard);
+// Waits for every request issued so far to be processed by the server, so
+// that any errors they provoke have arrived before we carry on. Under XCB
+// this is a real round trip, not a flush, so use it sparingly.
+extern void Sync();
 
-// Returns null on failure, same as the underlying XOpenDisplay.
-extern Display* XOpenDisplay();
-extern void XCloseDisplay();
+// Pushes everything queued to the server. XCB, unlike Xlib, never does this
+// behind your back, so exactly one place calls it: the top of the event loop,
+// just before select(). Individual shim functions must not.
+extern void Flush();
 
-extern int XPending();
-extern void XNextEvent(XEvent* event);
-extern XErrorHandler XSetErrorHandler(XErrorHandler handler);
+// Opens the connection to the X server, filling in both dpy and conn.
+// Returns false if the display couldn't be opened.
+extern bool OpenDisplay();
+extern void CloseDisplay();
+
+// The file descriptor to select() on for incoming events.
+extern int ConnectionFD();
+
+// True if the connection has been shut down (server exit, protocol error).
+// This replaces Xlib's IO error handler, which lwm never had.
+extern bool ConnectionIsBroken();
+
+// Returns the next queued event, or null if there are none. The caller owns
+// the result and must free() it.
+extern xcb_generic_event_t* NextEvent();
+
+// The sequence number the next request issued will get. Used to bracket a
+// range of requests whose errors we intend to ignore; see error.h.
+extern uint32_t NextRequestSequence();
+
+// Selects the given event mask on the root window, which is how a window
+// manager claims the display. Returns false if another window manager
+// already holds it - unlike Xlib, XCB can answer that question immediately
+// rather than via a deferred BadAccess in the error handler.
+extern bool SelectRootEvents(Window root, uint32_t event_mask);
 
 struct RandRSupport {
   bool have_rr;

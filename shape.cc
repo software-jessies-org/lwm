@@ -27,6 +27,10 @@
 #include "shape.h"
 #include "xlib.h"
 
+#ifdef SHAPE
+#include <xcb/shape.h>
+#endif
+
 /*ARGSUSED*/
 extern void setShape(Client* c) {
 #ifdef SHAPE
@@ -45,11 +49,14 @@ extern void setShape(Client* c) {
 }
 
 /*ARGSUSED*/
-extern int shapeEvent(XEvent* ev) {
+extern int shapeEvent(xcb_generic_event_t* ev) {
 #ifdef SHAPE
-  if (shape && ev->type == shape_event) {
-    XShapeEvent* e = (XShapeEvent*)ev;
-    Client* c = LScr::I->GetClient(e->window);
+  // Extension events don't have fixed numbers: the server allocates a base at
+  // run time and the extension's events are numbered from it. shape_event is
+  // that base, filled in by serverSupportsShapes().
+  if (shape && (ev->response_type & 0x7f) == shape_event) {
+    const xcb_shape_notify_event_t* e = (const xcb_shape_notify_event_t*)ev;
+    Client* c = LScr::I->GetClient(e->affected_window);
     if (c != 0) {
       setShape(c);
     }

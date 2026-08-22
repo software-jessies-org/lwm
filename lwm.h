@@ -55,6 +55,11 @@ extern Atom wm_take_focus;
 extern Atom compound_text;
 extern bool shape;
 extern int shape_event;
+
+// Handles a RandR ScreenChangeNotify, returning false if the event wasn't
+// one. Like shapeEvent(), this can't live in DispatchXEvent's switch, because
+// extension event numbers are only known at run time.
+extern bool randrEvent(xcb_generic_event_t* ev);
 extern char* argv0;
 extern bool forceRestart;
 extern void shell(int button);

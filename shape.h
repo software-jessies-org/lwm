@@ -5,7 +5,7 @@
 
 class Client;
 
-extern int shapeEvent(XEvent*);
+extern int shapeEvent(xcb_generic_event_t*);
 extern int serverSupportsShapes();
 extern int isShaped(Window);
 extern void setShape(Client*);

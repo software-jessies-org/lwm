@@ -236,11 +236,13 @@ void withdraw(Client* c) {
   xlib::XRemoveFromSaveSet(c->window);
   c->SetState(WithdrawnState);
 
-  // Flush and ignore any errors. X11 sends us an UnmapNotify before it
-  // sends us a DestroyNotify. That means we can get here without knowing
-  // whether the relevant window still exists.
+  // Sync, and ignore any errors the requests above provoked. X11 sends us an
+  // UnmapNotify before it sends us a DestroyNotify, so we can get here without
+  // knowing whether the relevant window still exists. The Sync matters: it's
+  // what guarantees those errors have arrived (and so are still inside this
+  // scope's sequence range) before we stop ignoring them.
   ScopedIgnoreBadWindow ignorer;
-  xlib::XSync(false);
+  xlib::Sync();
 }
 
 /*ARGSUSED*/
@@ -250,11 +252,10 @@ void Terminate(int signal) {
 
   // Give up the input focus and the colourmap.
   xlib::XSetInputFocus(PointerRoot, RevertToPointerRoot, CurrentTime);
-  // XCloseDisplay (or rather, XSync as called by XCloseDisplay) dumps a load
-  // of BadMatch errors into the error handler. That's unhelpful spam, so
-  // inform the error handler that it should ignore them.
+  // Closing the display dumps a load of BadMatch errors into the log. That's
+  // unhelpful spam on the way out, so say we're not interested.
   ScopedIgnoreBadMatch ignorer;
-  xlib::XCloseDisplay();
+  xlib::CloseDisplay();
   session_end();
 
   if (signal == SIGHUP) {

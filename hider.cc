@@ -158,7 +158,7 @@ void Hider::Unhide(Client* c) {
   LScr::I->GetFocuser()->FocusClient(c);
 }
 
-void Hider::OpenMenu(XButtonEvent* e) {
+void Hider::OpenMenu(const xcb_button_press_event_t* e) {
   Client_ResetAllCursors();
   open_content_.clear();
   width_ = 0;
@@ -229,11 +229,14 @@ void Hider::OpenMenu(XButtonEvent* e) {
 
   // Arrange for centre of first menu item to be under pointer,
   // unless that would put the menu off-screen.
-  const Rect scr = visibleAreaAt(e->x, e->y);
-  x_min_ = clamp(e->x - width_ / 2, scr.xMin, scr.xMax - width_);
-  y_min_ = clamp(e->y - menuItemHeight() / 2, scr.yMin, scr.yMax - height_);
+  // event_x/event_y are what Xlib called x/y (relative to the event window),
+  // and root_x/root_y are its x_root/y_root.
+  const Rect scr = visibleAreaAt(e->event_x, e->event_y);
+  x_min_ = clamp(e->event_x - width_ / 2, scr.xMin, scr.xMax - width_);
+  y_min_ =
+      clamp(e->event_y - menuItemHeight() / 2, scr.yMin, scr.yMax - height_);
 
-  current_item_ = itemAt(e->x_root, e->y_root);
+  current_item_ = itemAt(e->root_x, e->root_y);
   showHighlightBox(current_item_);
   mapAndRaise(LScr::I->Menu(), x_min_, y_min_, width_, height_);
   xlib::XChangeActivePointerGrab(
@@ -289,9 +292,9 @@ void Hider::drawHighlight(int itemIndex) {
                        y, width_ - menuHighlightMargins(), ih);
 }
 
-void Hider::MouseMotion(XEvent* ev) {
+void Hider::MouseMotion(const xcb_motion_notify_event_t* ev) {
   const int old = current_item_;  // Old menu position.
-  current_item_ = itemAt(ev->xbutton.x_root, ev->xbutton.y_root);
+  current_item_ = itemAt(ev->root_x, ev->root_y);
   if (current_item_ != old) {
     // In order to avoid too much flickering, and to avoid weird corruption
     // in our popup window, we first make the red highlight box disappear,
@@ -306,9 +309,9 @@ void Hider::MouseMotion(XEvent* ev) {
   }
 }
 
-void Hider::MouseRelease(XEvent* ev) {
+void Hider::MouseRelease(const xcb_button_release_event_t* ev) {
   hideHighlightBox();
-  const int n = itemAt(ev->xbutton.x_root, ev->xbutton.y_root);
+  const int n = itemAt(ev->root_x, ev->root_y);
   xlib::XUnmapWindow(LScr::I->Menu());
   if (n < 0) {
     return;  // User just released the mouse without having selected anything.
