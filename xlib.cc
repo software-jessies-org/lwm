@@ -748,6 +748,24 @@ Atom XInternAtom(const std::string& name) {
   return r ? r->atom : 0;
 }
 
+std::vector<Atom> XInternAtoms(const std::vector<std::string>& names) {
+  std::vector<xcb_intern_atom_cookie_t> cookies;
+  cookies.reserve(names.size());
+  for (const std::string& name : names) {
+    cookies.push_back(xcb_intern_atom(conn, 0, name.size(), name.c_str()));
+  }
+  // Only now do we start waiting: by this point every request is already on
+  // its way, so the whole batch costs one round trip.
+  std::vector<Atom> res;
+  res.reserve(names.size());
+  for (const xcb_intern_atom_cookie_t cookie : cookies) {
+    Reply<xcb_intern_atom_reply_t> r(
+        xcb_intern_atom_reply(conn, cookie, nullptr));
+    res.push_back(r ? r->atom : 0);
+  }
+  return res;
+}
+
 int XChangeProperty(Window w,
                     Atom property,
                     Atom type,
@@ -820,13 +838,8 @@ WMHints XGetWMHints(Window w) {
   return res;
 }
 
-NormalHints XGetWMNormalHints(Window w) {
+static NormalHints normalHintsFrom(const xcb_size_hints_t& hints) {
   NormalHints res{};
-  xcb_size_hints_t hints;
-  if (!xcb_icccm_get_wm_normal_hints_reply(
-          conn, xcb_icccm_get_wm_normal_hints(conn, w), &hints, nullptr)) {
-    return res;
-  }
   res.ok = true;
   res.has_min_size = (hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) != 0;
   res.has_max_size = (hints.flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE) != 0;
@@ -840,6 +853,54 @@ NormalHints XGetWMNormalHints(Window w) {
   res.base_height = hints.base_height;
   res.width_inc = hints.width_inc;
   res.height_inc = hints.height_inc;
+  return res;
+}
+
+NormalHints XGetWMNormalHints(Window w) {
+  xcb_size_hints_t hints;
+  if (!xcb_icccm_get_wm_normal_hints_reply(
+          conn, xcb_icccm_get_wm_normal_hints(conn, w), &hints, nullptr)) {
+    return NormalHints{};
+  }
+  return normalHintsFrom(hints);
+}
+
+std::vector<WindowInfo> QueryWindows(const std::vector<Window>& ws) {
+  struct Cookies {
+    xcb_get_window_attributes_cookie_t attrs;
+    xcb_get_geometry_cookie_t geom;
+    xcb_get_property_cookie_t hints;
+  };
+  std::vector<Cookies> cookies;
+  cookies.reserve(ws.size());
+  for (const Window w : ws) {
+    cookies.push_back(Cookies{xcb_get_window_attributes(conn, w),
+                              xcb_get_geometry(conn, w),
+                              xcb_icccm_get_wm_normal_hints(conn, w)});
+  }
+  // Everything is in flight; now collect.
+  std::vector<WindowInfo> res(ws.size());
+  for (size_t i = 0; i < ws.size(); i++) {
+    Reply<xcb_get_window_attributes_reply_t> attr(
+        xcb_get_window_attributes_reply(conn, cookies[i].attrs, nullptr));
+    Reply<xcb_get_geometry_reply_t> geom(
+        xcb_get_geometry_reply(conn, cookies[i].geom, nullptr));
+    if (attr && geom) {
+      WindowAttributes& a = res[i].attributes;
+      a.ok = true;
+      a.override_redirect = attr->override_redirect;
+      a.viewable = attr->map_state == XCB_MAP_STATE_VIEWABLE;
+      a.input_only = attr->_class == XCB_WINDOW_CLASS_INPUT_ONLY;
+      a.all_event_masks = attr->all_event_masks;
+      a.rect = Rect::FromXYWH(geom->x, geom->y, geom->width, geom->height);
+      a.border_width = geom->border_width;
+    }
+    xcb_size_hints_t hints;
+    if (xcb_icccm_get_wm_normal_hints_reply(conn, cookies[i].hints, &hints,
+                                            nullptr)) {
+      res[i].normal_hints = normalHintsFrom(hints);
+    }
+  }
   return res;
 }
 

@@ -156,10 +156,17 @@ void LScr::InitEWMH() {
 
 void LScr::ScanWindowTree() {
   xlib::WindowTree wt = xlib::WindowTree::Query(root_);
+  // Ask about every candidate window in one go. Adopting the windows that
+  // are already on screen used to be three blocking round trips apiece.
+  std::vector<Window> candidates;
   for (const Window w : wt.children) {
     if (!xlib::IsLWMWindow(w)) {
-      AddClient(w, true);
+      candidates.push_back(w);
     }
+  }
+  const std::vector<xlib::WindowInfo> infos = xlib::QueryWindows(candidates);
+  for (size_t i = 0; i < candidates.size(); i++) {
+    AddClient(candidates[i], true, infos[i]);
   }
   // Tell all the clients they don't have input focus. This has two effects:
   // 1: the client will respond by drawing its border (always)
@@ -180,13 +187,15 @@ Client* LScr::GetOrAddClient(Window w, bool is_startup_scan) {
   if (c) {
     return c;
   }
-  c = AddClient(w, is_startup_scan);
+  c = AddClient(w, is_startup_scan, xlib::QueryWindows({w})[0]);
   DebugCLI::NotifyClientAdd(c);
   return c;
 }
 
-Client* LScr::AddClient(Window w, bool is_startup_scan) {
-  const xlib::WindowAttributes attr = xlib::XGetWindowAttributes(w);
+Client* LScr::AddClient(Window w,
+                        bool is_startup_scan,
+                        const xlib::WindowInfo& info) {
+  const xlib::WindowAttributes& attr = info.attributes;
   if (!attr.ok || attr.override_redirect) {
     return nullptr;
   }
@@ -196,7 +205,7 @@ Client* LScr::AddClient(Window w, bool is_startup_scan) {
   if (is_startup_scan && !attr.viewable) {
     return nullptr;
   }
-  const xlib::NormalHints size = xlib::XGetWMNormalHints(w);
+  const xlib::NormalHints& size = info.normal_hints;
   DimensionLimiter xdl;
   DimensionLimiter ydl;
   if (size.ok) {

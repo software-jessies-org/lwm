@@ -111,7 +111,12 @@ class LScr {
  private:
   void InitEWMH();
   void ScanWindowTree();
-  Client* AddClient(Window w, bool is_startup_scan);
+  // AddClient takes the window's already-fetched attributes and hints,
+  // because the start-up scan queries every window on screen in one batch
+  // rather than one at a time.
+  Client* AddClient(Window w,
+                    bool is_startup_scan,
+                    const xlib::WindowInfo& info);
   unsigned long black() const { return xlib::Black(); }
   unsigned long white() const { return xlib::White(); }
 

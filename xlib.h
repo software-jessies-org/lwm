@@ -410,6 +410,12 @@ extern void XChangeActivePointerGrab(unsigned int event_mask,
 
 extern Atom XInternAtom(const std::string& name);
 
+// Interns several atoms at once, returning them in the order given.
+// Under Xlib each intern was a separate blocking round trip; here every
+// request goes out before any reply is waited for, so start-up's ~70 interns
+// cost one round trip between them rather than seventy.
+extern std::vector<Atom> XInternAtoms(const std::vector<std::string>& names);
+
 extern int XChangeProperty(Window w,
                            Atom property,
                            Atom type,
@@ -487,6 +493,17 @@ struct NormalHints {
   int width_inc = 1, height_inc = 1;
 };
 extern NormalHints XGetWMNormalHints(Window w);
+
+// Everything lwm needs before it can decide whether to adopt a window.
+struct WindowInfo {
+  WindowAttributes attributes;
+  NormalHints normal_hints;
+};
+
+// Queries several windows at once. Every request goes out before any reply is
+// waited for, so scanning the window tree at start-up costs one round trip
+// rather than three per window already on screen.
+extern std::vector<WindowInfo> QueryWindows(const std::vector<Window>& ws);
 
 // Returns the atoms listed in the window's WM_PROTOCOLS property, or an empty
 // vector if it has none.

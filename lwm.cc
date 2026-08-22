@@ -120,15 +120,25 @@ extern int main(int argc, char* argv[]) {
   sigemptyset(&sa.sa_mask);
   sigaction(SIGCHLD, &sa, 0);
 
-  // Internalize useful atoms.
-  wm_state = xlib::XInternAtom("WM_STATE");
-  wm_change_state = xlib::XInternAtom("WM_CHANGE_STATE");
-  wm_protocols = xlib::XInternAtom("WM_PROTOCOLS");
-  wm_delete = xlib::XInternAtom("WM_DELETE_WINDOW");
-  wm_take_focus = xlib::XInternAtom("WM_TAKE_FOCUS");
-  compound_text = xlib::XInternAtom("COMPOUND_TEXT");
-  _mozilla_url = xlib::XInternAtom("_MOZILLA_URL");
-  motif_wm_hints = xlib::XInternAtom("_MOTIF_WM_HINTS");
+  // Internalize useful atoms, in one batch rather than eight round trips.
+  const std::vector<Atom> atoms = xlib::XInternAtoms({
+      "WM_STATE",
+      "WM_CHANGE_STATE",
+      "WM_PROTOCOLS",
+      "WM_DELETE_WINDOW",
+      "WM_TAKE_FOCUS",
+      "COMPOUND_TEXT",
+      "_MOZILLA_URL",
+      "_MOTIF_WM_HINTS",
+  });
+  wm_state = atoms[0];
+  wm_change_state = atoms[1];
+  wm_protocols = atoms[2];
+  wm_delete = atoms[3];
+  wm_take_focus = atoms[4];
+  compound_text = atoms[5];
+  _mozilla_url = atoms[6];
+  motif_wm_hints = atoms[7];
 
   ewmh_init();
 

@@ -56,11 +56,14 @@ std::ostream& operator<<(std::ostream& os, const AtomName& an) {
 }
 
 void ewmh_init() {
-  // Build half a million EWMH atoms.
-#define SET_ATOM(x)                             \
-  do {                                          \
-    ewmh_atom[x] = xlib::XInternAtom(#x);       \
-    ewmh_atom_names[x] = #x;                    \
+  // Build half a million EWMH atoms. The names are collected first and
+  // interned in one batch: sixty-odd separate interns used to mean sixty-odd
+  // blocking round trips at start-up, one after another.
+  std::vector<std::string> names(EWMH_ATOM_LAST);
+#define SET_ATOM(x)          \
+  do {                       \
+    names[x] = #x;           \
+    ewmh_atom_names[x] = #x; \
   } while (0)
   SET_ATOM(_NET_SUPPORTED);
   SET_ATOM(_NET_CLIENT_LIST);
@@ -122,7 +125,13 @@ void ewmh_init() {
   SET_ATOM(_NET_WM_ACTION_CHANGE_DESKTOP);
   SET_ATOM(_NET_WM_ACTION_CLOSE);
 #undef SET_ATOM
-  utf8_string = xlib::XInternAtom("UTF8_STRING");
+  // UTF8_STRING rides along on the same batch.
+  names.push_back("UTF8_STRING");
+  const std::vector<Atom> atoms = xlib::XInternAtoms(names);
+  for (int i = 0; i < EWMH_ATOM_LAST; i++) {
+    ewmh_atom[i] = atoms[i];
+  }
+  utf8_string = atoms[EWMH_ATOM_LAST];
 }
 
 EWMHWindowType ewmh_get_window_type(Window w) {
