@@ -17,6 +17,7 @@ Notes-to-self for working on this codebase efficiently. Written for an agent
 | [concepts.md](concepts.md) | Frame vs content rects, edges, focus, struts, visible areas, icons |
 | [dev-workflow.md](dev-workflow.md) | Build, test, Xephyr, debug CLI, debugging tools |
 | [refactoring-plan.md](refactoring-plan.md) | Staged plan to break up `lwm.h`, tier the code, and add unit tests |
+| [xcb-migration-plan.md](xcb-migration-plan.md) | Staged plan to move off Xlib onto XCB; the four hazards that break silently |
 
 ## Project shape at a glance
 

@@ -14,11 +14,11 @@ This codebase was originally C, but newer parts are written in C++. There are pa
 
 ---
 
-**Currently here**
+Create a plan to migrate lwm from xlib to xcb, which is a superior X11 client library.
 
 ---
 
-Create a plan to migrate lwm from xlib to xcb, which is a superior X11 client library.
+**Currently here**
 
 ---
 
