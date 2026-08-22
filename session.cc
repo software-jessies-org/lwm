@@ -22,6 +22,8 @@
 #include <unistd.h>
 
 #include "lwm.h"
+#include "manage.h"
+#include "session.h"
 
 struct SmProperty {
   SmProp p;

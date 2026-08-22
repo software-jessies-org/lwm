@@ -1,6 +1,20 @@
-#include "lwm.h"
+#include "debug.h"
+#include "hider.h"
+#include "resource.h"
+#include "screen.h"
+#include "xlib.h"
 
 #include <set>
+
+MousePos getMousePosition() {
+  Window root, child;
+  MousePos res;
+  memset(&res, 0, sizeof(res));
+  int t1, t2;
+  XQueryPointer(dpy, LScr::I->Root(), &root, &child, &res.x, &res.y, &t1, &t2,
+                &res.modMask);
+  return res;
+}
 
 namespace xlib {
 

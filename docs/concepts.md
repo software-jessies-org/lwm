@@ -23,7 +23,7 @@ synthetic `ConfigureNotify`. Neither does visibility bounds checking; call
 
 ## Edges
 
-`Edge` (`geometry.h:13`) names the eight resize directions plus three specials:
+`Edge` (`edge.h`) names the eight resize directions plus three specials:
 `ENone` = the title bar (i.e. move, not resize), `EClose` = the close cross,
 `EContents` = the client window itself, not window furniture.
 
@@ -42,7 +42,7 @@ proposed range, adjusting whichever end actually moved — that's what makes
 resizing an xterm from the left edge behave. `DisplayableSize()` converts pixels
 to the units shown in the resize popup ("80 x 24" for an xterm).
 
-## Focus (`Focuser`, in `client.cc:620`)
+## Focus (`Focuser`, in `focus.cc`)
 
 Sloppy focus by default; `focus: click` in Xresources switches to click-to-focus
 (in which mode `FocusLost` grabs buttons on the client window so LWM sees the
@@ -56,7 +56,7 @@ never contain a dangling pointer — `LScr::Remove` calls `UnfocusClient` first.
 The timerfd exists to defuse an X race: mouse crossing A→B→C fast can let B grab
 focus after C. So the first enter is honoured immediately and any enter within
 `focusDelayMillis` (default 50) is deferred through the timer. See the long
-comment at `lwm.h:356`.
+comment on the `Focuser` class in `focus.h`.
 
 `ReallyFocusClient` has three paths: normal (`XSetInputFocus` on the top-level,
 plus `WM_TAKE_FOCUS` if supported), the Java case (`accepts_focus == false` but
@@ -64,7 +64,7 @@ plus `WM_TAKE_FOCUS` if supported), the Java case (`accepts_focus == false` but
 Chrome breaks if you focus its children as well as the top level; Java breaks if
 you don't. Don't "simplify" this.
 
-## Hiding (`Hider`, in `mouse.cc`)
+## Hiding (`Hider`, in `hider.cc`)
 
 Hiding = unmap the frame + `IconicState`. No icons are placed on the desktop.
 `hidden_` is a list of **frame** window ids (see `hiddenIDFor`). The unhide menu
@@ -92,8 +92,8 @@ with `MapToNewAreas` *before* swapping in the new geometry, then applies the
 moves. `MapToNewAreas` handles, in order: height-maximised windows, windows
 against the left/right edge (`mapEdges` → `mapLeftEdge`, with the right edge
 handled by mirroring and top/bottom by flipping x/y), then free-floating windows
-scaled proportionally into the tallest screen at their new mid-x. This is the
-one part of the codebase with unit tests — extend `tests.cc` when touching it.
+scaled proportionally into the tallest screen at their new mid-x. Extend
+`screenlayout_test.cc` when touching it.
 
 ## Icons (`xlib::ImageIcon`)
 

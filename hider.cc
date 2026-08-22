@@ -1,39 +1,15 @@
-/*
- * lwm, a window manager for X11
- * Copyright (C) 1997-2016 Elliott Hughes, James Carter
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- */
+#include "hider.h"
 
-#include <iostream>
 #include <set>
 
-#include "ewmh.h"
+#include "client.h"
 #include "lwm.h"
+#include "menulayout.h"
+#include "resource.h"
+#include "screen.h"
+#include "xlib.h"
 
-#define MENU_Y_PADDING 6
-
-MousePos getMousePosition() {
-  Window root, child;
-  MousePos res;
-  memset(&res, 0, sizeof(res));
-  int t1, t2;
-  XQueryPointer(dpy, LScr::I->Root(), &root, &child, &res.x, &res.y, &t1, &t2,
-                &res.modMask);
-  return res;
-}
+namespace {
 
 // hiddenIDFor returns the parent Window ID for the given client. We have a
 // specially-named function for this so that we don't get confused about which
@@ -45,6 +21,66 @@ Window hiddenIDFor(const Client* c) {
 void mapAndRaise(Window w, int xmin, int ymin, int width, int height) {
   xlib::XMoveResizeWindow(w, xmin, ymin, width, height);
   xlib::XMapRaised(w);
+}
+
+MenuStyle CurrentMenuStyle() {
+  return MenuStyle{textHeight()};
+}
+
+int menuIconYPad() {
+  return MenuStyle::kIconYPad;
+}
+
+int menuIconXPad() {
+  return MenuStyle::kIconXPad;
+}
+
+int menuIconSize() {
+  return MenuIconSize(CurrentMenuStyle());
+}
+
+int menuLHighlight() {
+  return MenuLHighlight(CurrentMenuStyle());
+}
+
+int menuHighlightMargins() {
+  return MenuHighlightMargins(CurrentMenuStyle());
+}
+
+int menuLMargin() {
+  return MenuLMargin(CurrentMenuStyle());
+}
+
+int menuMargins() {
+  return MenuMargins(CurrentMenuStyle());
+}
+
+// Returns val if it's within the range described by min and max, or min or
+// max according to which side val extends off.
+int clamp(int val, int min, int max) {
+  if (val >= min && val < max) {
+    return val;
+  }
+  return (val < min) ? min : max;
+}
+
+// visibleAreaAt returns the rectangle describing the current visible area which
+// contains the given coordinates. This allows us to keep the popup menu within
+// a single monitor at a time.
+Rect visibleAreaAt(int x, int y) {
+  for (const Rect& r : LScr::I->VisibleAreas(true)) {
+    if (r.contains(x, y)) {
+      return r;
+    }
+  }
+  // Mouse pointer outside the screen? Weird. Anyway, just return the first one.
+  return LScr::I->VisibleAreas(false)[0];
+}
+
+}  // namespace
+
+int menuItemHeight() {
+  return CurrentMenuStyle().ItemHeight();
 }
 
 void Hider::showHighlightBox(int itemIndex) {
@@ -119,68 +155,6 @@ void Hider::Unhide(Client* c) {
   c->SetState(NormalState);
   // Windows are given input focus when they're unhidden.
   LScr::I->GetFocuser()->FocusClient(c);
-}
-
-int menuItemHeight() {
-  return textHeight() + MENU_Y_PADDING;
-}
-
-int menuIconYPad() {
-  return 1;
-}
-
-int menuIconXPad() {
-  return 5;
-}
-
-int menuIconSize() {
-  return menuItemHeight() - menuIconYPad() * 2;
-}
-
-int menuLHighlight() {
-  return menuItemHeight() + menuIconXPad() * 2;
-}
-
-int menuRHighlight() {
-  return menuItemHeight() - menuIconXPad();
-}
-
-int menuHighlightMargins() {
-  return menuLHighlight() + menuRHighlight();
-}
-
-int menuLMargin() {
-  return menuItemHeight() + menuIconXPad() * 3;
-}
-
-int menuRMargin() {
-  return menuItemHeight();
-}
-
-int menuMargins() {
-  return menuLMargin() + menuRMargin();
-}
-
-// Returns val if it's within the range described by min and max, or min or
-// max according to which side val extends off.
-int clamp(int val, int min, int max) {
-  if (val >= min && val < max) {
-    return val;
-  }
-  return (val < min) ? min : max;
-}
-
-// visibleAreaAt returns the rectangle describing the current visible area which
-// contains the given coordinates. This allows us to keep the popup menu within
-// a single monitor at a time.
-Rect visibleAreaAt(int x, int y) {
-  for (const Rect& r : LScr::I->VisibleAreas(true)) {
-    if (r.contains(x, y)) {
-      return r;
-    }
-  }
-  // Mouse pointer outside the screen? Weird. Anyway, just return the first one.
-  return LScr::I->VisibleAreas(false)[0];
 }
 
 void Hider::OpenMenu(XButtonEvent* e) {
@@ -286,7 +260,7 @@ void Hider::Paint() {
   const auto gc = LScr::I->GetMenuGC();
   for (int i = 0; i < open_content_.size(); i++) {
     const int y = i * itemHeight;
-    const int textY = y + g_font->ascent + MENU_Y_PADDING / 2;
+    const int textY = y + g_font->ascent + MenuStyle::kYPadding / 2;
     drawString(popup, menuLMargin(), textY, open_content_[i].name,
                &g_font_popup_colour);
     // Show a dotted line to separate the last hidden window from the first

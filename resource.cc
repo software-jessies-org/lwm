@@ -21,7 +21,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "lwm.h"
+#include "resource.h"
+#include "screen.h"
 
 void Resources::Init() {
   I = new Resources();

@@ -19,7 +19,7 @@
 
 #include <stdio.h>
 
-#include "lwm.h"
+#include "cursor.h"
 
 Cursor colouredCursor(Display* dpy,
                       unsigned int shape,

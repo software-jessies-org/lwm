@@ -20,13 +20,35 @@ Adding a source file means adding it to `SRCS` in `Imakefile` (and re-running
 ## Tests
 
 ```sh
-./lwm -test        # runs RunAllTests() and exits; 0 = pass
+./lwm -test        # runs testing::RunAll() and exits; 0 = pass
 ```
 
-Everything is in `tests.cc`, compiled into the main binary on purpose (see the
-UNIT TESTS section of `../BUGS` for the reasoning). Coverage is currently just
-`MapToNewAreas`, as a table of `{name, before, oldVis, newVis, want}` strings
-parsed by `Rect::Parse` (`WxH+X+Y`). Adding a case is a one-line edit.
+Tests use the in-tree framework in `test.h`/`test.cc` (see
+`../docs/refactoring-plan.md`, phase A): `TEST(Suite, Name) { ... }`
+self-registers at static-init time, no central list to update. Assertions are
+`EXPECT_EQ/NE/TRUE/FALSE/NEAR` (keep running on failure) and
+`ASSERT_EQ/NE/TRUE/FALSE/NEAR` (return from the test on failure); both accept
+extra context via `<<`, evaluated only on failure. Wrap table-driven case
+bodies in `testing::Context ctx(tc.name)` so failures are labelled with the
+case name. Tests live next to what they test: `geometry_test.cc`
+(`Rect::Parse`, `DimensionLimiter`), `strings_test.cc` (`Split`), `tests.cc`
+(the `MapToNewAreas` table — still here because `MapToNewAreas` itself hasn't
+moved out of `screen.cc` yet). Still compiled straight into the main binary;
+a separate X11-free tier-0 test target is planned but not built yet.
+
+## Functional smoke test
+
+```sh
+./smoke_test.sh [path-to-lwm-binary]   # defaults to ./lwm
+```
+
+Runs lwm under a headless `Xvfb` and drives an `xterm` with `xdotool` to
+check the things `./lwm -test` can't: framing, `EvConfigureRequest`
+move/resize, focus-on-activate, `WM_DELETE_WINDOW` close, and that lwm logs
+no `E `-level lines and is still alive at the end. Picks a random display
+number so it's safe to run alongside a real X session. Not exhaustive —
+it's a regression tripwire for the refactor in `../docs/refactoring-plan.md`,
+not a replacement for manual Xephyr testing of new behaviour.
 
 ## Running it safely
 

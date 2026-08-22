@@ -64,21 +64,6 @@ char* argv0;
 void rrScreenChangeNotify(XEvent* ev);
 void setScreenAreasFromXRandR();
 
-std::vector<std::string> Split(const std::string& in,
-                               const std::string& split) {
-  std::vector<std::string> res;
-  int start = 0;
-  while (true) {
-    int end = in.find(split, start);
-    if (end == std::string::npos) {
-      res.push_back(in.substr(start));
-      return res;
-    }
-    res.push_back(in.substr(start, end - start));
-    start = end + split.size();
-  }
-}
-
 /*ARGSUSED*/
 extern int main(int argc, char* argv[]) {
   DebugCLI* debugCLI = nullptr;

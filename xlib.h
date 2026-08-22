@@ -20,6 +20,24 @@
 #include <X11/extensions/Xrandr.h>
 
 #include "geometry.h"
+#include "log.h"
+
+// The connection to the X server. Defined and opened in lwm.cc's main(),
+// but declared here since nearly every file that touches X needs it.
+extern Display* dpy;
+
+struct MousePos {
+  int x;
+  int y;
+  // For mask values, see:
+  // https://tronche.com/gui/x/xlib/events/keyboard-pointer/keyboard-pointer.html
+  unsigned int modMask;
+};
+
+// Queries the server directly for the current pointer location, rather than
+// relying on the coordinates in the most recent event (which may be stale by
+// the time a drag handler acts on it).
+extern MousePos getMousePosition();
 
 namespace xlib {
 
@@ -176,5 +194,12 @@ class XFreer {
 };
 
 }  // namespace xlib
+
+/*
+ * This should really have been in X.h --- if you select both ButtonPress
+ * and ButtonRelease events, the server makes an automatic grab on the
+ * pressed button for you. This is almost always exactly what you want.
+ */
+#define ButtonMask (ButtonPressMask | ButtonReleaseMask)
 
 #endif  // LWM_XLIB_H_included

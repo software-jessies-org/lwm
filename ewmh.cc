@@ -17,8 +17,10 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 
+#include "client.h"
 #include "ewmh.h"
 #include "lwm.h"
+#include "screen.h"
 #include "xlib.h"
 
 // The following two arrays are co-indexed. The ewmh_atom_names is used to look
@@ -26,6 +28,33 @@
 Atom ewmh_atom[EWMH_ATOM_LAST];
 char const* ewmh_atom_names[EWMH_ATOM_LAST];
 Atom utf8_string;
+
+std::ostream& operator<<(std::ostream& os, const EWMHWindowState& s) {
+#define D(x) os << " " #x << (s.x ? "=t" : "=f")
+  D(skip_taskbar);
+  D(skip_pager);
+  D(fullscreen);
+  D(above);
+  D(below);
+#undef D
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const XSizeHints& s) {
+  os << "XSizeHints[";
+#define D(x) (s.flags & x ? "" : "!") << #x << " "
+  os << D(USPosition) << D(USSize) << D(PPosition) << D(PSize) << D(PMinSize)
+     << D(PMaxSize) << D(PResizeInc) << D(PAspect) << D(PBaseSize)
+     << D(PWinGravity) << "pos:" << s.width << "x" << s.height << "+" << s.x
+     << "+" << s.y << " size: min=" << s.min_width << "," << s.min_height
+     << "; max=" << s.max_width << "," << s.max_height
+     << " aspect: min=" << s.min_aspect.x << ":" << s.min_aspect.y
+     << "; max=" << s.max_aspect.x << ":" << s.max_aspect.y
+     << " base=" << s.base_width << "," << s.base_height
+     << " gravity=" << s.win_gravity << "]";
+#undef D
+  return os;
+}
 
 std::ostream& operator<<(std::ostream& os, const AtomName& an) {
   if (an.a == utf8_string) {
@@ -379,26 +408,9 @@ void ewmh_set_allowed(Client* c) {
 
 void ewmh_set_strut() {
   // find largest reserved areas
-  EWMHStrut strut;
-  strut.left = 0;
-  strut.right = 0;
-  strut.top = 0;
-  strut.bottom = 0;
-
+  EWMHStrut strut{0, 0, 0, 0};
   for (auto it : LScr::I->Clients()) {
-    Client* c = it.second;
-    if (c->strut.left > strut.left) {
-      strut.left = c->strut.left;
-    }
-    if (c->strut.right > strut.right) {
-      strut.right = c->strut.right;
-    }
-    if (c->strut.top > strut.top) {
-      strut.top = c->strut.top;
-    }
-    if (c->strut.bottom > strut.bottom) {
-      strut.bottom = c->strut.bottom;
-    }
+    strut = MaxStrut(strut, it.second->strut);
   }
   if (!LScr::I->ChangeStrut(strut)) {
     return;  // No change; we're done.

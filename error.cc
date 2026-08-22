@@ -21,6 +21,7 @@
 #include <execinfo.h>
 #endif
 
+#include "error.h"
 #include "lwm.h"
 
 static bool ignore_badwindow;

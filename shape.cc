@@ -21,7 +21,10 @@
 
 #include <unistd.h>
 
+#include "client.h"
 #include "lwm.h"
+#include "screen.h"
+#include "shape.h"
 
 #ifdef SHAPE
 #include <X11/extensions/shape.h>

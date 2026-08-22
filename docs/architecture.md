@@ -33,7 +33,7 @@ A single `select()` over up to four fds:
 The loop exits only when `forceRestart` is set (SIGHUP), whereupon lwm
 `execvp`s itself to reload config.
 
-## Event dispatch (`disp.cc:1029`)
+## Event dispatch (`disp.cc`)
 
 `DispatchXEvent` is a macro-driven switch mapping event type → `Ev<Name>`.
 Deliberately ignored: `LeaveNotify`, `CreateNotify`, `GravityNotify`,
@@ -47,9 +47,11 @@ The interesting handlers:
 * `EvConfigureRequest` — client wants to move/resize itself. Heavily commented;
   the offset arithmetic exists because a reparented client reports coordinates
   relative to the *frame*. **Test any change here against Nautilus.**
-* `EvButtonPress` → `getDragHandlerForEvent` → `startDragging`. All
-  mouse gestures are modelled as a `DragHandler` (`Start`/`Move`/`End`) held in
-  the `current_dragger` static; `EvMotionNotify` and `EvButtonRelease` drive it.
+* `EvButtonPress` → `getDragHandlerForEvent` (in `drag.cc`) → `startDragging`.
+  All mouse gestures are modelled as a `DragHandler` (`Start`/`Move`/`End`) held
+  in the `current_dragger` static in `disp.cc`; `EvMotionNotify` and
+  `EvButtonRelease` drive it. The concrete `DragHandler` subclasses live in
+  `drag.cc`.
 * `EvEnterNotify` → `Focuser::EnterWindow` (sloppy focus) plus cursor reset.
 * `EvPropertyNotify` — name, visible name, transient-for, strut, `_NET_WM_STATE`
   (this is where full-screen enter/exit is triggered).
@@ -61,8 +63,8 @@ The interesting handlers:
 LScr::I  (screen.cc)
  ├── clients_   map<Window(client), Client*>   OWNS the Clients
  ├── parents_   map<Window(frame),  Client*>   non-owning alias
- ├── hider_     Hider     — hidden list + unhide menu
- ├── focuser_   Focuser   — focus history + timerfd
+ ├── hider_     Hider     (hider.cc) — hidden list + unhide menu
+ ├── focuser_   Focuser   (focus.cc) — focus history + timerfd
  ├── cursor_map_, GCs, colours, popup_/menu_/ewmh_compat_ windows
  └── visible_areas_ + strut_
 ```

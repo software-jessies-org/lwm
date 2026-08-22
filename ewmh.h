@@ -19,6 +19,45 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 
+#include <iostream>
+
+#include "xlib.h"
+
+class Client;
+
+/**
+ * EWMH window type. See section 5.6 of the EWMH specification (1.2).
+ * WTypeNone indicates that no EWMH window type as been set and MOTIF
+ * hints should be used instead.
+ */
+enum EWMHWindowType {
+  WTypeDesktop,
+  WTypeDock,
+  WTypeToolbar,
+  WTypeMenu,
+  WTypeUtility,
+  WTypeSplash,
+  WTypeDialog,
+  WTypeNormal,
+  WTypeNone
+};
+
+/**
+ * EWMH window state, See section 5.7 of the EWMH specification (1.2).
+ * lwm does not support all states. _NET_WM_STATE_HIDDEN is taken from
+ * Client.hidden.
+ */
+struct EWMHWindowState {
+  bool skip_taskbar;
+  bool skip_pager;
+  bool fullscreen;
+  bool above;
+  bool below;
+};
+
+std::ostream& operator<<(std::ostream& os, const EWMHWindowState& s);
+std::ostream& operator<<(std::ostream& os, const XSizeHints& s);
+
 /**
  * These are indexes into the ewmh_atom array. Only atoms actually supported
  * by lwm should be included here because _NET_SUPPORTED is built from the
@@ -93,5 +132,22 @@ enum EWMHAtom {
   _NET_WM_ACTION_CLOSE,
   EWMH_ATOM_LAST
 };
+
+extern Atom ewmh_atom[];
+extern void ewmh_init();
+extern EWMHWindowType ewmh_get_window_type(Window w);
+extern bool ewmh_get_window_name(Client* c);
+extern bool ewmh_get_visible_window_name(Client* c);
+extern xlib::ImageIcon* ewmh_get_window_icon(Client* c);
+extern bool ewmh_hasframe(Client* c);
+extern void ewmh_set_state(Client* c);
+extern void ewmh_get_state(Client* c);
+extern void ewmh_change_state(Client* c,
+                              unsigned long action,
+                              unsigned long atom);
+extern void ewmh_set_allowed(Client* c);
+extern void ewmh_set_client_list();
+extern void ewmh_get_strut(Client* c);
+extern void ewmh_set_strut();
 
 #endif  // LWM_EWMH_H_included

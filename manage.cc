@@ -34,58 +34,21 @@
 #define MWM_DECOR_MINIMIZE (1L << 5)
 #define MWM_DECOR_MAXIMIZE (1L << 6)
 
+#include "client.h"
+#include "debug.h"
+#include "error.h"
+#include "ewmh.h"
 #include "lwm.h"
+#include "manage.h"
+#include "resource.h"
+#include "screen.h"
+#include "session.h"
+#include "shape.h"
+#include "xlib.h"
 
 int getProperty(Window, Atom, Atom, long, unsigned char**);
 int getWindowState(Window, int*);
 // void applyGravity(Client*);
-
-static Point NextAutoPosition(const Area& client_area) {
-  // These are static so that the windows aren't all opened at exactly
-  // the same place, but rather the opening position advances down and to
-  // the right with each successive window opened.
-  static unsigned int auto_x = 100;
-  static unsigned int auto_y = 100;
-
-  // First, find the primary screen area.
-  const Rect scr = LScr::I->GetPrimaryVisibleArea(true);  // With struts.
-  // If auto_x and auto_y are outside the main visible area, reset them.
-  // This can happen after a change of monitor configuration.
-  if (!scr.contains(auto_x, auto_y)) {
-    auto_x = scr.xMin + 100;
-    auto_y = scr.yMin + 100;
-  }
-
-  Point res{};
-  if (auto_x + client_area.width > scr.xMax &&
-      client_area.width <= scr.width()) {
-    // If the window wouldn't fit using normal auto-placement but is small
-    // enough to fit horizontally, then centre the window horizontally.
-    res.x = scr.xMin + (scr.width() - client_area.width) / 2;
-    auto_x = scr.xMin + 20;
-  } else {
-    res.x = auto_x;
-    auto_x += AUTO_PLACEMENT_INCREMENT;
-    if (auto_x > (scr.xMin + scr.xMax) / 2) {  // Past middle.
-      auto_x = scr.xMin + 20;
-    }
-  }
-
-  if (auto_y + client_area.height > scr.yMax &&
-      client_area.height <= scr.height()) {
-    // If the window wouldn't fit using normal auto-placement but is small
-    // enough to fit vertically, then centre the window vertically.
-    res.y = scr.yMin + (scr.height() - client_area.height) / 2;
-    auto_y = scr.yMin + 20;
-  } else {
-    res.y = auto_y;
-    auto_y += AUTO_PLACEMENT_INCREMENT;
-    if (auto_y > (scr.yMin + scr.yMax) / 2) {  // Past middle.
-      auto_y = scr.yMin + 20;
-    }
-  }
-  return res;
-}
 
 std::optional<bool> motifWouldDecorate(Client* c) {
   unsigned long* p = 0;
@@ -189,7 +152,7 @@ void manage(Client* c) {
   // windows, as it's perfectly reasonable for a launcher (eg gummiband) to
   // want to place itself at the origin of the screen.
   if (c->framed && rect.xMin == 0 && rect.yMin == 0) {
-    Point p = NextAutoPosition(rect.area());
+    Point p = LScr::I->NextAutoPosition(rect.area());
     rect = Rect::Translate(rect, p);
   }
   // There was code here which called 'applyGravity' if there was a user-

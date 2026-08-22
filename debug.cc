@@ -1,5 +1,8 @@
+#include "client.h"
+#include "debug.h"
 #include "ewmh.h"
 #include "lwm.h"
+#include "screen.h"
 #include "xlib.h"
 
 using namespace std;

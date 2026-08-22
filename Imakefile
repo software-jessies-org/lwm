@@ -25,8 +25,8 @@ CCLINK=g++
 CXXFLAGS=-std=c++17 -g3 -O0 $(DEFINES) -Wall -Werror -Wextra -Wpedantic -Wno-sign-compare -I/usr/include/freetype2
 LDOPTIONS=-g3 -lXft -rdynamic
 
-HEADERS = lwm.h ewmh.h xlib.h log.h geometry.h
-SRCS = log.cc lwm.cc manage.cc mouse.cc client.cc cursor.cc error.cc disp.cc shape.cc resource.cc session.cc screen.cc ewmh.cc geometry.cc xlib.cc debug.cc tests.cc
+HEADERS = lwm.h ewmh.h xlib.h log.h geometry.h edge.h sizelimits.h strings.h strut.h screenlayout.h placement.h framegeometry.h menulayout.h test.h client.h cursor.h screen.h disp.h error.h manage.h shape.h resource.h debug.h session.h drag.h xdebugprint.h focus.h hider.h
+SRCS = log.cc lwm.cc manage.cc client.cc cursor.cc error.cc disp.cc shape.cc resource.cc session.cc screen.cc ewmh.cc geometry.cc edge.cc sizelimits.cc strings.cc screenlayout.cc placement.cc framegeometry.cc menulayout.cc xlib.cc debug.cc test.cc tests.cc geometry_test.cc sizelimits_test.cc strings_test.cc screenlayout_test.cc placement_test.cc framegeometry_test.cc menulayout_test.cc drag.cc xdebugprint.cc focus.cc hider.cc
 OBJS = ${SRCS:.cc=.o}
 
 ComplexProgramTarget(lwm)
