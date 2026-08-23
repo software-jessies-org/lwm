@@ -79,6 +79,10 @@ class WindowDragger : public DragHandler {
       End(ev);
       return false;
     }
+    // The user is placing this window by hand, so it isn't maximised any more
+    // however it got that way. Idempotent, so calling it per motion event is
+    // no worse than tracking whether we've done it.
+    c->DropMaximization();
     moveImpl(c, mp.x - start_pos_.x, mp.y - start_pos_.y);
     return true;
   }
@@ -247,6 +251,7 @@ class WindowExpander : public DragHandler {
     if (grown == frame) {
       return;
     }
+    c->DropMaximization();
     Rect content = c->framed ? Client::ContentFromFrameRect(grown) : grown;
     // The client still gets the last word on its size: expanding into a gap
     // an xterm can only half fill leaves the rest of the gap empty.

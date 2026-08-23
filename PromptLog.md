@@ -14,7 +14,7 @@ This codebase was originally C, but newer parts are written in C++. There are pa
 
 ---
 
-Executed docs/refactoring-plan.md up to stage D (still need to do stage E).
+*Executed docs/refactoring-plan.md.*
 
 ---
 
@@ -22,7 +22,7 @@ Create a plan to migrate lwm from xlib to xcb, which is a superior X11 client li
 
 ---
 
-Executed docs/xcb-migration-plan.md.
+*Executed docs/xcb-migration-plan.md.*
 
 ---
 
@@ -54,11 +54,54 @@ There's a bug in our struts handling. The gummiband program (~/dev/jessies/x11-e
 
 ---
 
+LWM needs to work well with steam games. The main steam UI seems to work fine, but there are some problems with the games. For example, when I start Subnautica 2, the full-screen window initially shows only on the right half of my main monitor. I suspect this is because the width of the left-hand monitor is being added as an offset onto the main monitor (which is on the right), but I don't know that for sure. When I try to move the game window, it jumps to kind of the right place, but the window decorations then push it down and to the right, so that the title bar is *kind of* visible (except it gets drawn as plain white).
+
+Also, key events aren't being propagated into the game - this is a serious problem.
+
+If you can figure out the causes, please fix the issues. If you need more info, then add sufficient logging so that I can manually launch an extra-logging version of lwm and then you can diagnose based on the logs.
+
+---
+
+*A load of follow-up conversation which diagnosed and fixed a bunch of weird
+goings-on in wine land.*
+
+---
+
 ## Not yet started
+
+In our last discussion, you uncovered a bug introduced during the xlib->xcb transition, caused by function call argument order changing between the two APIs, and the LWM code not being correctly modified. Go through all of the LWM code that touches xcb, and check that the argument ordering is correct.
+
+---
+
+We identified that lwm doesn't publish _NET_FRAME_EXTENTS. We should do that.
+
+---
+
+The main steam launcher window has no window decorations. It's one of those apps that provides its own close button and resize widget. However, I also can't move or resize it, as its own widgets aren't responding. I also can't resize or move it using lwm's 'windows key plus mouse drag/click' features. Diagnose this, and figure out how best to fix it.
+
+---
 
 I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
 
 ---
+
+In a previous discussion, you reported this:
+
+One unrelated thing I tripped over: running lwm -debugcli=... < /dev/null spins the event loop on stdin-at-EOF — it wrote 3.4 GB to stdout in about a minute and filled /tmp. It's pre-existing (the unpatched binary does it too) and only affects that invocation, so I left it alone, but you may want it fixed.
+
+Fix this.
+
+---
+
+Extend the 'Windows-double-click' in the middle of a window - currently it maximises the window, but if the window is already maximised, I want it to restore it to its pre-maximised size. This will involve storing the pre-maximised coordinates when maximisation takes place, so it can be restored. Ensure that the de-maximisation code properly checks for whether we have a pre-maximised rectangle, so that if it's missing we don't open the window at silly locations/sizes.
+
+---
+
+The mouse pointer is too small on my main monitor when lwm decides how it should be drawn. On apps like grezvany and Java apps a larger mouse pointer is shown, but lwm shows it as tiny. Why is that, and how should we best fix it?
+
+---
+
+I want to add key handling for switching input focus between windows. When the Windows key is held down, the arrow keys should pick the next visible window in the indicated direction, and move input focus to that window. Let's not warp the mouse pointer 
 
 **TBD** - Windows-arrow keys should flip focus between windows, by looking at their relative placement and moving focus in the appropriate direction.
 

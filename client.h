@@ -18,6 +18,14 @@
  */
 enum { Pdelete = 1, Ptakefocus = 2 };
 
+// The X border width of the frame window LWM creates around a client. X puts a
+// window's border *outside* its coordinate space, so a frame at (x, y) has its
+// drawable area, and hence the client window inside it, at (x+1, y+1). That's
+// harmless for an ordinary window, but a full-screen one has to line up with
+// the monitor exactly, so EnterFullScreen drops it to zero and ExitFullScreen
+// puts it back.
+constexpr int kFrameBorderWidth = 1;
+
 class Client {
  public:
   Client(Window w,
@@ -47,6 +55,22 @@ class Client {
 
   void EnterFullScreen();
   void ExitFullScreen();
+
+  // Sets which axes the window is maximised on (_NET_WM_STATE_MAXIMIZED_VERT
+  // and _HORZ), and moves it to suit. Pass both false to un-maximise, which
+  // puts the window back where it was before the first axis was set.
+  //
+  // Takes the new values rather than reading wstate itself, because it has to
+  // see the transition: the geometry to restore is recorded on the way in.
+  void SetMaximized(bool vert, bool horz);
+  bool IsMaximized() const {
+    return wstate.maximized_vert || wstate.maximized_horz;
+  }
+
+  // Forgets that the window is maximised, without moving it. For when the user
+  // takes the geometry into their own hands: a window they've dragged or
+  // resized isn't maximised any more, whatever the flags used to say.
+  void DropMaximization();
 
   Window window = 0;  // Client's window.
   Window parent = 0;  // Window manager frame.
@@ -141,6 +165,16 @@ class Client {
   // when it enters full screen state, so it can be correctly brought out of
   // full screen state again.
   Rect pre_full_screen_content_rect_ = {};
+
+  // Likewise for maximisation, which differs in that it has two axes: a window
+  // maximised only vertically keeps its x from here and takes its y from the
+  // screen. Only meaningful while IsMaximized().
+  Rect pre_maximize_content_rect_ = {};
+
+  // The rect this window should occupy, given `restored` as its un-maximised
+  // geometry and wstate's two maximisation flags. Returns `restored` itself if
+  // neither is set.
+  Rect MaximizedRect(const Rect& restored) const;
 
   const DimensionLimiter x_limiter_;
   const DimensionLimiter y_limiter_;

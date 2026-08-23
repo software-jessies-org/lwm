@@ -42,6 +42,7 @@
 #include "manage.h"
 #include "resource.h"
 #include "screen.h"
+#include "screenlayout.h"
 #include "session.h"
 #include "shape.h"
 #include "xfont.h"
@@ -51,10 +52,18 @@ int getWindowState(Window, int*);
 // void applyGravity(Client*);
 
 std::optional<bool> motifWouldDecorate(Client* c) {
-  // _MOTIF_WM_HINTS is a format-32 property; read it as 32-bit words. See the
-  // note on xlib::WindowProperty.
+  // _MOTIF_WM_HINTS is a format-32 property of 5 words, whose type is the atom
+  // of the same name; read it as 32-bit words. See the note on
+  // xlib::WindowProperty.
+  //
+  // Mind the argument order. The Xlib-era getProperty() this replaced took
+  // (window, property, type, length); xlib::XGetWindowProperty takes
+  // (window, property, length, type). Getting it the wrong way round doesn't
+  // fail loudly: X answers a type mismatch with the *real* type and format and
+  // an empty value, so prop.ok() is false and this reads as "the window has no
+  // Motif hints" for every window that has them.
   const xlib::WindowProperty prop = xlib::XGetWindowProperty(
-      c->window, motif_wm_hints, motif_wm_hints, 5L);
+      c->window, motif_wm_hints, 5L, motif_wm_hints);
   const std::vector<uint32_t>& p = prop.Data32();
   if (!prop.ok() || p.size() < 3) {
     return {};
@@ -158,6 +167,18 @@ void manage(Client* c) {
 
   if (c->framed) {
     c->FurnishAt(rect);
+  } else {
+    // An undecorated window the exact size of a monitor is going full screen
+    // the borderless way, and may have got the position slightly wrong; put it
+    // on the monitor. See SnapToMonitor. The move has to happen here as well as
+    // in EvConfigureRequest, because a client that gets the geometry it wants
+    // at creation time never sends us a configure request at all.
+    const Rect snapped =
+        SnapToMonitor(c->ContentRect(), LScr::I->VisibleAreas(false));
+    if (snapped != c->ContentRect()) {
+      LOGD(c) << "Snapping undecorated full-monitor window to " << snapped;
+      c->MoveTo(snapped);
+    }
   }
 
   // Stupid X11 doesn't let us change border width in the above
@@ -202,6 +223,18 @@ void manage(Client* c) {
     c->SetState(NormalState);
   }
 
+  // A client says how it wants to start by setting _NET_WM_STATE before it maps
+  // the window, and ewmh_get_state has already read it into c->wstate. Clear
+  // the maximisation flags again before handing them to SetMaximized: it needs
+  // to see the transition, because that's when it records the geometry to
+  // restore to.
+  if (c->IsMaximized()) {
+    const bool vert = c->wstate.maximized_vert;
+    const bool horz = c->wstate.maximized_horz;
+    c->wstate.maximized_vert = false;
+    c->wstate.maximized_horz = false;
+    c->SetMaximized(vert, horz);
+  }
   if (c->wstate.fullscreen) {
     c->EnterFullScreen();
   }

@@ -8,8 +8,11 @@
 // doesn't get acted on immediately, so a third can supersede it - and that is
 // only observable if you can control the clock. See focus.h.
 
+#include <sstream>
+
 #include "client.h"
 #include "focus.h"
+#include "lwm.h"
 #include "screen.h"
 #include "test.h"
 #include "wmtest.h"
@@ -180,4 +183,32 @@ TEST(Focuser, ClientWithoutInputHintButWithTakeFocusGetsItsChildrenFocused) {
       << "only the child that selected focus events should be focused";
   EXPECT_EQ(world.server().CallsMatching("SetInputFocus(").size(), size_t(1))
       << "the content window must be left alone";
+}
+
+TEST(Focuser, GloballyActiveClientIsSentWmTakeFocus) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(10, 10, 100, 100));
+  ASSERT_TRUE(c != nullptr);
+
+  // ICCCM 4.1.7's "globally active" input model: WM_HINTS says input=False,
+  // but WM_TAKE_FOCUS is in WM_PROTOCOLS. Every Wine/Proton window looks like
+  // this, and (unlike a Java app) has no child windows for us to fall back on,
+  // so if we don't send the message the input focus never moves at all and the
+  // application gets no key events.
+  c->accepts_focus = false;
+  c->proto |= Ptakefocus;
+
+  world.server().ClearCalls();
+  LScr::I->GetFocuser()->UnfocusClient(c);
+  LScr::I->GetFocuser()->FocusClient(c);
+
+  std::ostringstream want;
+  want << "message_type=" << wm_protocols << " data0=" << wm_take_focus;
+  bool sent = false;
+  for (const std::string& call : world.server().CallsMatching("SendEvent(")) {
+    if (call.find(want.str()) != std::string::npos) {
+      sent = true;
+    }
+  }
+  EXPECT_TRUE(sent) << "no WM_TAKE_FOCUS client message was sent";
 }

@@ -15,7 +15,8 @@ struct Point {
   inline bool operator==(const Point& o) const { return x == o.x && y == o.y; }
   inline bool operator!=(const Point& o) const { return !operator==(o); }
 
-  // Returns b - a.
+  // Returns a - b. (This said "b - a" until 2026-08-23; the code always did
+  // a - b, and Sub had no callers to disagree with it.)
   static Point Sub(Point a, Point b);
 };
 

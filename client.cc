@@ -34,6 +34,7 @@
 #include "lwm.h"
 #include "resource.h"
 #include "screen.h"
+#include "screenlayout.h"
 #include "xfont.h"
 #include "xlib.h"
 
@@ -254,17 +255,21 @@ void Client::DrawBorder() {
 }
 
 Rect Client::FrameRect() const {
-  Rect res = content_rect_;
-  if (!framed) {
-    return res;
+  // A full-screen window has no furniture to make room for, so its frame is
+  // exactly its content rect. This is not just cosmetic: it's the invariant
+  // MoveTo, MoveResizeTo and EnterFullScreen all place the two windows by, and
+  // ContentRectRelative below is derived from it. Get it wrong and the client
+  // window sits at an offset inside its own frame, which is only invisible
+  // when the frame happens to be at the screen origin.
+  if (!framed || wstate.fullscreen) {
+    return content_rect_;
   }
-  return FrameFromContentRect(res);
+  return FrameFromContentRect(content_rect_);
 }
 
 Rect Client::ContentRectRelative() const {
-  int subX = content_rect_.xMin - borderWidth();
-  int subY = content_rect_.yMin - titleBarHeight();
-  return Rect::Translate(content_rect_, Point{-subX, -subY});
+  const Rect fr = FrameRect();
+  return Rect::Translate(content_rect_, Point{-fr.xMin, -fr.yMin});
 }
 
 // static
@@ -437,30 +442,115 @@ void Client::EnterFullScreen() {
   const Rect scr = LScr::I->GetPrimaryVisibleArea(false);  // Without struts.
   content_rect_ = scr;
   if (framed) {
-    // This looks weird (moving the parent window to be full-screen, rather than
-    // including the border offsets and moving it to 'FrameRect()', but this is
-    // necessary in order to get the client window in the right place. For
-    // some reason, moving the parent to FrameRect() causes the client window to
-    // be positioned slightly above and to the left of the origin. It's as if
-    // the client is assuming that if it's in full screen mode, it should ignore
-    // any borders and assume the parent frame is the same size as the client
-    // frame. This is weird, but it works.
-    xlib::XMoveResizeWindow(parent, content_rect_);
+    // Drop the frame's own X border. It lives outside the frame's coordinate
+    // space, so leaving it on would put the whole window a pixel down and to
+    // the right of the monitor, with a pixel of frame showing above and to the
+    // left of a game that asked to fill the screen exactly.
+    xlib::XConfigureWindow(parent, xlib::WindowChanges().BorderWidth(0));
+    // wstate.fullscreen is already set by the time we get here, so FrameRect()
+    // is the screen rect (there's no furniture to make room for) and
+    // ContentRectRelative() is the origin of the frame's coordinate space.
+    //
+    // Both of those matter. The client window is *reparented*, so its position
+    // has to be given relative to the frame; this used to pass the root
+    // coordinates instead, which is the same thing only while the screen being
+    // filled starts at x=0. On a two-monitor layout with the primary on the
+    // right, it offset the client inside its frame by the width of the other
+    // monitor, and the client was clipped to the part of the frame that was
+    // left.
+    xlib::XMoveResizeWindow(parent, FrameRect());
+    xlib::XMoveResizeWindow(window, ContentRectRelative());
+  } else {
+    xlib::XMoveResizeWindow(window, content_rect_);
   }
-  xlib::XMoveResizeWindow(window, content_rect_);
   xlib::XRaiseWindow(framed ? parent : window);
   SendConfigureNotify();
 }
 
+Rect Client::MaximizedRect(const Rect& restored) const {
+  if (!IsMaximized()) {
+    return restored;
+  }
+  // Maximisation is about the *frame*: what fills the screen is the window
+  // furniture and all, so the arithmetic happens in frame coordinates and is
+  // converted back at the end. Doing it on the content rect would push the
+  // title bar off the top of the screen.
+  const Rect frame = framed ? FrameFromContentRect(restored) : restored;
+  // With struts: unlike a full-screen window, a maximised one leaves the
+  // panels alone. That is what the whole strut mechanism is for.
+  const Rect area = findBestScreenFor(frame, LScr::I->VisibleAreas(true));
+  Rect res = frame;
+  if (wstate.maximized_horz) {
+    res.xMin = area.xMin;
+    res.xMax = area.xMax;
+  }
+  if (wstate.maximized_vert) {
+    res.yMin = area.yMin;
+    res.yMax = area.yMax;
+  }
+  return framed ? ContentFromFrameRect(res) : res;
+}
+
+void Client::SetMaximized(bool vert, bool horz) {
+  if (!IsMaximized()) {
+    // Going from un-maximised to maximised on at least one axis: this is the
+    // geometry to come back to. Note it's taken before the flags change, so
+    // that setting the second axis while the first is already set doesn't
+    // overwrite it with a rect that's already half screen-sized. And while the
+    // window is full screen, content_rect_ is the screen - the geometry that
+    // means anything is the one full screen is standing in front of.
+    pre_maximize_content_rect_ =
+        wstate.fullscreen ? pre_full_screen_content_rect_ : content_rect_;
+  }
+  wstate.maximized_vert = vert;
+  wstate.maximized_horz = horz;
+  LOGD(this) << "SetMaximized vert=" << vert << " horz=" << horz;
+  if (wstate.fullscreen) {
+    // Full screen wins while it lasts; ExitFullScreen applies whatever the
+    // maximisation flags say by then.
+    return;
+  }
+  Rect target = MaximizedRect(pre_maximize_content_rect_);
+  if (!IsMaximized()) {
+    // Un-maximising, so target is the geometry we saved on the way in - which
+    // may be stale, because the monitor layout can have changed while the
+    // window was maximised. Don't restore a window onto a monitor that isn't
+    // there any more.
+    const bool f = framed;
+    target = makeVisible(f ? FrameFromContentRect(target) : target,
+                         LScr::I->VisibleAreas(true));
+    if (f) {
+      target = ContentFromFrameRect(target);
+    }
+  }
+  // The client still gets the last word on its size, so an xterm maximises to
+  // a whole number of character cells rather than to the exact screen height.
+  MoveResizeTo(LimitResize(target));
+}
+
+void Client::DropMaximization() {
+  if (!IsMaximized()) {
+    return;
+  }
+  LOGD(this) << "Dropping maximisation (user moved or resized the window)";
+  wstate.maximized_vert = false;
+  wstate.maximized_horz = false;
+  ewmh_set_state(this);
+}
+
 void Client::ExitFullScreen() {
-  content_rect_ = pre_full_screen_content_rect_;
+  content_rect_ = IsMaximized()
+                      ? MaximizedRect(pre_maximize_content_rect_)
+                      : pre_full_screen_content_rect_;
   if (framed) {
+    xlib::XConfigureWindow(
+        parent, xlib::WindowChanges().BorderWidth(kFrameBorderWidth));
     xlib::XMoveResizeWindow(parent, FrameRect());
-    // When exiting from full screen mode, we have to move the client window to
-    // coordinates relative to the *frame*, rather than its actual coordinates
-    // on the screen. If we move it to 'content_rect_', it ends up being offset
-    // within the frame window by the frame origin coordinates.
+    // The client window is reparented, so its position is relative to the
+    // *frame*, not to the root. If we move it to 'content_rect_', it ends up
+    // offset within the frame window by the frame origin coordinates.
     xlib::XMoveResizeWindow(window, ContentRectRelative());
+    DrawBorder();  // The furniture is visible again.
   } else {
     xlib::XMoveResizeWindow(window, content_rect_);
   }
@@ -509,8 +599,13 @@ void Client::MoveTo(const Rect& new_content_rect) {
   }
   content_rect_ = new_content_rect;
   if (framed) {
-    Rect frame_rect = FrameRect();
-    xlib::XMoveWindow(parent, frame_rect.origin());
+    // Moving the frame carries the client window along inside it.
+    xlib::XMoveWindow(parent, FrameRect().origin());
+  } else {
+    // Nothing to carry it: an unframed client is a child of the root, so it's
+    // the window that has to move. This used to update content_rect_ and stop,
+    // which made MoveTo a no-op on screen for every unframed client.
+    xlib::XMoveWindow(window, content_rect_.origin());
   }
   // Do I need to send a configure notify? According to this:
   // https://tronche.com/gui/x/xlib/events/window-state-change/configure.html

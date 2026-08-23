@@ -32,7 +32,7 @@ Each has a matching `*_test.cc`.
 | `sizelimits.{h,cc}` | `DimensionLimiter` (min/max/base/increment size rules). |
 | `strings.{h,cc}` | `Split`, `TruncateUtf8` (the UTF-8-aware menu-name truncation). |
 | `strut.h` | `EWMHStrut` and `MaxStrut` (header-only, no `.cc`). |
-| `screenlayout.{h,cc}` | `MapToNewAreas`, `PrimaryArea`, `findBestScreenFor`, `makeVisible`, `areasMinusStruts`. The xrandr re-layout maths, formerly in `screen.cc`/`disp.cc`. |
+| `screenlayout.{h,cc}` | `MapToNewAreas`, `PrimaryArea`, `findBestScreenFor`, `makeVisible`, `areasMinusStruts`, `SnapToMonitor`. The xrandr re-layout maths, formerly in `screen.cc`/`disp.cc`. |
 | `placement.{h,cc}` | `AutoPlacer` — auto-placement cascade for new windows (formerly `NextAutoPosition` in `manage.cc`, function-local statics turned into fields owned by `LScr::auto_placer_`). |
 | `framegeometry.{h,cc}` | `FrameStyle` value type (border width / top border width / text height) plus `CloseBounds`, `TitleBarBounds`, `EdgeBoundsFor`, `ContentFromFrameRect`, `FrameFromContentRect`. `Client`'s same-named methods in `client.cc` are now thin wrappers around these, built from `CurrentFrameStyle()`. |
 | `menulayout.{h,cc}` | `MenuStyle` value type (text height) plus the unhide-menu item/icon/margin arithmetic. `mouse.cc`'s `menu*()` free functions wrap these via `CurrentMenuStyle()`. |
@@ -58,8 +58,8 @@ all, and neither do `xbridge.cc` or `xfont.cc` (they *can't*: see below).
 | `disp.cc` / `disp.h` | ~600 | X event dispatch (`DispatchXEvent`, `ProcessPendingEvents`) and one `Ev<EventName>` handler per event type. Handlers take a raw `xcb_generic_event_t*` and cast: there is no `XAnyEvent` equivalent, and the window an event concerns is called `window` in some structs and `event` in others. `response_type` must be masked with `0x7f`; bit `0x80` means the event came from `SendEvent`. Response type 0 is an *error*, routed to `HandleXError`. Includes `EvConfigureRequest`, the Nautilus-offset code; don't touch without re-testing against Nautilus. `disp.h` declares the `DragHandler` interface and `EWMHDirection`; `current_dragger`/`startDragging`/`stopDragging` (drives whichever `DragHandler` is active) stay here too. |
 | `drag.cc` / `drag.h` | ~470 | The 9 `DragHandler` subclasses (`MenuDragger`, `WindowMover`/`Resizer`/`Expander`/`Closer`/`Hider`/`Lowerer`, `ShellRunner`, plus their `WindowDragger`/`WindowClicker` base classes) and `getDragHandlerForEvent`, the factory that picks one from a `ButtonPress`. Only the factory is exported; the subclasses are an anonymous-namespace implementation detail. Moved out of `disp.cc`. `getSuperDragHandler` is the Windows-key branch of the factory, reached only for a press on the client's own window; the arithmetic it runs on is in `gesture.{h,cc}`. |
 | `xdebugprint.cc` / `xdebugprint.h` | ~90 | `operator<<` for raw XCB event structs (`xcb_configure_request_event_t`, `xcb_configure_notify_event_t`, `xcb_focus_in_event_t`) plus `diff` (an `EWMHWindowState` before/after formatter), used only by `LOGD`/`LOGI` calls in `disp.cc`. Moved out of `disp.cc`; `EWMHWindowState`'s own `operator<<` moved to `ewmh.cc` instead, next to the type. |
-| `client.cc` / `client.h` | ~552 | `Client` methods (geometry, border drawing, raise/lower/close/state, full-screen). Also the resize-feedback popup. `Focuser` moved out to `focus.{h,cc}`. |
-| `focus.cc` / `focus.h` | ~225 | `Focuser`: focus history, the focus-follows-mouse race-avoidance timerfd (see the long comment in `focus.h`), `ReallyFocusClient`'s three paths (normal/Java/give-up — don't "simplify" this, see `concepts.md`). Moved out of `client.cc`. `focus::NowMillis` is the clock it reads, replaceable so the A→B→C race can be tested rather than waited for. |
+| `client.cc` / `client.h` | ~610 | `Client` methods (geometry, border drawing, raise/lower/close/state, full-screen, maximisation). Also the resize-feedback popup. `Focuser` moved out to `focus.{h,cc}`. |
+| `focus.cc` / `focus.h` | ~225 | `Focuser`: focus history, the focus-follows-mouse race-avoidance timerfd (see the long comment in `focus.h`), `ReallyFocusClient`'s three paths, which are ICCCM 4.1.7's input models (passive/globally active/no input — don't "simplify" this, see `concepts.md`). Moved out of `client.cc`. `focus::NowMillis` is the clock it reads, replaceable so the A→B→C race can be tested rather than waited for. |
 | `hider.cc` / `hider.h` | ~320 | `Hider`: hide/unhide, the unhide menu (layout, paint, hit-testing, the red highlight box), built on `menulayout.h`. `menuItemHeight()` is the one function here also used outside `Hider` (by `xlib.cc`'s icon sizing), so it's the one non-anonymous-namespace free function. Moved out of `mouse.cc`, which no longer exists. |
 | `screen.cc` / `screen.h` | ~345 | `LScr`: window/client registry, GCs and colours, EWMH root properties, window-tree scan at start-up, `SetVisibleAreas` (calls into `screenlayout.cc`). Owns `Hider`/`Focuser` by value, so `screen.h` includes `hider.h`/`focus.h`. |
 | `xlib.cc` / `xlib.h` | ~1210 | `namespace xlib`: the public face of the shim, and the only thing above it that anything calls. Every function here logs, composes (`XMoveWindow` is a `ConfigureWindow` with two fields set) and delegates to the installed `Server`; none of them issues an X request itself. Also `CreateNamedWindow`, `WindowTree`, the client-side parser for `#rrggbb` colour specifications, and `ImageIcon` (icon scaling, compositing, refcounted pixmap cache — on plain 32-bit buffers, no `XImage`). Home to `conn`, the resource-ID typedefs, `ButtonMask`, `MousePos`/`getMousePosition()`, `Reply<T>` (RAII for reply memory), and the `ValueList`/`WindowAttrs`/`WindowChanges`/`GCValues` builders. **Use the builders.** XCB takes a bare `uint32_t[]` that must be ordered by increasing mask bit and checks nothing, so a hand-written array is a silent-corruption bug waiting to happen. |
@@ -140,8 +140,15 @@ Each carries its own compile command in a comment at the top of the file.
   in `client.cc` for the actual painting.
 * **Unhide menu geometry** → `menulayout.{h,cc}` for the pure maths;
   `Hider::Paint`/`OpenMenu` in `hider.cc` for painting and event handling.
+* **Maximisation** → `Client::SetMaximized`/`MaximizedRect` (`client.cc`),
+  driven from `ewmh_change_state` (`ewmh.cc`); `concepts.md` has the rules.
 * **Which windows get frames** → `ewmh_hasframe` (`ewmh.cc`) and the motif
-  hint override in `manage()` (`manage.cc`).
+  hint override in `manage()` (`manage.cc`). Mind `XGetWindowProperty`'s
+  argument order there; see `architecture.md`.
+* **A game's full screen lands in the wrong place** → which of the two kinds is
+  it? `Client::EnterFullScreen` handles `_NET_WM_STATE_FULLSCREEN`;
+  `SnapToMonitor` (`screenlayout.cc`) handles borderless. See
+  `concepts.md`.
 * **Multi-monitor behaviour** → `LScr::SetVisibleAreas` in `screen.cc`, which
   delegates the actual maths to `screenlayout.{h,cc}`.
 * **Auto-placement of new windows** → `placement.{h,cc}` (`AutoPlacer`),

@@ -43,6 +43,8 @@ std::ostream& operator<<(std::ostream& os, const diff& d) {
   D(skip_taskbar);
   D(skip_pager);
   D(fullscreen);
+  D(maximized_vert);
+  D(maximized_horz);
   D(above);
   D(below);
 #undef D

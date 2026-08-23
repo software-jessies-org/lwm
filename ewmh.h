@@ -51,6 +51,11 @@ struct EWMHWindowState {
   bool skip_taskbar;
   bool skip_pager;
   bool fullscreen;
+  // The two maximisation axes are separate states in EWMH, and clients do use
+  // them separately (a shell window maximised vertically only). Client applies
+  // whichever combination is set; see Client::SetMaximized.
+  bool maximized_vert;
+  bool maximized_horz;
   bool above;
   bool below;
 };
@@ -109,8 +114,8 @@ enum EWMHAtom {
   // window states for _NET_WM_STATE
   _NET_WM_STATE_MODAL,
   _NET_WM_STATE_STICKY,
-  _NET_WM_STATE_MAXIMISED_VERT,
-  _NET_WM_STATE_MAXIMISED_HORZ,
+  _NET_WM_STATE_MAXIMIZED_VERT,
+  _NET_WM_STATE_MAXIMIZED_HORZ,
   _NET_WM_STATE_SHADED,
   _NET_WM_STATE_SKIP_TASKBAR,
   _NET_WM_STATE_SKIP_PAGER,

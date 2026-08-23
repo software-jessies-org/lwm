@@ -165,3 +165,66 @@ TEST(MakeVisible, TooWideGetsClampedToScreenWidth) {
   EXPECT_EQ(got.xMin, 0);
   EXPECT_EQ(got.xMax, 1000);
 }
+
+// The two-monitor layout that provokes the bug SnapToMonitor exists for: a
+// large primary that doesn't start at the root origin, and a smaller monitor
+// to its left.
+static const std::vector<Rect> kTwoMonitors = {
+    Rect::FromXYWH(0, 400, 1920, 1200),   // secondary, to the left
+    Rect::FromXYWH(1920, 0, 3840, 2160),  // primary
+};
+
+TEST(SnapToMonitor, MonitorSizedWindowJustAboveItsMonitorIsPulledOn) {
+  // Shadow of the Tomb Raider, borderless full screen, with a 32-pixel panel
+  // reserving the top of the primary monitor.
+  const Rect asked = Rect::FromXYWH(1920, -32, 3840, 2160);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors),
+            Rect::FromXYWH(1920, 0, 3840, 2160));
+}
+
+TEST(SnapToMonitor, WindowAlreadyOnItsMonitorIsUntouched) {
+  const Rect asked = Rect::FromXYWH(1920, 0, 3840, 2160);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+}
+
+TEST(SnapToMonitor, SmallerMonitorGetsItsOwnWindowSnapped) {
+  const Rect asked = Rect::FromXYWH(-3, 395, 1920, 1200);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors),
+            Rect::FromXYWH(0, 400, 1920, 1200));
+}
+
+TEST(SnapToMonitor, SizeMustMatchAMonitorExactly) {
+  // One pixel short of the primary. A window that isn't trying to cover a
+  // monitor is none of our business, however close it gets.
+  const Rect asked = Rect::FromXYWH(1920, -32, 3840, 2159);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+}
+
+TEST(SnapToMonitor, WindowMostlyOffItsMonitorIsLeftAlone) {
+  // Deliberately parked with only a third of it on the primary: that's a
+  // position, not a mistake, so don't drag it back.
+  const Rect asked = Rect::FromXYWH(1920, 1440, 3840, 2160);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+}
+
+TEST(SnapToMonitor, WindowSizedLikeAMonitorButOnAnotherIsLeftAlone) {
+  // Same size as the secondary monitor, but sitting on the primary. It doesn't
+  // cover a monitor and never did, so there's nothing to correct.
+  const Rect asked = Rect::FromXYWH(2500, 500, 1920, 1200);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+}
+
+TEST(SnapToMonitor, IdenticalMonitorsSnapToTheOneTheWindowIsOn) {
+  const std::vector<Rect> twins = {Rect::FromXYWH(0, 0, 1920, 1080),
+                                   Rect::FromXYWH(1920, 0, 1920, 1080)};
+  EXPECT_EQ(SnapToMonitor(Rect::FromXYWH(1900, -20, 1920, 1080), twins),
+            Rect::FromXYWH(1920, 0, 1920, 1080))
+      << "nearly on the right-hand twin, so it belongs to the right-hand twin";
+  EXPECT_EQ(SnapToMonitor(Rect::FromXYWH(20, 20, 1920, 1080), twins),
+            Rect::FromXYWH(0, 0, 1920, 1080));
+}
+
+TEST(SnapToMonitor, NoMonitorsIsNotACrash) {
+  const Rect asked = Rect::FromXYWH(10, 10, 100, 100);
+  EXPECT_EQ(SnapToMonitor(asked, {}), asked);
+}

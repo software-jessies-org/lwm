@@ -171,7 +171,12 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
   RemoveFromHistory(c);
   focus_history_.push_front(c);
 
-  xlib::XDeleteProperty(LScr::I->Root(), ewmh_atom[_NET_ACTIVE_WINDOW]);
+  // Note that we do not delete _NET_ACTIVE_WINDOW before setting it below.
+  // XChangeProperty generates a PropertyNotify whether or not the value
+  // actually changed, so the delete bought us nothing, and it briefly told
+  // every EWMH client on the display that there was no active window at all.
+  // Wine acts on that: it logs "unexpected _NET_ACTIVE_WINDOW (nil)" and
+  // deactivates the window it thought was in the foreground.
   // There was a check for 'c->IsHidden()' here. Needed?
   if (give_focus) {
     if (c->accepts_focus) {
@@ -190,12 +195,26 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
                                 XCB_CURRENT_TIME);
       }
     } else if (c->proto & Ptakefocus) {
-      // Main window doesn't accept focus, but there's an indication that its
-      // children may. This is the case for Java apps, which have two windows
-      // inside the main window, one called 'FocusProxy' and the other called
-      // 'Content window'. We want to give focus to the FocusProxy, but there
-      // doesn't seem an obvious way to determine which child is the right one,
-      // so let's just ping them all.
+      // This is ICCCM section 4.1.7's "globally active" input model: the client
+      // says it doesn't want us to hand it the focus, but it does understand
+      // WM_TAKE_FOCUS, which means it wants to decide for itself which of its
+      // windows gets it. So tell it, and let it call XSetInputFocus.
+      //
+      // Every Wine/Proton window works this way (winex11.drv's UseTakeFocus
+      // defaults on, which makes it set WM_HINTS input=False and list
+      // WM_TAKE_FOCUS in WM_PROTOCOLS), so this is the path every Steam game
+      // takes. Without this message the input focus was simply never moved:
+      // XGetInputFocus stayed at PointerRoot, Wine never saw itself become the
+      // foreground window, and the game got no key events at all.
+      LOGD(c) << "Sending WM_TAKE_FOCUS to " << WinID(c->window);
+      xlib::SendClientMessage(c->window, wm_protocols, wm_take_focus,
+                              XCB_CURRENT_TIME);
+      // Java apps are also in this category, but don't act on WM_TAKE_FOCUS in
+      // a way that works for us: they have two windows inside the main window,
+      // one called 'FocusProxy' and the other 'Content window', and we have to
+      // focus the FocusProxy ourselves. There's no obvious way to tell which
+      // child is the right one, so ping them all. Clients like Wine's, which
+      // keep no children of their own, are unaffected by this.
       focusChildrenOf(c, c->window);
     } else {
       // FIXME: is this sensible?

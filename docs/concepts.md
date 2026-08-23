@@ -8,13 +8,27 @@ the client's own window (`Client::window`), reparented inside it.
 * `Client::ContentRect()` — the client window, in **root** coordinates. This is
   the stored state (`content_rect_`); everything else is derived.
 * `Client::FrameRect()` — the frame, root coordinates. Equals the content rect
-  when `!framed`.
+  when `!framed`, and **also when the client is full screen**: there's no
+  furniture to make room for, so the frame covers exactly the same pixels as
+  the client. `EnterFullScreen` also drops the frame's X border
+  (`kFrameBorderWidth`) to zero, because X puts a window's border outside its
+  coordinate space and a full-screen window has to line up with the monitor
+  exactly.
 * `Client::ContentRectRelative()` — the content rect translated into
   **frame-window** coordinates. Needed whenever you call an X move/resize on
   `window` while it is reparented.
 * `ContentFromFrameRect` / `FrameFromContentRect` — static converters. The frame
   adds `borderWidth()` on left/right/bottom and `titleBarHeight()` on top
   (`titleBarHeight() == textHeight() + borderWidth()`).
+
+Everything that places the two windows — `MoveTo`, `MoveResizeTo`,
+`EnterFullScreen`, `EvConfigureRequest` — goes through `FrameRect()` for the
+frame and `ContentRectRelative()` for the client, so the full-screen case falls
+out of those two rather than being special-cased at each site. Passing root
+coordinates for the client window is the mistake to watch for: it is
+indistinguishable from the right answer until the frame's origin isn't (0, 0),
+which on a multi-monitor layout means it only shows up when the screen being
+filled isn't the leftmost one.
 
 Mutators: `MoveTo` (size must be unchanged — it `LOGF`s, i.e. exits, otherwise)
 and `MoveResizeTo`. Both update `content_rect_`, move the X windows and send a
@@ -67,11 +81,29 @@ focus after C. So the first enter is honoured immediately and any enter within
 `focusDelayMillis` (default 50) is deferred through the timer. See the long
 comment on the `Focuser` class in `focus.h`.
 
-`ReallyFocusClient` has three paths: normal (`XSetInputFocus` on the top-level,
-plus `WM_TAKE_FOCUS` if supported), the Java case (`accepts_focus == false` but
-`Ptakefocus` — ping every child with `FocusChangeMask`), and the give-up case.
+`ReallyFocusClient` has three paths, which are ICCCM section 4.1.7's input
+models:
+
+| `WM_HINTS` input | `WM_TAKE_FOCUS` | What lwm does |
+| --- | --- | --- |
+| true | either | *Passive/locally active*: `XSetInputFocus` on the top-level, plus `WM_TAKE_FOCUS` if the client listed it |
+| false | yes | *Globally active*: send `WM_TAKE_FOCUS` and let the client focus whichever of its windows it likes — **plus** ping every child that selected `FocusChangeMask`, for Java |
+| false | no | *No input*: give up (`XSetInputFocus(None)`) |
+
 Chrome breaks if you focus its children as well as the top level; Java breaks if
 you don't. Don't "simplify" this.
+
+The globally active row is the one every Wine/Proton window lands in —
+`winex11.drv`'s `UseTakeFocus` defaults on, so it sets input=false and lists
+`WM_TAKE_FOCUS`. It has no child windows either, so before lwm sent the message
+the focus simply never moved: `XGetInputFocus` stayed at `PointerRoot`, Wine
+never believed it had been activated, and Steam games got no key events at all.
+`focus_test.cc` covers both halves of the row.
+
+lwm does **not** delete `_NET_ACTIVE_WINDOW` before setting it.
+`XChangeProperty` notifies whether or not the value changed, so the delete
+bought nothing and momentarily announced that no window was active, which Wine
+acts on by deactivating its foreground window.
 
 ## Hiding (`Hider`, in `hider.cc`)
 
@@ -117,6 +149,65 @@ A *strut* is an EWMH reservation along a screen edge (panels, launchers).
 `LScr::strut_` is the max over all clients (`ewmh_set_strut`); `withStruts=true`
 clips every visible area by it. Clients that set struts are skipped during
 xrandr re-layout — they're expected to reposition themselves.
+
+### Maximisation
+
+`_NET_WM_STATE_MAXIMIZED_VERT` and `_HORZ` are two independent states, and
+clients do use them separately, so `Client::SetMaximized(vert, horz)` takes
+both and `MaximizedRect` applies whichever are set. Three things about it:
+
+* It works in **frame** coordinates. What fills the screen is the window plus
+  its furniture; maximising the content rect would push the title bar off the
+  top.
+* It uses `VisibleAreas(**true**)` — *with* struts. This is the difference
+  between maximised and full screen: a full-screen window covers the panels, a
+  maximised one stops at them.
+* The un-maximised geometry is saved in `pre_maximize_content_rect_` on the
+  transition *into* maximisation, which is why `SetMaximized` takes the new
+  flags rather than reading `wstate` — setting the second axis while the first
+  is already set must not overwrite the saved rect with a half-screen-sized
+  one. While the window is full screen the saved rect comes from
+  `pre_full_screen_content_rect_`, since `content_rect_` is then the screen.
+
+Full screen wins while it lasts: `SetMaximized` records the flags and returns,
+and `ExitFullScreen` applies whatever they say by then. Restoring goes through
+`makeVisible`, because the monitor layout can change while a window is
+maximised and the rect to go back to may name a monitor that has since been
+unplugged.
+
+lwm has no maximise gesture of its own — this exists for clients that ask, and
+`_NET_WM_ALLOWED_ACTIONS` now says they may. When the user takes the geometry
+into their own hands with a Super-drag or an expand, `DropMaximization` clears
+the flags without moving the window: whatever it is at that point, it isn't
+maximised.
+
+### Borderless full screen, and `SnapToMonitor`
+
+There are two ways a client goes full screen, and only one of them is lwm's
+decision. `_NET_WM_STATE_FULLSCREEN` asks lwm to place the window, and
+`Client::EnterFullScreen` does it. *Borderless* full screen - what a game's
+display settings usually call it - asks for nothing: the client turns its
+decorations off (`_MOTIF_WM_HINTS`, see `motifWouldDecorate` in `manage.cc`)
+and sizes itself to the monitor, so lwm never gets a say and its own arithmetic
+has to be right.
+
+It sometimes isn't. A game under Proton positions such a window using the
+Windows work area, which lwm derives from panel struts, and lands the window
+exactly the height of a top panel's strut above the monitor. So
+`SnapToMonitor` (`screenlayout.cc`) puts it back: an **unframed** window whose
+requested size is *exactly* one monitor's, and which already covers most of
+that monitor, is translated onto the monitor's origin. It never resizes, never
+moves a window to a monitor it wasn't mostly on already, and doesn't apply to
+framed windows, where a monitor-sized window is just a big window.
+
+Two call sites, because a client need not use either alone: `manage()`, for a
+client that creates its window in the wrong place and simply maps it, and the
+pass-through branch of `handleConfigureRequest`, for one that moves itself
+afterwards. The latter only acts on a request naming all of x, y, width and
+height - lwm's `content_rect_` for an unframed client is only ever the geometry
+it had when we adopted it, since these requests are passed to the server rather
+than applied through `Client`, so there is nothing trustworthy to combine a
+partial request with.
 
 On an xrandr change, `LScr::SetVisibleAreas` computes every client's new rect
 with `MapToNewAreas` *before* swapping in the new geometry, then applies the

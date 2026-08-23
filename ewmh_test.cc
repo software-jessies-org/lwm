@@ -172,3 +172,212 @@ TEST(EwmhChangeState, FullScreenFillsTheScreenAndRestoresOnExit) {
   EXPECT_EQ(c->ContentRect(), before)
       << "leaving full screen must put the window back where it was";
 }
+
+TEST(EwmhChangeState, FullScreenPlacesTheClientAtItsFrameOrigin) {
+  wmtest::World world(3000, 1500);
+  // Two monitors, the larger (and so the one full-screen picks) starting at
+  // x=1000. The bug this catches is invisible on a layout whose primary
+  // screen starts at the root origin, which is why the areas are set up first.
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 1000, 800),
+                            Rect::FromXYWH(1000, 0, 2000, 1500)});
+  Client* c = world.MapClientWindow(Rect::FromXYWH(1100, 100, 300, 200));
+  ASSERT_TRUE(c != nullptr);
+
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_FULLSCREEN]);
+  ASSERT_TRUE(c->wstate.fullscreen);
+
+  const Rect screen = LScr::I->GetPrimaryVisibleArea(false);
+  ASSERT_EQ(screen.xMin, 1000);
+  EXPECT_EQ(c->ContentRect(), screen);
+  EXPECT_EQ(c->FrameRect(), screen)
+      << "a full-screen window has no furniture to make room for";
+  EXPECT_EQ(world.server().Get(c->parent)->rect, screen);
+  // The client window is reparented, so the fake reports its geometry relative
+  // to the frame. It has to cover the frame exactly; giving X the root
+  // coordinates here pushed it off to the right by the frame's own x origin.
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(0, 0, screen.width(), screen.height()));
+}
+
+TEST(EwmhChangeState, MovingAFullScreenWindowKeepsTheClientOnItsFrame) {
+  wmtest::World world(3000, 1500);
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 1000, 800),
+                            Rect::FromXYWH(1000, 0, 2000, 1500)});
+  Client* c = world.MapClientWindow(Rect::FromXYWH(1100, 100, 300, 200));
+  ASSERT_TRUE(c != nullptr);
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_FULLSCREEN]);
+  ASSERT_TRUE(c->wstate.fullscreen);
+
+  const Rect moved = Rect::Translate(c->ContentRect(), Point{-40, 25});
+  c->MoveTo(moved);
+
+  EXPECT_EQ(world.server().Get(c->parent)->rect, moved)
+      << "the frame follows the content exactly while full screen";
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(0, 0, moved.width(), moved.height()))
+      << "moving must not reintroduce the furniture offset";
+}
+
+namespace {
+
+// The visible-area layout the maximisation tests use: one screen, offset from
+// the root origin so that a maximised window landing at 0,0 by accident is a
+// visible failure rather than a coincidence.
+const Rect kScreen = Rect::FromXYWH(200, 100, 1000, 800);
+
+void setOneOffsetScreen() {
+  LScr::I->SetVisibleAreas({kScreen});
+}
+
+// The content rect a window maximised on both axes should end up with: the
+// screen, less the space the frame's furniture takes.
+Rect maximizedContent(const Rect& area) {
+  return Client::ContentFromFrameRect(area);
+}
+
+}  // namespace
+
+TEST(Maximize, BothAxesFillTheScreenAndRestoreOnRemove) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(300, 200, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  EXPECT_TRUE(c->wstate.maximized_vert);
+  EXPECT_TRUE(c->wstate.maximized_horz);
+  EXPECT_EQ(c->FrameRect(), kScreen)
+      << "it's the frame that fills the screen, furniture and all";
+  EXPECT_EQ(c->ContentRect(), maximizedContent(kScreen));
+
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  EXPECT_FALSE(c->IsMaximized());
+  EXPECT_EQ(c->ContentRect(), before)
+      << "un-maximising must put the window back where it started";
+}
+
+TEST(Maximize, VerticalOnlyKeepsTheWindowsOwnWidth) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(300, 200, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  EXPECT_TRUE(c->wstate.maximized_vert);
+  EXPECT_FALSE(c->wstate.maximized_horz);
+  EXPECT_EQ(c->FrameRect().yMin, kScreen.yMin);
+  EXPECT_EQ(c->FrameRect().yMax, kScreen.yMax);
+  EXPECT_EQ(c->ContentRect().xMin, before.xMin)
+      << "the horizontal axis wasn't asked for and must not move";
+  EXPECT_EQ(c->ContentRect().width(), before.width());
+}
+
+TEST(Maximize, SecondAxisDoesNotForgetTheOriginalGeometry) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(300, 200, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  // Maximise one axis, then the other, then let both go. The rect to restore
+  // is recorded on the first transition only; take it on the second and the
+  // window comes back screen-height.
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+
+  EXPECT_EQ(c->ContentRect(), before);
+}
+
+TEST(Maximize, StrutsAreRespected) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  // A panel across the top of the screen. Unlike a full-screen window, a
+  // maximised one has to leave it alone.
+  EWMHStrut strut{};
+  strut.top = kScreen.yMin + 40;
+  ASSERT_TRUE(LScr::I->ChangeStrut(strut));
+
+  Client* c = world.MapClientWindow(Rect::FromXYWH(300, 200, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+
+  EXPECT_EQ(c->FrameRect().yMin, kScreen.yMin + 40)
+      << "a maximised window stops at the strut";
+  EXPECT_EQ(c->FrameRect().yMax, kScreen.yMax);
+}
+
+TEST(Maximize, StateIsPublishedOnTheWindow) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(300, 200, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  const xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_WM_STATE], 100, XCB_ATOM_ATOM);
+  const std::vector<uint32_t>& state = prop.Data32();
+  EXPECT_TRUE(std::find(state.begin(), state.end(),
+                        ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]) != state.end())
+      << "a client that asked to be maximised has to be able to read it back";
+  EXPECT_TRUE(std::find(state.begin(), state.end(),
+                        ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]) == state.end());
+}
+
+TEST(Maximize, InitialStateSetBeforeMappingIsHonoured) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  const Rect original = Rect::FromXYWH(300, 200, 400, 300);
+  const Window w = world.server().AddClientWindow(original);
+  // EWMH says a client sets _NET_WM_STATE before mapping to say how it wants
+  // to start. This one wants to start maximised.
+  world.server().SetProperty32(w, ewmh_atom[_NET_WM_STATE], XCB_ATOM_ATOM,
+                               {ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT],
+                                ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]});
+  xcb_map_request_event_t e{};
+  e.response_type = XCB_MAP_REQUEST;
+  e.parent = world.server().Root();
+  e.window = w;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+
+  Client* c = LScr::I->GetClient(w, false);
+  ASSERT_TRUE(c != nullptr);
+  EXPECT_EQ(c->FrameRect(), kScreen);
+
+  // And it still knows where to go back to.
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  EXPECT_EQ(c->ContentRect(), original);
+}
+
+TEST(Maximize, FullScreenWinsWhileItLasts) {
+  wmtest::World world(1400, 1000);
+  setOneOffsetScreen();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(300, 200, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_FULLSCREEN]);
+  const Rect full = c->ContentRect();
+  // Maximising underneath full screen changes the state but not the geometry.
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  EXPECT_EQ(c->ContentRect(), full)
+      << "a full-screen window stays full screen";
+
+  // Leaving full screen lands on the maximised geometry, not the original.
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_FULLSCREEN]);
+  EXPECT_EQ(c->FrameRect(), kScreen);
+  EXPECT_NE(c->ContentRect(), before);
+
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
+  EXPECT_EQ(c->ContentRect(), before);
+}

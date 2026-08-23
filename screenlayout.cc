@@ -326,6 +326,32 @@ int absDist(int min1, int max1, int min2, int max2) {
   return 0;
 }
 
+Rect SnapToMonitor(const Rect& r, const std::vector<Rect>& areas) {
+  // Only an exact size match counts. A window one pixel off a monitor's size
+  // isn't trying to cover it, and guessing on its behalf would be worse than
+  // leaving it alone.
+  Rect best{};
+  int best_overlap = 0;
+  for (const Rect& area : areas) {
+    if (area.area() != r.area()) {
+      continue;
+    }
+    const int overlap = Rect::Intersect(r, area).area().num_pixels();
+    if (overlap > best_overlap) {
+      best_overlap = overlap;
+      best = area;
+    }
+  }
+  // Require the window to be mostly on the monitor already. Because r is
+  // exactly one monitor's size, at most one monitor can hold more than half of
+  // it, so this both picks the target unambiguously and stops us dragging a
+  // window across the desk because its size happened to match.
+  if (best_overlap * 2 <= r.area().num_pixels()) {
+    return r;
+  }
+  return Rect::Translate(r, Point::Sub(best.origin(), r.origin()));
+}
+
 Rect findBestScreenFor(const Rect& r, const std::vector<Rect>& areas) {
   // First try to find the one with the largest overlap.
   Rect res{};

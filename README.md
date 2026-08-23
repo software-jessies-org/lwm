@@ -51,7 +51,7 @@ Holding the `Windows` key lets you do the same from anywhere in the window,
 without aiming for the border: left-drag moves it, and middle-drag resizes the
 edge or corner nearest to where you started the drag (imagine the window
 divided into a 3x3 grid; the middle square resizes nothing). A left *click*,
-which is a drag that went nowhere, raises the window instead.
+raises the window instead.
 
 Double-clicking with the `Windows` key held grows the window instead. The left
 button expands the edge or corner picked out by that same 3x3 grid until it
@@ -121,7 +121,7 @@ rather flaky screen auto-detection software.
 
 ### Colourmaps
 
-X still has support for colour maps. Well, LWM completely ignores them, and
+X still has support for colour maps. LWM completely ignores them, and
 doesn't fully support anything less than 24bpp displays. This does make modern
 LWM unsuitable for ancient monochrome X terminals, but if you're using one of
 those it's in a museum anyway, and hopefully you don't mind not having the
@@ -132,17 +132,6 @@ latest version of LWM.
 LWM is not an 'environment'. It is not a launcher. It is a window manager.
 If you want a launcher, I'd suggest gummiband, but you can also use any other
 launcher you like. This is the beauty of X11 - you can mix and match.
-
-### Hotkeys
-
-LWM has no hotkeys. It understands certain keyboard modifiers like Alt and
-Shift when combined with mouse actions, but it does not support hotkeys.
-If you want to run programs on hotkey presses, consider using speckeysd.
-Or, you can use any other hotkey program you like. This is the beauty of X11 -
-you can mix and match.
-
-If you want to control window sizes, locations etc using hotkeys, please use
-programs like `xdotool` to help you with that.
 
 ### Virtual desktops
 

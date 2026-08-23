@@ -34,6 +34,8 @@ std::ostream& operator<<(std::ostream& os, const EWMHWindowState& s) {
   D(skip_taskbar);
   D(skip_pager);
   D(fullscreen);
+  D(maximized_vert);
+  D(maximized_horz);
   D(above);
   D(below);
 #undef D
@@ -105,8 +107,8 @@ void ewmh_init() {
   SET_ATOM(_NET_WM_WINDOW_TYPE_NORMAL);
   SET_ATOM(_NET_WM_STATE_MODAL);
   SET_ATOM(_NET_WM_STATE_STICKY);
-  SET_ATOM(_NET_WM_STATE_MAXIMISED_VERT);
-  SET_ATOM(_NET_WM_STATE_MAXIMISED_HORZ);
+  SET_ATOM(_NET_WM_STATE_MAXIMIZED_VERT);
+  SET_ATOM(_NET_WM_STATE_MAXIMIZED_HORZ);
   SET_ATOM(_NET_WM_STATE_SHADED);
   SET_ATOM(_NET_WM_STATE_SKIP_TASKBAR);
   SET_ATOM(_NET_WM_STATE_SKIP_PAGER);
@@ -252,6 +254,8 @@ void ewmh_get_state(Client* c) {
   c->wstate.skip_taskbar = false;
   c->wstate.skip_pager = false;
   c->wstate.fullscreen = false;
+  c->wstate.maximized_vert = false;
+  c->wstate.maximized_horz = false;
   c->wstate.above = false;
   c->wstate.below = false;
   for (; n; n--) {
@@ -263,6 +267,12 @@ void ewmh_get_state(Client* c) {
     }
     if (state[n - 1] == ewmh_atom[_NET_WM_STATE_FULLSCREEN]) {
       c->wstate.fullscreen = true;
+    }
+    if (state[n - 1] == ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]) {
+      c->wstate.maximized_vert = true;
+    }
+    if (state[n - 1] == ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]) {
+      c->wstate.maximized_horz = true;
     }
     if (state[n - 1] == ewmh_atom[_NET_WM_STATE_ABOVE]) {
       c->wstate.above = true;
@@ -312,6 +322,17 @@ void ewmh_change_state(Client* c, unsigned long action, unsigned long atom) {
       c->ExitFullScreen();
     }
   }
+  // Both maximisation axes go through Client::SetMaximized, which needs to see
+  // the transition (it remembers the un-maximised geometry on the way in), so
+  // the new values are worked out first and handed over rather than assigned.
+  if (*a == ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]) {
+    c->SetMaximized(new_state(action, c->wstate.maximized_vert),
+                    c->wstate.maximized_horz);
+  }
+  if (*a == ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]) {
+    c->SetMaximized(c->wstate.maximized_vert,
+                    new_state(action, c->wstate.maximized_horz));
+  }
   if (*a == ewmh_atom[_NET_WM_STATE_ABOVE]) {
     c->wstate.above = new_state(action, c->wstate.above);
   }
@@ -328,7 +349,7 @@ void ewmh_set_state(Client* c) {
   if (c == NULL) {
     return;
   }
-#define MAX_ATOMS 6
+#define MAX_ATOMS 8
   Atom a[MAX_ATOMS];
   int atoms = 0;
   if (!c->IsWithdrawn()) {
@@ -343,6 +364,12 @@ void ewmh_set_state(Client* c) {
     }
     if (c->wstate.fullscreen) {
       a[atoms++] = ewmh_atom[_NET_WM_STATE_FULLSCREEN];
+    }
+    if (c->wstate.maximized_vert) {
+      a[atoms++] = ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT];
+    }
+    if (c->wstate.maximized_horz) {
+      a[atoms++] = ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ];
     }
     if (c->wstate.above) {
       a[atoms++] = ewmh_atom[_NET_WM_STATE_ABOVE];
@@ -362,14 +389,16 @@ void ewmh_set_state(Client* c) {
 void ewmh_set_allowed(Client* c) {
   // FIXME: this is dumb - the allowed actions should be calculated
   // but for now, anything goes.
-  Atom action[4];
+  Atom action[6];
 
   action[0] = ewmh_atom[_NET_WM_ACTION_MOVE];
   action[1] = ewmh_atom[_NET_WM_ACTION_RESIZE];
   action[2] = ewmh_atom[_NET_WM_ACTION_FULLSCREEN];
   action[3] = ewmh_atom[_NET_WM_ACTION_CLOSE];
+  action[4] = ewmh_atom[_NET_WM_ACTION_MAXIMIZE_HORIZ];
+  action[5] = ewmh_atom[_NET_WM_ACTION_MAXIMIZE_VERT];
   xlib::XChangeProperty(c->window, ewmh_atom[_NET_WM_ALLOWED_ACTIONS],
-                        XCB_ATOM_ATOM, 32, action, 4);
+                        XCB_ATOM_ATOM, 32, action, 6);
 }
 
 void ewmh_set_strut() {

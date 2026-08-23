@@ -20,7 +20,12 @@
    "another window manager is already running", answered immediately rather
    than inferred later from an opcode. This is the moment we become *the* WM.
    Then `ScanWindowTree()` adopts pre-existing windows — querying them all in
-   one batch — and `InitEWMH()` publishes the root properties.
+   one batch — and `InitEWMH()` publishes the root properties. Among those is
+   `_NET_SUPPORTING_WM_CHECK`, which has to be set **twice**: on the root, and
+   on the off-screen window it names, pointing at itself. Clients check both
+   and believe there's an EWMH window manager only if the two agree (that's how
+   a property left behind by a crashed WM is detected), so getting only the
+   first one right makes SDL, Wine and friends decide they're running bare.
 8. `session_init()`.
 9. XRandR: `xcb_randr_query_version` (mandatory before any other RandR
    request), select screen-change notifications, take the initial layout via
@@ -187,3 +192,11 @@ client back to the root and restores its original border width.
 * Format-32 properties are arrays of `uint32_t`, not `long`. Read them through
   `xlib::WindowProperty::Data32()`, which is why that struct doesn't expose a
   raw pointer.
+* `xlib::XGetWindowProperty(w, property, **length**, **type**)`. The Xlib-era
+  `getProperty()` it replaced took those two the other way round, and a call
+  that still does fails *silently*: X answers a type mismatch with the real
+  type and format but an empty value, so `ok()` is false and the property
+  reads as absent. That is how the `_MOTIF_WM_HINTS` override in `manage()`
+  came to be dead code from the XCB migration until 2026-08-23, framing every
+  window that asked not to be decorated — Java's `setUndecorated(true)`, and
+  every borderless-fullscreen game under Wine.

@@ -459,3 +459,24 @@ TEST(SuperGestures, WithoutTheWindowsKeyNothingHappens) {
   EXPECT_EQ(c->ContentRect(), before);
   EXPECT_FALSE(c->hidden);
 }
+
+TEST(SuperGestures, DraggingAMaximizedWindowUnmaximizesIt) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  c->SetMaximized(true, true);
+  ASSERT_TRUE(c->IsMaximized());
+  const Rect maximized = c->ContentRect();
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 40, from.y + 25}, kSlowly);
+
+  EXPECT_FALSE(c->IsMaximized())
+      << "a window the user has dragged isn't maximised any more";
+  // Only the size is asserted, not the position: a maximised window is flush
+  // with the screen edges, so WindowMover's edge resistance has opinions about
+  // how far it actually travels. What matters here is that dropping the state
+  // leaves the window the size it was rather than restoring it.
+  EXPECT_EQ(c->ContentRect().area(), maximized.area());
+}

@@ -12,6 +12,7 @@
 #include "client.h"
 #include "disp.h"
 #include "ewmh.h"
+#include "lwm.h"
 #include "screen.h"
 #include "test.h"
 #include "wmtest.h"
@@ -299,4 +300,96 @@ TEST(EvUnmapNotify, UnmapOfSomethingOtherThanTheClientWindowIsIgnored) {
 
   EXPECT_EQ(c->State(), NormalState);
   EXPECT_TRUE(world.server().CallsMatching("RemoveFromSaveSet(").empty());
+}
+
+namespace {
+
+// The layout the SnapToMonitor tests use: a large primary that doesn't start
+// at the root origin, with a smaller monitor to its left. The offset primary
+// is the whole point - on a single monitor at the origin there is nothing for
+// a mis-positioned full-screen window to be offset from.
+void setTwoMonitors() {
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 400, 1920, 1200),
+                            Rect::FromXYWH(1920, 0, 3840, 2160)});
+}
+
+// Maps a window that says, via _MOTIF_WM_HINTS, that it wants no decorations,
+// so lwm leaves it unframed - the borderless-fullscreen case.
+Client* mapUndecorated(wmtest::World* world, const Rect& rect) {
+  const Window w = world->server().AddClientWindow(rect);
+  world->server().SetProperty32(w, motif_wm_hints, motif_wm_hints,
+                                {1 << 1 /* MWM_HINTS_DECORATIONS */, 0, 0, 0,
+                                 0});
+  xcb_map_request_event_t e{};
+  e.response_type = XCB_MAP_REQUEST;
+  e.parent = world->server().Root();
+  e.window = w;
+  world->server().PushEvent(e);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
+}
+
+}  // namespace
+
+TEST(EvConfigureRequest, UndecoratedFullMonitorRequestIsSnappedToTheMonitor) {
+  wmtest::World world(5760, 2160);
+  setTwoMonitors();
+  Client* c = mapUndecorated(&world, Rect::FromXYWH(1920, 0, 3840, 2160));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  // What a Proton game asks for when a 32-pixel panel has reserved the top of
+  // the monitor: the right size, the right x, and 32 pixels too high.
+  xcb_configure_request_event_t e = configureRequest(
+      LScr::I->Root(), c->window,
+      XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH |
+          XCB_CONFIG_WINDOW_HEIGHT);
+  e.x = 1920;
+  e.y = -32;
+  e.width = 3840;
+  e.height = 2160;
+  world.server().ClearCalls();
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(1920, 0, 3840, 2160));
+}
+
+TEST(EvConfigureRequest, UndecoratedWindowThatIsNotMonitorSizedIsNotSnapped) {
+  wmtest::World world(5760, 2160);
+  setTwoMonitors();
+  Client* c = mapUndecorated(&world, Rect::FromXYWH(1920, 0, 400, 32));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  xcb_configure_request_event_t e = configureRequest(
+      LScr::I->Root(), c->window,
+      XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH |
+          XCB_CONFIG_WINDOW_HEIGHT);
+  e.x = 1920;
+  e.y = -32;
+  e.width = 400;
+  e.height = 32;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(1920, -32, 400, 32))
+      << "a panel that wants to sit off the top of the screen may do so";
+}
+
+TEST(ClientLifecycle, UndecoratedFullMonitorWindowIsSnappedWhenAdopted) {
+  wmtest::World world(5760, 2160);
+  setTwoMonitors();
+  // No configure request at all: the client created its window at the wrong
+  // place and simply mapped it, which is all a client has to do.
+  Client* c = mapUndecorated(&world, Rect::FromXYWH(1920, -32, 3840, 2160));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  EXPECT_EQ(c->ContentRect(), Rect::FromXYWH(1920, 0, 3840, 2160));
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(1920, 0, 3840, 2160))
+      << "the window itself has to move: there's no frame to carry it";
 }

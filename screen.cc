@@ -122,6 +122,15 @@ void LScr::InitEWMH() {
   ewmh_compat_ = xlib::CreateNamedWindow("LWM EWMH", r, 0, 0, 0);
   xlib::XChangeProperty(ewmh_compat_, ewmh_atom[_NET_WM_NAME],
                         utf8_string_atom_, 8, "lwm", 3);
+  // The check window must carry _NET_SUPPORTING_WM_CHECK pointing at itself, as
+  // well as the copy on the root below. Clients are told to read the property
+  // on the root, then read it again on the window it names, and to believe
+  // there's an EWMH window manager running only if both agree - that's what
+  // makes a stale property left behind by a crashed WM detectable. Without this
+  // line, Wine logged "Invalid _NET_SUPPORTING_WM_CHECK window" and SDL and
+  // friends conclude they're running with no WM to co-operate with.
+  xlib::XChangeProperty(ewmh_compat_, ewmh_atom[_NET_SUPPORTING_WM_CHECK],
+                        XCB_ATOM_WINDOW, 32, &ewmh_compat_, 1);
 
   // set root window properties. Note the 32-bit arrays: these properties are
   // format 32, and that means uint32_t, not long.
@@ -241,8 +250,8 @@ void LScr::Furnish(Client* c) {
   std::ostringstream name;
   name << "LWM frame for " << WinID(c->window);
   LOGD(c) << "Creating frame for client, at " << c->FrameRect();
-  c->parent =
-      xlib::CreateNamedWindow(name.str(), c->FrameRect(), 1, black(), white());
+  c->parent = xlib::CreateNamedWindow(name.str(), c->FrameRect(),
+                                      kFrameBorderWidth, black(), white());
   // DO NOT SET PointerMotionHint! Doing so allows X to send just one
   // notification to the window until the key or button state changes. This
   // prevents us from properly updating the cursor as we move the pointer around
@@ -322,7 +331,9 @@ struct moveData {
 void LScr::SetVisibleAreas(std::vector<Rect> visible_areas) {
   int nScrWidth = 0;
   int nScrHeight = 0;
-  for (const Rect& r : visible_areas_) {
+  // Note: the *new* areas. This used to measure visible_areas_, the ones being
+  // replaced, and so left width_/height_ describing the previous layout.
+  for (const Rect& r : visible_areas) {
     if (r.xMax > nScrWidth) {
       nScrWidth = r.xMax;
     }
@@ -364,8 +375,11 @@ void LScr::SetVisibleAreas(std::vector<Rect> visible_areas) {
 
     // Now we have newRect, which describes where we'd like to put the window,
     // including its frame. Translate that down to the client window
-    // coordinates (if the client is framed).
-    if (c->framed) {
+    // coordinates (if the client is framed). A full-screen client's frame *is*
+    // its content rect (see Client::FrameRect), so there's nothing to subtract
+    // in that case - doing so would shrink it by the furniture size on every
+    // monitor change.
+    if (c->framed && !c->wstate.fullscreen) {
       newRect = Client::ContentFromFrameRect(newRect);
     }
     newRect = c->LimitResize(newRect);

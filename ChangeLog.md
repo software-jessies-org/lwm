@@ -18,6 +18,8 @@ Super+left click on the client window raises the window.
 Fixed a bug where a restart of lwm made gummiband's closed drop-down menu
 reappear.
 
+Fixed a pile of bugs related to steam games.
+
 
 ## 2026-08-22 (pn, Basel)
 

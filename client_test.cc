@@ -206,3 +206,49 @@ TEST(ClientLifecycle, NonRectangularWindowsAreLeftUnframed) {
   ASSERT_TRUE(c != nullptr);
   EXPECT_FALSE(c->framed);
 }
+
+// Maps a window carrying the given _MOTIF_WM_HINTS words and returns the
+// Client, so the two Motif cases below differ only in the hints.
+namespace {
+
+Client* mapWithMotifHints(wmtest::World* world,
+                          const std::vector<uint32_t>& hints) {
+  const Window w =
+      world->server().AddClientWindow(Rect::FromXYWH(10, 10, 100, 100));
+  world->server().SetProperty32(w, motif_wm_hints, motif_wm_hints, hints);
+
+  xcb_map_request_event_t e{};
+  e.response_type = XCB_MAP_REQUEST;
+  e.parent = world->server().Root();
+  e.window = w;
+  world->server().PushEvent(e);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
+}
+
+// _MOTIF_WM_HINTS words 0 and 2: the flags, and the decorations bitmap.
+constexpr uint32_t kMwmHintsDecorations = 1 << 1;
+constexpr uint32_t kMwmDecorAll = 1 << 0;
+constexpr uint32_t kMwmDecorBorder = 1 << 1;
+
+}  // namespace
+
+TEST(ClientLifecycle, MotifHintsAskingForNoDecorationsLeaveTheWindowUnframed) {
+  wmtest::World world;
+  // What a Java JFrame with setUndecorated(true) sets, and what every
+  // borderless-fullscreen game under Wine sets: decorations are named, and the
+  // set named is empty.
+  Client* c = mapWithMotifHints(&world, {kMwmHintsDecorations, 0, 0, 0, 0});
+  ASSERT_TRUE(c != nullptr);
+  EXPECT_FALSE(c->framed)
+      << "the window asked for no decorations and must not be reparented";
+  EXPECT_EQ(c->parent, LScr::I->Root());
+}
+
+TEST(ClientLifecycle, MotifHintsAskingForABorderStillGetAFrame) {
+  wmtest::World world;
+  Client* c = mapWithMotifHints(
+      &world, {kMwmHintsDecorations, 0, kMwmDecorAll | kMwmDecorBorder, 0, 0});
+  ASSERT_TRUE(c != nullptr);
+  EXPECT_TRUE(c->framed);
+}

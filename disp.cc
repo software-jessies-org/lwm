@@ -28,6 +28,7 @@
 #include "manage.h"
 #include "resource.h"
 #include "screen.h"
+#include "screenlayout.h"
 #include "shape.h"
 #include "xdebugprint.h"
 #include "xfont.h"
@@ -202,6 +203,33 @@ void EvUnmapNotify(xcb_generic_event_t* ev) {
   withdraw(c);
 }
 
+// The position an unframed client's configure request should really be
+// granted at: what it asked for, unless SnapToMonitor moves it onto a monitor.
+//
+// Only a request that names all four of x, y, width and height is considered.
+// That's what a client sizing itself to a monitor sends, and it means we never
+// have to combine the request with lwm's own idea of where the window is -
+// which, for an unframed client, is only ever the geometry it had when we
+// adopted it, because these requests are passed through rather than applied
+// through Client.
+static Point snapUndecoratedFullScreen(
+    const Client* c,
+    const xcb_configure_request_event_t& e) {
+  const Point asked{e.x, e.y};
+  const uint16_t needed = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
+                          XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+  if (c == nullptr || c->framed || (e.value_mask & needed) != needed) {
+    return asked;
+  }
+  const Rect requested = Rect::FromXYWH(e.x, e.y, e.width, e.height);
+  const Rect snapped = SnapToMonitor(requested, LScr::I->VisibleAreas(false));
+  if (snapped != requested) {
+    LOGD(c) << "Snapping undecorated full-monitor request " << requested
+            << " to " << snapped;
+  }
+  return snapped.origin();
+}
+
 // Shared by the real ConfigureRequest event and by _NET_MOVERESIZE_WINDOW,
 // which is defined as meaning the same thing.
 static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
@@ -219,9 +247,13 @@ static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
   Client* c = LScr::I->GetClient(e.window, false);
   if (c == nullptr || c->State() != NormalState || !c->framed) {
     // Pass the request straight through, honouring exactly the fields the
-    // client named.
+    // client named - with one exception. An undecorated window asking to be
+    // exactly the size of a monitor is going full screen the borderless way,
+    // and if it's put itself slightly off the monitor it can only be by
+    // mistake, so move it on. See SnapToMonitor.
+    const Point origin = snapUndecoratedFullScreen(c, e);
     xlib::WindowChanges wc;
-    wc.FromRequestMask(e.value_mask, e.x, e.y, e.width, e.height,
+    wc.FromRequestMask(e.value_mask, origin.x, origin.y, e.width, e.height,
                        e.border_width, e.sibling, e.stack_mode);
     xlib::XConfigureWindow(e.window, wc);
     return;
@@ -286,10 +318,14 @@ static void handleConfigureRequest(const xcb_configure_request_event_t& e) {
 
   // The frame takes the client's stacking request, but our own geometry and
   // border. Only the fields the client asked about are sent, same as before.
+  // A full-screen frame has no border, so that it lines up with the monitor
+  // exactly (see Client::EnterFullScreen); don't hand it one back here.
+  const int frame_border = c->wstate.fullscreen ? 0 : kFrameBorderWidth;
   const Rect frame = c->FrameRect();
   xlib::WindowChanges frame_wc;
   frame_wc.FromRequestMask(e.value_mask, frame.xMin, frame.yMin, frame.width(),
-                           frame.height(), 1, e.sibling, e.stack_mode);
+                           frame.height(), frame_border, e.sibling,
+                           e.stack_mode);
   xlib::XConfigureWindow(e.parent, frame_wc);
   c->SendConfigureNotify();
 
