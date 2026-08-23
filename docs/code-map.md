@@ -119,6 +119,8 @@ Each carries its own compile command in a comment at the top of the file.
   `../docs/dev-workflow.md`.
 * `ui_test.sh` — Xvfb + xdotool UI test for the Windows-key mouse gestures;
   see `../docs/dev-workflow.md`.
+* `strut_test.sh` — Xvfb test for a strut set by a dock that was already on
+  screen before lwm started; see `../docs/dev-workflow.md`.
 
 ## Where to look for...
 

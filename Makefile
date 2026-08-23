@@ -142,6 +142,12 @@ smoke: lwm
 ui: lwm
 	./ui_test.sh ./lwm
 
+# Struts set by a dock that was already on screen before lwm started. Also
+# Xvfb; see the header comment in strut_test.sh for why the start-up ordering
+# is worth a test of its own.
+strut: lwm
+	./strut_test.sh ./lwm
+
 install: lwm
 	install -d $(DESTDIR)$(bindir) $(DESTDIR)$(mandir)/man1
 	install -m 755 lwm $(DESTDIR)$(bindir)/lwm
@@ -150,4 +156,4 @@ install: lwm
 clean:
 	rm -f lwm $(OBJS) $(DEPS)
 
-.PHONY: all clean install test smoke ui check-x11-boundary
+.PHONY: all clean install test smoke ui strut check-x11-boundary

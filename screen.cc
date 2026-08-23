@@ -222,11 +222,18 @@ Client* LScr::AddClient(Window w,
   // LOGI() << "New client " << attr.width << "x" << attr.height << "+" <<
   // attr.x
   //       << "+" << attr.y << ", g = " << attr.win_gravity;
+  // Register the client *before* managing it. manage() reads the window's
+  // _NET_WM_STRUT and calls ewmh_set_strut(), which recomputes the screen's
+  // reservation by folding over Clients() - so a client that isn't in the map
+  // yet contributes nothing, and its own strut is dropped from that pass.
+  // Today InitEWMH() re-runs ewmh_set_strut() once the start-up scan is over,
+  // which covers for the omission; this ordering means the intermediate state
+  // is right too, rather than depending on that second call.
+  clients_[w] = c;
   // Call manage if we know the window is already mapped (scanned at start-up).
   if (is_startup_scan) {
     manage(c);
   }
-  clients_[w] = c;
   return c;
 }
 

@@ -50,11 +50,11 @@ If we see a Windows+left **click** (with no movement), we should raise the windo
 
 ---
 
-## Not yet started
-
-There's a bug in our struts handling. The gummiband program (~/dev/jessies/x11-extras/gummiband.cpp) defines a strut to keep windows off its own window (at the top of the screen), and lwm respects that *sometimes*. From what I can tell, it's to do with the start-up order: if gummiband starts first, lwm doesn't respect the strut; if lwm starts first (or if I restart gummiband), lwm does respect the strut. Diagnose and fix, and add a regression test using Xvfb
+There's a bug in our struts handling. The gummiband program (~/dev/jessies/x11-extras/gummiband.cpp) defines a strut to keep windows off its own window (at the top of the screen), and lwm respects that *sometimes*. From what I can tell, it's to do with the start-up order: if gummiband starts first, lwm doesn't respect the strut; if lwm starts first (or if I restart gummiband), lwm does respect the strut. Diagnose and fix, and add a regression test using Xvfb.
 
 ---
+
+## Not yet started
 
 I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
 

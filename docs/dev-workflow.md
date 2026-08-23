@@ -93,6 +93,31 @@ These need a real server - the passive grabs, the modifier bits in the
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
 the event level and this covers them at the pointer level.
 
+## Strut test
+
+```sh
+./strut_test.sh [path-to-lwm-binary]   # defaults to ./lwm; also `make strut`
+```
+
+Struts (`_NET_WM_STRUT`), from the direction that isn't covered elsewhere: a
+dock window that is *already mapped when lwm starts*, so the strut arrives
+through the start-up window-tree scan rather than as a `PropertyNotify` on a
+window lwm already manages. `smoke_test.sh` covers the latter. The test
+checks the three things a strut should reach — `_NET_WORKAREA` on the root,
+`LScr::VisibleAreas(true)` (read back through the debug CLI's `xrandr ?`),
+and the position `AutoPlacer` gives the next window.
+
+It uses a deep (200 pixel) strut on purpose: the auto-placement cascade
+starts 100 pixels in, so a shallower strut would leave the placement check
+unable to tell an honoured strut from an ignored one.
+
+This whole path was suspected during a bug where lwm appeared to respect
+gummiband's strut only when lwm started first. The real fault was in
+gummiband, which interned `_NET_WM_STRUT` with `only_if_exists=True` and so
+got `None` — and silently set no strut at all — whenever it beat the window
+manager to a fresh X server. lwm's side was sound, and this test is here to
+keep it that way.
+
 Two things worth knowing before adding a check:
 
 * Use `xlogo`, not `xterm`. `xlogo` sets no size hints, so it ends up exactly
