@@ -38,7 +38,8 @@ Resources::Resources() {
   // xcb-xrm reads the RESOURCE_MANAGER property off the root window itself,
   // so there's no separate fetch-the-string step. A null database just means
   // no resources are set, which every Set() below copes with.
-  xcb_xrm_database_t* db = xcb_xrm_database_from_default(conn);
+  xcb_xrm_database_t* db =
+      conn ? xcb_xrm_database_from_default(conn) : nullptr;
   // Font used in title bars, and indeed everywhere we have fonts.
   Set(TITLE_FONT, db, "titleFont", "roboto-16");
   // Command to execute when button 1 (left) is clicked on root window.

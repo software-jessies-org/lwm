@@ -63,6 +63,7 @@ SRCS = \
 	menulayout_test.cc \
 	placement.cc \
 	placement_test.cc \
+	realserver.cc \
 	resource.cc \
 	screen.cc \
 	screenlayout.cc \

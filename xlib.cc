@@ -1,38 +1,40 @@
+// xlib.cc is the composition and logging layer over the X server.
+//
+// Every function here does at most three things: log what lwm is about to do,
+// turn a convenient call into the primitive request it really is (an
+// XMoveWindow is a ConfigureWindow with two fields set), and hand it to the
+// installed xlib::Server. The primitives themselves live in realserver.cc,
+// behind the interface in server.h, so that a test can install a FakeServer
+// and see exactly what would have gone on the wire.
+//
+// Also here: the things that are neither requests nor policy - the value-list
+// builders, the client-side colour-specification parser, and ImageIcon's
+// scaling and compositing arithmetic.
+
 #include "debug.h"
 #include "error.h"
 #include "hider.h"
 #include "resource.h"
 #include "screen.h"
-#include "xbridge.h"
+#include "server.h"
 #include "xlib.h"
-
-#include <xcb/randr.h>
-#include <xcb/xcb_icccm.h>
-#ifdef SHAPE
-#include <xcb/shape.h>
-#endif
 
 #include <map>
 #include <set>
 
-// The setup information for our one screen, cached at connect time.
-static xcb_screen_t* screen;
-
 MousePos getMousePosition() {
-  MousePos res;
-  memset(&res, 0, sizeof(res));
-  xlib::Reply<xcb_query_pointer_reply_t> r(xcb_query_pointer_reply(
-      conn, xcb_query_pointer(conn, xlib::Root()), nullptr));
-  if (!r) {
-    return res;
-  }
-  res.x = r->root_x;
-  res.y = r->root_y;
-  res.modMask = r->mask;
-  return res;
+  return xlib::server->QueryPointer();
 }
 
 namespace xlib {
+
+Server* server;
+
+Server* SetServer(Server* s) {
+  Server* old = server;
+  server = s;
+  return old;
+}
 
 void FreeReplyData(void* data) {
   // XCB's replies and errors are plain malloc'd blocks.
@@ -40,7 +42,7 @@ void FreeReplyData(void* data) {
 }
 
 void* XftDisplay() {
-  return xbridge::Display();
+  return server->XftDisplay();
 }
 
 // ---------------------------------------------------------------------------
@@ -213,126 +215,85 @@ GCValues& GCValues::SubwindowMode(uint32_t mode) {
 // Connection, screen and event queue.
 // ---------------------------------------------------------------------------
 
-// Errors from requests Xlib made come back through here, so they get reported
-// the same way the XCB ones do rather than through Xlib's default handler,
-// which exits the process.
-static void handleXlibError(uint8_t error_code,
-                            uint32_t resource_id,
-                            uint8_t major_code,
-                            uint16_t minor_code,
-                            uint32_t sequence) {
-  xcb_generic_error_t err{};
-  err.error_code = error_code;
-  err.resource_id = resource_id;
-  err.major_code = major_code;
-  err.minor_code = minor_code;
-  err.sequence = uint16_t(sequence);
-  err.full_sequence = sequence;
-  HandleXError(&err);
-}
-
 bool OpenDisplay() {
-  conn = xbridge::Open(handleXlibError);
-  if (!conn) {
-    return false;
+  // A test installs its own server before getting here; anything else gets
+  // the real one.
+  if (!server) {
+    SetServer(NewRealServer());
   }
-  screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
-  return screen != nullptr;
+  return server->Open();
 }
 
 void CloseDisplay() {
-  xbridge::Close();
+  server->Close();
 }
 
 Window Root() {
-  return screen->root;
+  return server->Root();
 }
 
 int ScreenCount() {
-  return xcb_setup_roots_length(xcb_get_setup(conn));
+  return server->ScreenCount();
 }
 
 int ScreenWidth() {
-  return screen->width_in_pixels;
+  return server->ScreenWidth();
 }
 
 int ScreenHeight() {
-  return screen->height_in_pixels;
+  return server->ScreenHeight();
 }
 
 unsigned long Black() {
-  return screen->black_pixel;
+  return server->Black();
 }
 
 unsigned long White() {
-  return screen->white_pixel;
+  return server->White();
 }
 
 Colormap DefaultColourmap() {
-  return screen->default_colormap;
+  return server->DefaultColourmap();
 }
 
 xcb_visualid_t DefaultVisual() {
-  return screen->root_visual;
+  return server->DefaultVisual();
 }
 
 uint8_t DefaultDepth() {
-  return screen->root_depth;
+  return server->DefaultDepth();
 }
 
 std::string DisplayName() {
-  return xbridge::DisplayName();
+  return server->DisplayName();
 }
 
 void Sync() {
-  // GetInputFocus is the traditional cheap round trip: it takes no arguments
-  // and can't fail, so waiting for its reply means everything issued before
-  // it has been processed, errors included.
-  Flush();
-  free(xcb_get_input_focus_reply(conn, xcb_get_input_focus(conn), nullptr));
+  server->Sync();
 }
 
 void Flush() {
-  // Sharing one socket between Xlib and XCB does *not* mean sharing one
-  // output buffer. Requests made through Xlib - which now means only Xft's -
-  // queue up in Xlib's buffer, and xcb_flush() knows nothing about it. Flush
-  // one and not the other and the requests you didn't flush sit there until
-  // something else happens to force them out. This goes away with libX11 in
-  // phase 4.
-  xbridge::Flush();
-  xcb_flush(conn);
+  server->Flush();
 }
 
 int ConnectionFD() {
-  return xcb_get_file_descriptor(conn);
+  return server->ConnectionFD();
 }
 
 bool ConnectionIsBroken() {
-  return xcb_connection_has_error(conn) != 0;
+  return server->ConnectionIsBroken();
 }
 
 xcb_generic_event_t* NextEvent() {
-  return xcb_poll_for_event(conn);
+  return server->NextEvent();
 }
 
 uint32_t NextRequestSequence() {
-  // XCB has no "what sequence number is next" accessor, so ask for one the
-  // only way available: issue a request that does nothing and take its
-  // sequence. A NoOperation is four bytes on the wire and provokes no reply.
-  return xcb_no_operation(conn).sequence;
+  return server->NextRequestSequence();
 }
 
 bool SelectRootEvents(Window root, uint32_t event_mask) {
-  // Only one client may hold SubstructureRedirect on the root window, so this
-  // request failing with BadAccess *is* the "another window manager is
-  // already running" test. Using the _checked form plus request_check turns
-  // that into an immediate answer, instead of Xlib's arrangement where the
-  // error turns up in a global handler at some unpredictable later point and
-  // has to be recognised by opcode.
-  const xcb_void_cookie_t cookie = xcb_change_window_attributes_checked(
-      conn, root, XCB_CW_EVENT_MASK, &event_mask);
-  Reply<xcb_generic_error_t> err(xcb_request_check(conn, cookie));
-  return !err;
+  return server->SelectRootEvents(root, event_mask);
 }
 
 // ---------------------------------------------------------------------------
@@ -380,81 +341,68 @@ int XReparentWindow(Window w, Window new_parent, int x, int y) {
   LOGD(w) << "XReparentWindow(" << WinID(w)
           << ") -> new parent = " << WinID(new_parent) << " @ " << x << ","
           << y;
-  xcb_reparent_window(conn, w, new_parent, x, y);
-  // Possible errors: BadMatch, BadWindow.
+  server->ReparentWindow(w, new_parent, x, y);
   return 0;
 }
 
 int XMapWindow(Window w) {
   LOGD(w) << "XMapWindow(" << WinID(w) << ")";
-  xcb_map_window(conn, w);
-  // Possible errors: BadWindow.
+  server->MapWindow(w);
   return 0;
 }
 
 int XMapRaised(Window w) {
   LOGD(w) << "XMapRaised(" << WinID(w) << ")";
   // Xlib's XMapRaised is a raise followed by a map; there's no single request.
-  const uint32_t above = XCB_STACK_MODE_ABOVE;
-  xcb_configure_window(conn, w, XCB_CONFIG_WINDOW_STACK_MODE, &above);
-  xcb_map_window(conn, w);
-  // Possible errors: BadWindow.
+  WindowChanges wc;
+  wc.StackMode(XCB_STACK_MODE_ABOVE);
+  server->ConfigureWindow(w, wc);
+  server->MapWindow(w);
   return 0;
 }
 
 int XUnmapWindow(Window w) {
   LOGD(w) << "XUnmapWindow(" << WinID(w) << ")";
-  xcb_unmap_window(conn, w);
-  // Possible errors: BadWindow.
+  server->UnmapWindow(w);
   return 0;
 }
 
 int XRaiseWindow(Window w) {
   LOGD(w) << "XRaiseWindow(" << WinID(w) << ")";
-  const uint32_t above = XCB_STACK_MODE_ABOVE;
-  xcb_configure_window(conn, w, XCB_CONFIG_WINDOW_STACK_MODE, &above);
-  // Possible errors: BadWindow.
+  WindowChanges wc;
+  wc.StackMode(XCB_STACK_MODE_ABOVE);
+  server->ConfigureWindow(w, wc);
   return 0;
 }
 
 int XLowerWindow(Window w) {
   LOGD(w) << "XLowerWindow(" << WinID(w) << ")";
-  const uint32_t below = XCB_STACK_MODE_BELOW;
-  xcb_configure_window(conn, w, XCB_CONFIG_WINDOW_STACK_MODE, &below);
-  // Possible errors: BadWindow.
+  WindowChanges wc;
+  wc.StackMode(XCB_STACK_MODE_BELOW);
+  server->ConfigureWindow(w, wc);
   return 0;
 }
 
 int XAddToSaveSet(Window w) {
   LOGD(w) << "XAddToSaveSet(" << WinID(w) << ")";
-  xcb_change_save_set(conn, XCB_SET_MODE_INSERT, w);
-  // Possible errors: BadAccess, BadWindow.
+  server->ChangeSaveSet(w, true);
   return 0;
 }
 
 int XRemoveFromSaveSet(Window w) {
   LOGD(w) << "XRemoveFromSaveSet(" << WinID(w) << ")";
-  xcb_change_save_set(conn, XCB_SET_MODE_DELETE, w);
-  // Possible errors: BadAccess, BadWindow.
+  server->ChangeSaveSet(w, false);
   return 0;
 }
 
 int XSetInputFocus(Window focus, int revert_to, Time time) {
   LOGD(focus) << "XSetInputFocus(" << WinID(focus) << ")";
-  xcb_set_input_focus(conn, revert_to, focus, time);
-  // Possible errors: BadMatch, BadValue, BadWindow.
+  server->SetInputFocus(focus, revert_to, time);
   return 0;
 }
 
 FocusWindow XGetInputFocus() {
-  FocusWindow res{};
-  Reply<xcb_get_input_focus_reply_t> r(
-      xcb_get_input_focus_reply(conn, xcb_get_input_focus(conn), nullptr));
-  if (r) {
-    res.window = r->focus;
-    res.revert_to = r->revert_to;
-  }
-  return res;
+  return server->GetInputFocus();
 }
 
 // Prints a value list as the mask bits it sets, for the debug log. Both the
@@ -492,10 +440,7 @@ int XConfigureWindow(Window w, const WindowChanges& changes) {
   const ValueList& v = changes.Values();
   LOGD(w) << "XConfigureWindow(" << WinID(w) << ")"
           << MaskedValues{v, kConfigNames};
-  if (!v.Empty()) {
-    xcb_configure_window(conn, w, v.Mask(), v.Values());
-  }
-  // Possible errors: BadMatch, BadValue, BadWindow.
+  server->ConfigureWindow(w, changes);
   return 0;
 }
 
@@ -503,10 +448,7 @@ int XChangeWindowAttributes(Window w, const WindowAttrs& attrs) {
   const ValueList& v = attrs.Values();
   LOGD(w) << "XChangeWindowAttributes(" << WinID(w) << ")"
           << MaskedValues{v, kAttrNames};
-  if (!v.Empty()) {
-    xcb_change_window_attributes(conn, w, v.Mask(), v.Values());
-  }
-  // Possible errors: BadMatch, BadValue, BadWindow.
+  server->ChangeWindowAttributes(w, attrs);
   return 0;
 }
 
@@ -515,8 +457,7 @@ void SendEventRaw(Window w,
                   uint32_t event_mask,
                   const char* event32) {
   LOGD(w) << "SendEvent(" << WinID(w) << ")";
-  xcb_send_event(conn, propagate, w, event_mask, event32);
-  // Possible errors: BadValue, BadWindow.
+  server->SendEventRaw(w, propagate, event_mask, event32);
 }
 
 void SendClientMessage(Window w, Atom a, long data0, long data1) {
@@ -534,74 +475,41 @@ void SendClientMessage(Window w, Atom a, long data0, long data1) {
 }
 
 WindowAttributes XGetWindowAttributes(Window w) {
-  WindowAttributes res{};
-  // Two requests, because XCB's GetWindowAttributes carries no geometry.
-  // Xlib's XGetWindowAttributes did the same thing; it just didn't say so.
-  // Fired together so this costs one round trip rather than two.
-  const xcb_get_window_attributes_cookie_t attr_cookie =
-      xcb_get_window_attributes(conn, w);
-  const xcb_get_geometry_cookie_t geom_cookie = xcb_get_geometry(conn, w);
-  Reply<xcb_get_window_attributes_reply_t> attr(
-      xcb_get_window_attributes_reply(conn, attr_cookie, nullptr));
-  Reply<xcb_get_geometry_reply_t> geom(
-      xcb_get_geometry_reply(conn, geom_cookie, nullptr));
-  if (!attr || !geom) {
-    return res;
-  }
-  res.ok = true;
-  res.override_redirect = attr->override_redirect;
-  res.viewable = attr->map_state == XCB_MAP_STATE_VIEWABLE;
-  res.input_only = attr->_class == XCB_WINDOW_CLASS_INPUT_ONLY;
-  res.all_event_masks = attr->all_event_masks;
-  res.rect = Rect::FromXYWH(geom->x, geom->y, geom->width, geom->height);
-  res.border_width = geom->border_width;
+  const WindowAttributes res = server->GetWindowAttributes(w);
   LOGD(w) << "XGetWindowAttributes: " << res.rect;
   return res;
 }
 
 WindowGeometry XGetGeometry(Window w) {
-  WindowGeometry res{};
-  Reply<xcb_get_geometry_reply_t> geom(
-      xcb_get_geometry_reply(conn, xcb_get_geometry(conn, w), nullptr));
-  if (!geom) {
-    return res;  // ok = false on creation.
-  }
-  res.ok = true;
-  res.parent = geom->root;
-  res.rect = Rect::FromXYWH(geom->x, geom->y, geom->width, geom->height);
-  res.border_width = geom->border_width;
-  res.bpp = geom->depth;
-  return res;
+  return server->GetGeometry(w);
 }
 
 int XDestroyWindow(Window w) {
   LOGD(w) << "XDestroyWindow(" << WinID(w) << ")";
-  xcb_destroy_window(conn, w);
-  // Possible errors: BadWindow.
+  server->DestroyWindow(w);
   return 0;
 }
 
 int XSetWindowBorderWidth(Window w, unsigned int width) {
   LOGD(w) << "XSetWindowBorderWidth(" << WinID(w) << ") -> " << width;
-  const uint32_t bw = width;
-  xcb_configure_window(conn, w, XCB_CONFIG_WINDOW_BORDER_WIDTH, &bw);
-  // Possible errors: BadValue, BadWindow.
+  WindowChanges wc;
+  wc.BorderWidth(width);
+  server->ConfigureWindow(w, wc);
   return 0;
 }
 
 int XSetWindowBackground(Window w, unsigned long pixel) {
   LOGD(w) << "XSetWindowBackground(" << WinID(w) << ") -> " << pixel;
-  const uint32_t p = uint32_t(pixel);
-  xcb_change_window_attributes(conn, w, XCB_CW_BACK_PIXEL, &p);
-  // Possible errors: BadWindow.
+  WindowAttrs attrs;
+  attrs.BackPixel(uint32_t(pixel));
+  server->ChangeWindowAttributes(w, attrs);
   return 0;
 }
 
 int XClearWindow(Window w) {
   LOGD(w) << "XClearWindow(" << WinID(w) << ")";
   // Width and height of zero mean "to the far edge", so this clears the lot.
-  xcb_clear_area(conn, 0, w, 0, 0, 0, 0);
-  // Possible errors: BadMatch, BadWindow.
+  server->ClearArea(w, 0, 0, 0, 0, false);
   return 0;
 }
 
@@ -613,8 +521,7 @@ int XClearArea(Window w,
                bool exposures) {
   LOGD(w) << "XClearArea(" << WinID(w) << ") -> " << x << "," << y << " "
           << width << "x" << height;
-  xcb_clear_area(conn, exposures, w, x, y, width, height);
-  // Possible errors: BadMatch, BadValue, BadWindow.
+  server->ClearArea(w, x, y, width, height, exposures);
   return 0;
 }
 
@@ -624,25 +531,18 @@ int XFillRectangle(Window w,
                    int y,
                    unsigned int width,
                    unsigned int height) {
-  const xcb_rectangle_t rect = {int16_t(x), int16_t(y), uint16_t(width),
-                                uint16_t(height)};
-  xcb_poly_fill_rectangle(conn, w, gc, 1, &rect);
-  // Possible errors: BadDrawable, BadGC.
+  server->FillRectangle(w, gc, x, y, width, height);
   return 0;
 }
 
 int XDrawLine(Window w, GC gc, int x1, int y1, int x2, int y2) {
-  const xcb_point_t points[2] = {{int16_t(x1), int16_t(y1)},
-                                 {int16_t(x2), int16_t(y2)}};
-  xcb_poly_line(conn, XCB_COORD_MODE_ORIGIN, w, gc, 2, points);
-  // Possible errors: BadDrawable, BadGC.
+  server->DrawLine(w, gc, x1, y1, x2, y2);
   return 0;
 }
 
 int XKillClient(Window w) {
   LOGD(w) << "XKillClient(" << WinID(w) << ")";
-  xcb_kill_client(conn, w);
-  // Possible errors: BadValue.
+  server->KillClient(w);
   return 0;
 }
 
@@ -653,23 +553,16 @@ Window CreateNamedWindow(const std::string& name,
                          unsigned int border_width,
                          unsigned long border_colour,
                          unsigned long background_colour) {
-  const Window w = xcb_generate_id(conn);
-  // XCB has no CreateSimpleWindow, so spell out the two colours and inherit
-  // everything else from the parent.
-  ValueList values;
-  values.Add(XCB_CW_BACK_PIXEL, uint32_t(background_colour));
-  values.Add(XCB_CW_BORDER_PIXEL, uint32_t(border_colour));
-  xcb_create_window(conn, XCB_COPY_FROM_PARENT, w, Root(), rect.xMin, rect.yMin,
-                    rect.width(), rect.height(), border_width,
-                    XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT,
-                    values.Mask(), values.Values());
+  const Window w =
+      server->CreateWindow(rect, border_width, border_colour,
+                           background_colour);
   lwm_owned_windows.insert(w);
 
   // Set WM_NAME. This is the modern equivalent of XSetWMName with a
   // STRING-typed text property; the older XStoreName route used to return
   // BadRequest errors despite working.
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, w, XCB_ATOM_WM_NAME,
-                      XCB_ATOM_STRING, 8, name.size(), name.c_str());
+  server->ChangeProperty(w, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, name.c_str(),
+                         name.size());
   return w;
 }
 
@@ -678,21 +571,7 @@ bool IsLWMWindow(Window w) {
 }
 
 WindowTree WindowTree::Query(Window w) {
-  WindowTree res = {};
-  Reply<xcb_query_tree_reply_t> tree(
-      xcb_query_tree_reply(conn, xcb_query_tree(conn, w), nullptr));
-  if (!tree) {
-    return res;
-  }
-  res.root = tree->root;
-  res.parent = tree->parent;
-  if (res.parent) {
-    res.self = w;
-  }
-  const xcb_window_t* children = xcb_query_tree_children(tree.get());
-  const int n = xcb_query_tree_children_length(tree.get());
-  res.children.assign(children, children + n);
-  return res;
+  return server->QueryTree(w);
 }
 
 // Returns the parent window of w, or 0 if we hit the root or on error.
@@ -715,9 +594,8 @@ int XGrabButton(unsigned int button,
                 Window confine_to,
                 Cursor cursor) {
   LOGD(grab_window) << "XGrabButton(" << WinID(grab_window) << ")";
-  xcb_grab_button(conn, owner_events, grab_window, event_mask, pointer_mode,
-                  keyboard_mode, confine_to, cursor, button, modifiers);
-  // Possible errors: BadCursor, BadValue, BadWindow.
+  server->GrabButton(button, modifiers, grab_window, owner_events, event_mask,
+                     pointer_mode, keyboard_mode, confine_to, cursor);
   return 0;
 }
 
@@ -725,15 +603,14 @@ int XUngrabButton(unsigned int button,
                   unsigned int modifiers,
                   Window grab_window) {
   LOGD(grab_window) << "XUngrabButton(" << WinID(grab_window) << ")";
-  xcb_ungrab_button(conn, button, grab_window, modifiers);
-  // Possible errors: BadValue, BadWindow.
+  server->UngrabButton(button, modifiers, grab_window);
   return 0;
 }
 
 void XChangeActivePointerGrab(unsigned int event_mask,
                               Cursor cursor,
                               Time time) {
-  xcb_change_active_pointer_grab(conn, cursor, time, event_mask);
+  server->ChangeActivePointerGrab(event_mask, cursor, time);
 }
 
 // ---------------------------------------------------------------------------
@@ -743,27 +620,11 @@ void XChangeActivePointerGrab(unsigned int event_mask,
 const Atom kAnyPropertyType = XCB_GET_PROPERTY_TYPE_ANY;
 
 Atom XInternAtom(const std::string& name) {
-  Reply<xcb_intern_atom_reply_t> r(xcb_intern_atom_reply(
-      conn, xcb_intern_atom(conn, 0, name.size(), name.c_str()), nullptr));
-  return r ? r->atom : 0;
+  return XInternAtoms({name})[0];
 }
 
 std::vector<Atom> XInternAtoms(const std::vector<std::string>& names) {
-  std::vector<xcb_intern_atom_cookie_t> cookies;
-  cookies.reserve(names.size());
-  for (const std::string& name : names) {
-    cookies.push_back(xcb_intern_atom(conn, 0, name.size(), name.c_str()));
-  }
-  // Only now do we start waiting: by this point every request is already on
-  // its way, so the whole batch costs one round trip.
-  std::vector<Atom> res;
-  res.reserve(names.size());
-  for (const xcb_intern_atom_cookie_t cookie : cookies) {
-    Reply<xcb_intern_atom_reply_t> r(
-        xcb_intern_atom_reply(conn, cookie, nullptr));
-    res.push_back(r ? r->atom : 0);
-  }
-  return res;
+  return server->InternAtoms(names);
 }
 
 int XChangeProperty(Window w,
@@ -773,161 +634,40 @@ int XChangeProperty(Window w,
                     const void* data,
                     int nelements) {
   LOGD(w) << "XChangeProperty(" << WinID(w) << ") property=" << property;
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, w, property, type, format,
-                      nelements, data);
-  // Possible errors: BadAlloc, BadAtom, BadMatch, BadValue, BadWindow.
+  server->ChangeProperty(w, property, type, format, data, nelements);
   return 0;
 }
 
 void XDeleteProperty(Window w, Atom property) {
   LOGD(w) << "XDeleteProperty(" << WinID(w) << ")";
-  xcb_delete_property(conn, w, property);
+  server->DeleteProperty(w, property);
 }
 
 WindowProperty XGetWindowProperty(Window w,
                                   Atom property,
                                   long length,
                                   Atom req_type) {
-  WindowProperty res{};
-  Reply<xcb_get_property_reply_t> r(xcb_get_property_reply(
-      conn, xcb_get_property(conn, 0, w, property, req_type, 0, length),
-      nullptr));
-  if (!r) {
-    return res;
-  }
-  res.success = true;
-  res.actual_type = r->type;
-  res.actual_format = r->format;
-  res.bytes_after = r->bytes_after;
-  res.nitems = xcb_get_property_value_length(r.get());
-  const void* value = xcb_get_property_value(r.get());
-  if (res.actual_format == 32) {
-    // value_length is in bytes; a format-32 property has one item per four of
-    // them. These are the real 32 bits that were on the wire - the thing Xlib
-    // used to widen to 64-bit longs behind everyone's back.
-    res.nitems /= 4;
-    const uint32_t* words = static_cast<const uint32_t*>(value);
-    res.data32.assign(words, words + res.nitems);
-  } else if (res.actual_format == 16) {
-    res.nitems /= 2;
-    res.data8.assign(static_cast<const char*>(value), res.nitems * 2);
-  } else {
-    res.data8.assign(static_cast<const char*>(value), res.nitems);
-  }
-  return res;
+  return server->GetWindowProperty(w, property, length, req_type);
 }
 
 WMHints XGetWMHints(Window w) {
-  WMHints res{};
-  xcb_icccm_wm_hints_t hints;
-  if (!xcb_icccm_get_wm_hints_reply(conn, xcb_icccm_get_wm_hints(conn, w),
-                                    &hints, nullptr)) {
-    return res;
-  }
-  res.ok = true;
-  res.has_input = (hints.flags & XCB_ICCCM_WM_HINT_INPUT) != 0;
-  res.input = hints.input != 0;
-  res.has_initial_state = (hints.flags & XCB_ICCCM_WM_HINT_STATE) != 0;
-  res.initial_state = hints.initial_state;
-  if (hints.flags & XCB_ICCCM_WM_HINT_ICON_PIXMAP) {
-    res.icon_pixmap = hints.icon_pixmap;
-  }
-  if (hints.flags & XCB_ICCCM_WM_HINT_ICON_MASK) {
-    res.icon_mask = hints.icon_mask;
-  }
-  return res;
-}
-
-static NormalHints normalHintsFrom(const xcb_size_hints_t& hints) {
-  NormalHints res{};
-  res.ok = true;
-  res.has_min_size = (hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) != 0;
-  res.has_max_size = (hints.flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE) != 0;
-  res.has_base_size = (hints.flags & XCB_ICCCM_SIZE_HINT_BASE_SIZE) != 0;
-  res.has_resize_inc = (hints.flags & XCB_ICCCM_SIZE_HINT_P_RESIZE_INC) != 0;
-  res.min_width = hints.min_width;
-  res.min_height = hints.min_height;
-  res.max_width = hints.max_width;
-  res.max_height = hints.max_height;
-  res.base_width = hints.base_width;
-  res.base_height = hints.base_height;
-  res.width_inc = hints.width_inc;
-  res.height_inc = hints.height_inc;
-  return res;
+  return server->GetWMHints(w);
 }
 
 NormalHints XGetWMNormalHints(Window w) {
-  xcb_size_hints_t hints;
-  if (!xcb_icccm_get_wm_normal_hints_reply(
-          conn, xcb_icccm_get_wm_normal_hints(conn, w), &hints, nullptr)) {
-    return NormalHints{};
-  }
-  return normalHintsFrom(hints);
+  return server->GetWMNormalHints(w);
 }
 
 std::vector<WindowInfo> QueryWindows(const std::vector<Window>& ws) {
-  struct Cookies {
-    xcb_get_window_attributes_cookie_t attrs;
-    xcb_get_geometry_cookie_t geom;
-    xcb_get_property_cookie_t hints;
-  };
-  std::vector<Cookies> cookies;
-  cookies.reserve(ws.size());
-  for (const Window w : ws) {
-    cookies.push_back(Cookies{xcb_get_window_attributes(conn, w),
-                              xcb_get_geometry(conn, w),
-                              xcb_icccm_get_wm_normal_hints(conn, w)});
-  }
-  // Everything is in flight; now collect.
-  std::vector<WindowInfo> res(ws.size());
-  for (size_t i = 0; i < ws.size(); i++) {
-    Reply<xcb_get_window_attributes_reply_t> attr(
-        xcb_get_window_attributes_reply(conn, cookies[i].attrs, nullptr));
-    Reply<xcb_get_geometry_reply_t> geom(
-        xcb_get_geometry_reply(conn, cookies[i].geom, nullptr));
-    if (attr && geom) {
-      WindowAttributes& a = res[i].attributes;
-      a.ok = true;
-      a.override_redirect = attr->override_redirect;
-      a.viewable = attr->map_state == XCB_MAP_STATE_VIEWABLE;
-      a.input_only = attr->_class == XCB_WINDOW_CLASS_INPUT_ONLY;
-      a.all_event_masks = attr->all_event_masks;
-      a.rect = Rect::FromXYWH(geom->x, geom->y, geom->width, geom->height);
-      a.border_width = geom->border_width;
-    }
-    xcb_size_hints_t hints;
-    if (xcb_icccm_get_wm_normal_hints_reply(conn, cookies[i].hints, &hints,
-                                            nullptr)) {
-      res[i].normal_hints = normalHintsFrom(hints);
-    }
-  }
-  return res;
+  return server->QueryWindows(ws);
 }
 
 std::vector<Atom> XGetWMProtocols(Window w) {
-  // Interned here rather than taken from lwm.cc's global, so that the shim
-  // doesn't depend on start-up ordering elsewhere.
-  static Atom wm_protocols_atom = XInternAtom("WM_PROTOCOLS");
-  xcb_icccm_get_wm_protocols_reply_t protocols;
-  if (!xcb_icccm_get_wm_protocols_reply(
-          conn,
-          xcb_icccm_get_wm_protocols_unchecked(conn, w, wm_protocols_atom),
-          &protocols, nullptr)) {
-    return {};
-  }
-  std::vector<Atom> res(protocols.atoms,
-                        protocols.atoms + protocols.atoms_len);
-  xcb_icccm_get_wm_protocols_reply_wipe(&protocols);
-  return res;
+  return server->GetWMProtocols(w);
 }
 
 Window XGetTransientForHint(Window w) {
-  xcb_window_t trans = 0;
-  if (!xcb_icccm_get_wm_transient_for_reply(
-          conn, xcb_icccm_get_wm_transient_for(conn, w), &trans, nullptr)) {
-    return 0;
-  }
-  return trans;
+  return server->GetTransientForHint(w);
 }
 
 // ---------------------------------------------------------------------------
@@ -935,17 +675,11 @@ Window XGetTransientForHint(Window w) {
 // ---------------------------------------------------------------------------
 
 GC XCreateGC(Window w, const GCValues& values) {
-  const GC gc = xcb_generate_id(conn);
-  const ValueList& v = values.Values();
-  xcb_create_gc(conn, gc, w, v.Mask(), v.Values());
-  return gc;
+  return server->CreateGC(w, values);
 }
 
 void XChangeGC(GC gc, const GCValues& values) {
-  const ValueList& v = values.Values();
-  if (!v.Empty()) {
-    xcb_change_gc(conn, gc, v.Mask(), v.Values());
-  }
+  server->ChangeGC(gc, values);
 }
 
 // Parses an X11 hexadecimal colour specification into 16-bit components.
@@ -997,56 +731,27 @@ unsigned long ColourByName(const std::string& name) {
   // sending a plain AllocColor. So must we; every colour in lwm's default
   // configuration is a hex specification, and handing them all to
   // AllocNamedColor gets you a window manager painted entirely black.
+  unsigned long pixel = 0;
   if (!name.empty() && name[0] == '#') {
     uint16_t r = 0, g = 0, b = 0;
-    if (parseHexColour(name, &r, &g, &b)) {
-      Reply<xcb_alloc_color_reply_t> col(xcb_alloc_color_reply(
-          conn, xcb_alloc_color(conn, DefaultColourmap(), r, g, b), nullptr));
-      if (col) {
-        return col->pixel;
-      }
+    if (parseHexColour(name, &r, &g, &b) &&
+        server->AllocColour(r, g, b, &pixel)) {
+      return pixel;
     }
     LOGW() << "Couldn't parse colour '" << name << "'; using black";
     return Black();
   }
-  Reply<xcb_alloc_named_color_reply_t> r(xcb_alloc_named_color_reply(
-      conn,
-      xcb_alloc_named_color(conn, DefaultColourmap(), name.size(),
-                            name.c_str()),
-      nullptr));
-  if (!r) {
+  if (!server->AllocNamedColour(name, &pixel)) {
     LOGW() << "Couldn't allocate colour '" << name << "'; using black";
     return Black();
   }
-  return r->pixel;
-}
-
-// Converts an 8-bit colour component to the 16-bit one the protocol wants.
-static uint16_t extend8To16(unsigned long c) {
-  const uint16_t v = c & 0xff;
-  return v | (v << 8);
+  return pixel;
 }
 
 Cursor CreateFontCursor(unsigned int shape,
                         unsigned long fg,
                         unsigned long bg) {
-  // The standard cursor font holds each cursor as a glyph plus the mask glyph
-  // immediately after it, which is why the source and mask characters differ
-  // by one. Unlike Xlib's XCreateFontCursor the colours are given here rather
-  // than in a follow-up XRecolorCursor, so there is no separate recolour step.
-  static xcb_font_t cursor_font = 0;
-  if (!cursor_font) {
-    cursor_font = xcb_generate_id(conn);
-    static const char kCursorFontName[] = "cursor";
-    xcb_open_font(conn, cursor_font, sizeof(kCursorFontName) - 1,
-                  kCursorFontName);
-  }
-  const Cursor c = xcb_generate_id(conn);
-  xcb_create_glyph_cursor(conn, c, cursor_font, cursor_font, shape, shape + 1,
-                          extend8To16(fg >> 16), extend8To16(fg >> 8),
-                          extend8To16(fg), extend8To16(bg >> 16),
-                          extend8To16(bg >> 8), extend8To16(bg));
-  return c;
+  return server->CreateFontCursor(shape, fg, bg);
 }
 
 // ---------------------------------------------------------------------------
@@ -1054,99 +759,32 @@ Cursor CreateFontCursor(unsigned int shape,
 // ---------------------------------------------------------------------------
 
 RandRSupport XRRQueryExtension() {
-  RandRSupport res{};
-  const xcb_query_extension_reply_t* ext =
-      xcb_get_extension_data(conn, &xcb_randr_id);
-  if (!ext || !ext->present) {
-    return res;
-  }
-  // The version handshake isn't optional: RandR rejects every other request
-  // until it has happened.
-  Reply<xcb_randr_query_version_reply_t> version(xcb_randr_query_version_reply(
-      conn, xcb_randr_query_version(conn, 1, 5), nullptr));
-  if (!version) {
-    return res;
-  }
-  res.have_rr = true;
-  res.event_base = ext->first_event;
-  return res;
+  return server->RandRQueryExtension();
 }
 
 void XRRSelectInput(Window w) {
-  xcb_randr_select_input(conn, w,
-                         XCB_RANDR_NOTIFY_MASK_SCREEN_CHANGE);
+  server->RandRSelectInput(w);
 }
 
 std::vector<Rect> XRRGetVisibleAreas(Window root) {
-  std::vector<Rect> visible;
-  Reply<xcb_randr_get_screen_resources_current_reply_t> res(
-      xcb_randr_get_screen_resources_current_reply(
-          conn, xcb_randr_get_screen_resources_current(conn, root), nullptr));
-  if (!res) {
-    LOGE() << "Failed to get RandR screen resources";
-    return visible;
-  }
-  const int ncrtc =
-      xcb_randr_get_screen_resources_current_crtcs_length(res.get());
-  if (!ncrtc) {
-    LOGE() << "Empty list of CRTs";
-    return visible;
-  }
-  const xcb_randr_crtc_t* crtcs =
-      xcb_randr_get_screen_resources_current_crtcs(res.get());
-  // Fire all the per-CRTC queries before collecting any of them, so the whole
-  // walk costs one round trip rather than one per monitor.
-  std::vector<xcb_randr_get_crtc_info_cookie_t> cookies;
-  cookies.reserve(ncrtc);
-  for (int i = 0; i < ncrtc; i++) {
-    cookies.push_back(
-        xcb_randr_get_crtc_info(conn, crtcs[i], res->config_timestamp));
-  }
-  for (int i = 0; i < ncrtc; i++) {
-    Reply<xcb_randr_get_crtc_info_reply_t> info(
-        xcb_randr_get_crtc_info_reply(conn, cookies[i], nullptr));
-    if (!info) {
-      continue;
-    }
-    LOGI() << "CRT " << i << " (" << crtcs[i] << "): " << info->width << "x"
-           << info->height << ", offset " << info->x << "," << info->y
-           << " (mode=" << info->mode << ")";
-    // Ignore any CRT with mode==0; that's a disabled output.
-    if (!info->mode) {
-      continue;
-    }
-    visible.push_back(Rect{info->x, info->y, info->x + int(info->width),
-                           info->y + int(info->height)});
-  }
-  return visible;
+  return server->RandRGetVisibleAreas(root);
 }
 
 #ifdef SHAPE
 int XShapeQueryExtension() {
-  const xcb_query_extension_reply_t* ext =
-      xcb_get_extension_data(conn, &xcb_shape_id);
-  if (!ext || !ext->present) {
-    return -1;
-  }
-  return ext->first_event;
+  return server->ShapeQueryExtension();
 }
 
 void XShapeSelectInput(Window w) {
-  xcb_shape_select_input(conn, w, 1);
+  server->ShapeSelectInput(w);
 }
 
 int XShapeCountRectangles(Window w) {
-  Reply<xcb_shape_get_rectangles_reply_t> r(xcb_shape_get_rectangles_reply(
-      conn, xcb_shape_get_rectangles(conn, w, XCB_SHAPE_SK_BOUNDING), nullptr));
-  if (!r) {
-    return 0;
-  }
-  return xcb_shape_get_rectangles_rectangles_length(r.get());
+  return server->ShapeCountRectangles(w);
 }
 
 void XShapeCombineShape(Window dest, int x_off, int y_off, Window src) {
-  xcb_shape_combine(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING,
-                    XCB_SHAPE_SK_BOUNDING, dest, x_off, y_off, src);
+  server->ShapeCombineShape(dest, x_off, y_off, src);
 }
 #endif
 
@@ -1269,50 +907,13 @@ class Image {
 // Reads a rectangle of pixels back off the server.
 static Image getImage(Pixmap src, int width, int height, int depth) {
   Image img(width, height);
-  Reply<xcb_get_image_reply_t> r(xcb_get_image_reply(
-      conn,
-      xcb_get_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, src, 0, 0, width, height,
-                    ~0),
-      nullptr));
-  if (!r) {
-    return img;
-  }
-  const uint8_t* data = xcb_get_image_data(r.get());
-  const int len = xcb_get_image_data_length(r.get());
-  if (depth == 1) {
-    // A bitmap comes back one bit per pixel. Both the padding of each
-    // scanline and which end of a byte the first pixel sits in are properties
-    // of the *server*, declared in the connection setup - Xlib read them from
-    // the same place. Assuming LSB-first, 32-bit-padded happens to be right
-    // on ordinary Linux servers and wrong elsewhere, and the failure mode is
-    // a mirrored or sheared icon mask rather than anything noisy, so ask.
-    const xcb_setup_t* setup = xcb_get_setup(conn);
-    const int pad_bits = setup->bitmap_format_scanline_pad;
-    const bool msb_first =
-        setup->bitmap_format_bit_order == XCB_IMAGE_ORDER_MSB_FIRST;
-    const int stride = ((width + pad_bits - 1) / pad_bits) * (pad_bits / 8);
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        const int byte = y * stride + (x / 8);
-        if (byte >= len) {
-          continue;
-        }
-        const int bit = msb_first ? (7 - (x % 8)) : (x % 8);
-        img.Put(x, y, (data[byte] >> bit) & 1);
-      }
-    }
-    return img;
-  }
-  // Anything else is 32 bits per pixel: lwm only ever asks for 24-bit
-  // drawables, which the server pads out to a word each.
-  const int words = len / 4;
-  const uint32_t* src_words = reinterpret_cast<const uint32_t*>(data);
-  for (int i = 0; i < words && i < width * height; i++) {
-    img.Put(i % width, i / width, src_words[i]);
+  const std::vector<uint32_t> pixels =
+      server->GetImagePixels(src, width, height, depth);
+  for (int i = 0; i < width * height && i < int(pixels.size()); i++) {
+    img.Put(i % width, i / width, pixels[i]);
   }
   return img;
 }
-
 // copyWithScaling scales down the contents of src into dest.
 // The src image *must* be at least as large as the dest image.
 // This function applies some very simple anti-aliasing. It could be improved
@@ -1353,17 +954,8 @@ static void copyWithScaling(const Image& src, Image* dest) {
 }
 
 static Pixmap pixmapFromImage(const Image& img) {
-  const Pixmap pm = xcb_generate_id(conn);
-  xcb_create_pixmap(conn, 24, pm, Root(), img.width(), img.height());
-  const GC gc = xcb_generate_id(conn);
-  xcb_create_gc(conn, gc, pm, 0, nullptr);
-  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, pm, gc, img.width(),
-                img.height(), 0, 0, 0, 24, img.byte_size(),
-                reinterpret_cast<const uint8_t*>(img.data()));
-  xcb_free_gc(conn, gc);
-  return pm;
+  return server->CreatePixmapFromPixels(img.width(), img.height(), img.data());
 }
-
 // Background is a little helper, used to provide a suitable background colour
 // to the imageDataToImage function.
 // The case this is used in is when the user has configured a top border width,
@@ -1428,7 +1020,6 @@ static void pixelDataToImage(Image* img,
     }
   }
 }
-
 ImageIcon::ImageIcon(Pixmap active_img,
                      Pixmap inactive_img,
                      Pixmap menu_img,
@@ -1456,9 +1047,9 @@ ImageIcon* ImageIcon::clone(unsigned long hash) {
 }
 
 void ImageIcon::destroyResources() {
-  xcb_free_pixmap(conn, active_img_);
-  xcb_free_pixmap(conn, inactive_img_);
-  xcb_free_pixmap(conn, menu_img_);
+  server->FreePixmap(active_img_);
+  server->FreePixmap(inactive_img_);
+  server->FreePixmap(menu_img_);
 }
 
 // static
@@ -1611,8 +1202,8 @@ void ImageIcon::paint(Window w,
   // coordinates to draw something in the middle of the source pixmap.
   const int src_x = (xo < 0) ? -xo : 0;
   const int src_y = (yo < 0) ? -yo : 0;
-  xcb_copy_area(conn, pm, w, gc, src_x, src_y, x, y, width, height);
-  xcb_free_gc(conn, gc);
+  server->CopyArea(pm, w, gc, src_x, src_y, x, y, width, height);
+  server->FreeGC(gc);
 }
 
 }  // namespace xlib
