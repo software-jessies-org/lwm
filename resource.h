@@ -98,13 +98,8 @@ class Resources {
   void Set(SR res,
            xcb_xrm_database_t* db,
            const std::string& name,
-           const char* cls,
            const std::string& dflt);
-  void Set(IR res,
-           xcb_xrm_database_t* db,
-           const std::string& name,
-           const char* cls,
-           int dflt);
+  void Set(IR res, xcb_xrm_database_t* db, const std::string& name, int dflt);
 
   std::vector<std::string> strings_;
   std::vector<int> ints_;

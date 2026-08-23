@@ -80,7 +80,11 @@ if [ ! -x "${LWM_BIN}" ]; then
   exit 1
 fi
 
-Xvfb "${DISPLAY_SPEC}" -screen 0 "${SCREEN_W}x${SCREEN_H}x24" >"${XVFB_LOG}" 2>&1 &
+# -noreset because the Xresources check below sets RESOURCE_MANAGER with
+# xrdb: without it the server resets when the last client disconnects, and
+# xrdb's own exit is exactly that, taking the root window properties with it.
+Xvfb "${DISPLAY_SPEC}" -noreset -screen 0 "${SCREEN_W}x${SCREEN_H}x24" \
+  >"${XVFB_LOG}" 2>&1 &
 XVFB_PID=$!
 if ! wait_for 50 xdpyinfo; then
   echo "Xvfb did not start on ${DISPLAY_SPEC}" >&2
@@ -95,7 +99,12 @@ fi
 mkfifo "${CLI_FIFO}"
 sleep infinity >"${CLI_FIFO}" &
 CLI_HOLD_PID=$!
-"${LWM_BIN}" -debugcli="dbg auto" <"${CLI_FIFO}" >"${LWM_LOG}" 2>&1 &
+# HOME is redirected at the temp dir for every lwm run in this script: with
+# no RESOURCE_MANAGER set, xcb-xrm falls back to ~/.Xresources, and the
+# checks below assert on lwm's compiled-in defaults, which the developer's
+# own config would otherwise quietly override.
+HOME="${WORKDIR}" "${LWM_BIN}" -debugcli="dbg auto" <"${CLI_FIFO}" \
+  >"${LWM_LOG}" 2>&1 &
 LWM_PID=$!
 sleep 0.5
 if ! kill -0 "${LWM_PID}" 2>/dev/null; then
@@ -208,9 +217,9 @@ fi
 #
 # Needs xwd and ImageMagick; skipped, with a note, if they're absent.
 
-frame_pixel() {  # frame_pixel <x> <y> -> "#RRGGBB"
-  convert "${WORKDIR}/frame.xwd" -depth 8 txt:- 2>/dev/null |
-    sed -n "s/^$1,$2: ([^)]*)  *\(#[0-9A-Fa-f]\{6\}\).*/\1/p" | head -1
+frame_pixel() {  # frame_pixel <xwd-file> <x> <y> -> "#RRGGBB"
+  convert "$1" -depth 8 txt:- 2>/dev/null |
+    sed -n "s/^$2,$3: ([^)]*)  *\(#[0-9A-Fa-f]\{6\}\).*/\1/p" | head -1
 }
 
 if [ -n "${FRAME_ID}" ] && command -v xwd >/dev/null 2>&1 &&
@@ -220,7 +229,7 @@ if [ -n "${FRAME_ID}" ] && command -v xwd >/dev/null 2>&1 &&
   xwd -id "${FRAME_ID}" -out "${WORKDIR}/frame.xwd" 2>/dev/null
   # The active frame's border colour, from resource.cc's default for
   # "borderColour". Pixel (1,1) is inside the frame, clear of the close cross.
-  GOT=$(frame_pixel 1 1)
+  GOT=$(frame_pixel "${WORKDIR}/frame.xwd" 1 1)
   if [ "${GOT}" = "#B87058" ]; then
     pass "frame is painted in the configured border colour"
   else
@@ -449,6 +458,90 @@ elif diff -u "${GOLDEN_FILE}" "${ACTUAL_CALLS}" >"${WORKDIR}/shim.diff"; then
 else
   fail "shim calls match the golden set"
   sed 's/^/    /' "${WORKDIR}/shim.diff"
+fi
+
+# --- Xresources are honoured -------------------------------------------------
+#
+# Everything above runs against an empty resource database, so it only ever
+# exercises the compiled-in defaults; lwm silently ignoring every user setting
+# looks exactly like a healthy run. That is how the xcb-xrm port shipped with
+# a class-name argument that made every lookup fail: the whole configuration
+# system was dead, and 22 checks were happy.
+#
+# So: restart lwm with a resource database loaded, and check that two settings
+# of different kinds actually reach the screen - a colour (string resource,
+# through the colour parser) and the border width (integer resource, visible
+# as frame geometry). Both are set to values nothing else in lwm produces.
+
+kill "${LWM_PID}" >/dev/null 2>&1
+wait "${LWM_PID}" >/dev/null 2>&1
+LWM_PID=""
+
+XRES_BORDER=11
+cat >"${WORKDIR}/xresources" <<EOF
+lwm*borderColour: #00FF00
+lwm*border: ${XRES_BORDER}
+EOF
+# -nocpp: no preprocessor, so the developer's cpp can't get an opinion.
+xrdb -nocpp -merge "${WORKDIR}/xresources"
+
+LWM_LOG2="${WORKDIR}/lwm2.log"
+HOME="${WORKDIR}" "${LWM_BIN}" >"${LWM_LOG2}" 2>&1 &
+LWM_PID=$!
+sleep 0.5
+if ! kill -0 "${LWM_PID}" 2>/dev/null; then
+  fail "lwm restarted with an Xresources database"
+  cat "${LWM_LOG2}" >&2
+else
+  pass "lwm restarted with an Xresources database"
+
+  xterm -geometry 80x24+50+50 >"${WORKDIR}/xterm2.log" 2>&1 &
+  XTERM_PID=$!
+  FRAME_ID=""
+  for _ in $(seq 1 50); do
+    FRAME_ID=$(frame_id)
+    [ -n "${FRAME_ID}" ] && break
+    sleep 0.1
+  done
+  CLIENT_ID=$(xdotool search --class xterm 2>/dev/null | head -1)
+
+  if [ -n "${FRAME_ID}" ] && [ -n "${CLIENT_ID}" ]; then
+    # The frame is the client plus a border on each side, so the difference in
+    # width is twice the configured border width.
+    FW=$(xwininfo -id "${FRAME_ID}" 2>/dev/null |
+      sed -n 's/.*Width: *//p' | head -1)
+    CW=$(xwininfo -id "${CLIENT_ID}" 2>/dev/null |
+      sed -n 's/.*Width: *//p' | head -1)
+    WANT_DIFF=$((2 * XRES_BORDER))
+    if [ -n "${FW}" ] && [ -n "${CW}" ] && [ $((FW - CW)) -eq "${WANT_DIFF}" ]; then
+      pass "the border resource sets the frame's border width"
+    else
+      fail "the border resource sets the frame's border width (frame ${FW}, client ${CW}, want a difference of ${WANT_DIFF})"
+    fi
+
+    if command -v xwd >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
+      xdotool windowactivate --sync "${CLIENT_ID}" >/dev/null 2>&1
+      sleep 0.5
+      xwd -id "${FRAME_ID}" -out "${WORKDIR}/frame2.xwd" 2>/dev/null
+      GOT=$(frame_pixel "${WORKDIR}/frame2.xwd" 1 1)
+      if [ "${GOT}" = "#00FF00" ]; then
+        pass "the borderColour resource is painted on the frame"
+      else
+        fail "the borderColour resource is painted on the frame (got '${GOT}', want '#00FF00')"
+      fi
+    else
+      echo "SKIP: borderColour resource check (need xwd and ImageMagick)"
+    fi
+  else
+    fail "xterm got a frame from the restarted lwm"
+  fi
+
+  if grep -qE '^E ' "${LWM_LOG2}"; then
+    fail "no error-level log lines from the restarted lwm"
+    grep -E '^E ' "${LWM_LOG2}" | sed 's/^/    /'
+  else
+    pass "no error-level log lines from the restarted lwm"
+  fi
 fi
 
 echo

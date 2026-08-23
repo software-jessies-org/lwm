@@ -66,7 +66,11 @@ Keeping stderr in another terminal matters: the debug CLI reads stdin and writes
 stdout, and log spam over the top of it is unusable.
 
 Xresources: `testXresources` is an example config; `xrdb -merge` it into the
-Xephyr display to exercise the options. `lwm.man` documents them all.
+Xephyr display to exercise the options. `lwm.man` documents them all. lwm reads
+the database once, at start-up, so restart it after an `xrdb`. With no
+`RESOURCE_MANAGER` set on the display, `xcb-xrm` falls back to `~/.Xresources`,
+which is worth remembering when a test display doesn't behave like an empty
+one.
 
 ## Debug CLI (`-debugcli`)
 
