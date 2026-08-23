@@ -14,7 +14,8 @@
 #                          3x3 grid over the window
 #   button 1 click         raise the window
 #   button 1 double click  expand that edge (or all of them, from the middle)
-#                          up to the nearest window or the monitor
+#                          up to the nearest window or the monitor, or, from
+#                          the middle with no room left, un-expand instead
 #   button 2 double click  the same, but ignoring other windows
 #   button 3 click         hide the window
 #
@@ -388,9 +389,23 @@ check_eq "Super+button 1 double click expands a corner's two edges" \
   "$(geom "${FRAME}")" "0 ${FY} $((FW + FX)) $((SCREEN_H - FY))"
 
 place "${CLIENT}" 400 400 200 200
+read -r FX FY FW FH <<<"$(geom "${FRAME}")"
 read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
 super_double_click 1 "${CX}" "${CY}"
 check_eq "Super+button 1 double click in the middle fills the screen" \
+  "$(geom "${FRAME}")" "0 0 ${SCREEN_W} ${SCREEN_H}"
+
+# The middle square is a toggle: with nothing left to grow into, the same
+# gesture puts the window back to the size it had before it was expanded.
+read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+super_double_click 1 "${CX}" "${CY}"
+check_eq "a second double click in the middle restores the previous size" \
+  "$(geom "${FRAME}")" "${FX} ${FY} ${FW} ${FH}"
+
+# And there's nothing to go back to once it's been back: the next one expands.
+read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+super_double_click 1 "${CX}" "${CY}"
+check_eq "a third double click in the middle expands again" \
   "$(geom "${FRAME}")" "0 0 ${SCREEN_W} ${SCREEN_H}"
 
 # Two clicks further apart than the double-click interval are two single

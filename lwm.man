@@ -89,6 +89,13 @@ clicking button 2 does the same thing but ignores the other windows, so it
 expands to the monitor - which, on a multi-monitor xrandr setup, means the
 monitor that window is on, not the whole desktop.
 .PP
+The middle square is a toggle.  When there is nothing left for the window to
+grow into, a double click there shrinks it back to the size it had before it
+was expanded, so the same gesture both maximises a window and restores it.  A
+window which is maximised because it asked to be is un-maximised instead.  A
+window \fIlwm\fP has no earlier size recorded for - one which has never been
+expanded, or which has already been restored - is left alone.
+.PP
 Clicking button 3 with the Windows key held hides the window, just as a
 button 3 click on its frame does.  As on the frame, the click is abandoned if
 the pointer moves away before the button is released.

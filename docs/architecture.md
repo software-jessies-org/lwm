@@ -141,11 +141,13 @@ of - is pure, and lives in `gesture.{h,cc}`.
 `getSuperDragHandler` (`drag.cc`) is where the buttons are assigned: 1 drags
 to move and clicks to raise, 2 drags to resize the edge the grid picks out, a
 double click on either expands (button 2's ignoring the other windows), and 3
-hides. Button 3 is handled before anything else in there, because hiding cares
-about neither the grid nor double clicks. Button 1's two meanings can't be
-told apart until the release, so they're one handler (`WindowMoverRaiser`)
-which decides then: a press that went nowhere raises, and anything else has
-already moved the window.
+hides. From the centre cell the expansion is a toggle: a window with nowhere
+left to grow shrinks back instead, via `Client::Unexpand` — see
+[Un-expanding](concepts.md#un-expanding). Button 3 is handled before anything
+else in there, because hiding cares about neither the grid nor double clicks.
+Button 1's two meanings can't be told apart until the release, so they're one
+handler (`WindowMoverRaiser`) which decides then: a press that went nowhere
+raises, and anything else has already moved the window.
 
 ## Ownership
 

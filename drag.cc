@@ -239,6 +239,9 @@ class WindowResizer : public WindowDragger {
 // with the centre square meaning "all of them". Windows in the way stop the
 // expansion unless ignore_obstacles_ is set, which is what makes button 2's
 // double click a "fill the monitor" and button 1's a "fill the space".
+//
+// The centre square is a toggle: when there's nothing left to grow into, it
+// puts the window back to the size it had before it was expanded instead.
 class WindowExpander : public DragHandler {
  public:
   WindowExpander(Client* c, Edge edge, bool ignore_obstacles)
@@ -254,8 +257,20 @@ class WindowExpander : public DragHandler {
         ExpandRect(frame, edge_, obstacles(c), LScr::I->VisibleAreas(true));
     LOGD(c) << "Expanding " << frame << " to " << grown;
     if (grown == frame) {
+      // Nowhere left to grow. From the centre square, that makes this the
+      // other half of the gesture: a window which is already as big as it
+      // goes shrinks back to the size it had before it was expanded, so that
+      // one double click in the middle of a window toggles it. From an edge
+      // there's no such reading - the user asked for that one edge to grow,
+      // and it can't - so nothing happens, as before.
+      if (edge_ == ENone) {
+        c->Unexpand();
+      }
       return;
     }
+    // Before the maximisation goes, while it can still say where the window
+    // was before it was maximised.
+    c->NotePreExpandRect();
     c->DropMaximization();
     Rect content = c->framed ? Client::ContentFromFrameRect(grown) : grown;
     // The client still gets the last word on its size: expanding into a gap
@@ -396,6 +411,10 @@ DoubleClickTracker super_clicks;
 //                          expands to the monitor
 //   button 3 click         hide the window, as a button 3 click on the
 //                          furniture does
+//
+// A double click in the centre square grows every edge, and grows nothing
+// when the window is already as big as it goes - which is when it shrinks the
+// window back to its pre-expansion size instead.
 //
 // A click is a drag that went nowhere, so the move and raise gestures are one
 // handler which decides between them on the button release.

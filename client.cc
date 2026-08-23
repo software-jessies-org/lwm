@@ -529,16 +529,19 @@ void Client::SetMaximized(bool vert, bool horz) {
   }
   Rect target = MaximizedRect(pre_maximize_content_rect_);
   if (!IsMaximized()) {
+    if (pre_maximize_content_rect_.empty()) {
+      // Un-maximising with nothing recorded to go back to. That shouldn't
+      // happen - every route into maximisation goes through the transition
+      // above, which records it - but a zero-sized target would put the
+      // window somewhere absurd, so leave it where it is instead.
+      LOGD(this) << "No pre-maximise geometry to restore; leaving as is";
+      return;
+    }
     // Un-maximising, so target is the geometry we saved on the way in - which
     // may be stale, because the monitor layout can have changed while the
     // window was maximised. Don't restore a window onto a monitor that isn't
     // there any more.
-    const bool f = framed;
-    target = makeVisible(f ? FrameFromContentRect(target) : target,
-                         LScr::I->VisibleAreas(true));
-    if (f) {
-      target = ContentFromFrameRect(target);
-    }
+    target = MakeContentRectVisible(target);
   }
   // The client still gets the last word on its size, so an xterm maximises to
   // a whole number of character cells rather than to the exact screen height.
@@ -553,6 +556,63 @@ void Client::DropMaximization() {
   wstate.maximized_vert = false;
   wstate.maximized_horz = false;
   ewmh_set_state(this);
+}
+
+Rect Client::MakeContentRectVisible(const Rect& content) const {
+  const std::vector<Rect> areas = LScr::I->VisibleAreas(true);
+  if (!framed) {
+    return makeVisible(content, areas);
+  }
+  // Work in frame coordinates: pulling only the content onto the screen can
+  // still leave the title bar off the top of it, and the title bar is how the
+  // window gets moved back.
+  return ContentFromFrameRect(
+      makeVisible(FrameFromContentRect(content), areas));
+}
+
+void Client::NotePreExpandRect() {
+  // A window which is already big because it's full screen or maximised has
+  // an earlier, smaller geometry recorded, and that's the one worth coming
+  // back to: expanding a maximised window and then un-expanding it should
+  // give the user their window back, not a screen-sized one with the
+  // maximisation flags cleared.
+  if (wstate.fullscreen && !pre_full_screen_content_rect_.empty()) {
+    pre_expand_content_rect_ = pre_full_screen_content_rect_;
+  } else if (IsMaximized() && !pre_maximize_content_rect_.empty()) {
+    pre_expand_content_rect_ = pre_maximize_content_rect_;
+  } else {
+    pre_expand_content_rect_ = content_rect_;
+  }
+  LOGD(this) << "Noting pre-expand geometry " << pre_expand_content_rect_;
+}
+
+void Client::Unexpand() {
+  if (wstate.fullscreen) {
+    // Full screen is the client's own doing, and it says when it ends. Its
+    // idea of its geometry is the whole screen, so shrinking the window under
+    // it would just leave it drawing over the rest of the desktop.
+    return;
+  }
+  if (IsMaximized()) {
+    // Maximisation keeps its own record of where the window came from, and
+    // has flags to clear as well as geometry to restore. Let it do the work.
+    SetMaximized(false, false);
+    return;
+  }
+  if (pre_expand_content_rect_.empty()) {
+    // Nothing recorded: this window has never been expanded (or has already
+    // been put back). Guessing at a size here is how windows end up in silly
+    // places, so do nothing.
+    LOGD(this) << "No pre-expand geometry to restore; leaving as is";
+    return;
+  }
+  // Spend the record: the window is back where it started, so there's nothing
+  // left to undo until the next expansion notes a new one.
+  const Rect target = MakeContentRectVisible(pre_expand_content_rect_);
+  pre_expand_content_rect_ = Rect{};
+  LOGD(this) << "Un-expanding to " << target;
+  // As ever, the client gets the last word on its size.
+  MoveResizeTo(LimitResize(target));
 }
 
 void Client::ExitFullScreen() {

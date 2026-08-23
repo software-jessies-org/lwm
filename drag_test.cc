@@ -409,6 +409,142 @@ TEST(SuperGestures, ExpansionStaysOnOneMonitor) {
       << "expanding must stop at the edge of the monitor the window is on";
 }
 
+TEST(SuperGestures, CentreDoubleClickTogglesTheWindowBackAgain) {
+  // The Windows way round: the double click which made the window fill the
+  // screen makes it small again, because there's nothing left to grow into.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->FrameRect();
+  const Rect screen = LScr::I->GetPrimaryVisibleArea(true);
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              40 * kSlowly);
+  ASSERT_EQ(c->FrameRect(), screen);
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              41 * kSlowly);
+  EXPECT_EQ(c->FrameRect(), before)
+      << "a second double click in the middle should undo the first";
+
+  // And the toggle keeps working: expanding again notes the new geometry.
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              42 * kSlowly);
+  EXPECT_EQ(c->FrameRect(), screen);
+}
+
+TEST(SuperGestures, MiddleCentreDoubleClickTogglesToo) {
+  // Button 2's centre double click expands the same way, so it un-expands the
+  // same way.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->FrameRect();
+
+  doubleClick(world, c, SUPER_RESIZE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              43 * kSlowly);
+  ASSERT_EQ(c->FrameRect(), LScr::I->GetPrimaryVisibleArea(true));
+
+  doubleClick(world, c, SUPER_RESIZE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              44 * kSlowly);
+  EXPECT_EQ(c->FrameRect(), before);
+}
+
+TEST(SuperGestures, OnlyTheCentreCellUndoesAnExpansion) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect screen = LScr::I->GetPrimaryVisibleArea(true);
+
+  doubleClick(world, c, SUPER_RESIZE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              45 * kSlowly);
+  ASSERT_EQ(c->FrameRect(), screen);
+
+  // An edge which has nowhere to grow simply doesn't grow. The user asked for
+  // that one edge to move, not for the window to shrink.
+  doubleClick(world, c, SUPER_RESIZE_BUTTON, SUPER_MASK, gridCell(c, 2, 1),
+              46 * kSlowly);
+  EXPECT_EQ(c->FrameRect(), screen);
+}
+
+TEST(SuperGestures, CentreDoubleClickUnmaximizesAMaximizedWindow) {
+  // A window the client maximised itself (or that lwm maximised for it on a
+  // _NET_WM_STATE message) has no room to grow either, and comes back to its
+  // own recorded pre-maximise geometry - flags and all.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->FrameRect();
+  c->SetMaximized(true, true);
+  ASSERT_TRUE(c->IsMaximized());
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              47 * kSlowly);
+
+  EXPECT_FALSE(c->IsMaximized());
+  EXPECT_EQ(c->FrameRect(), before);
+}
+
+TEST(SuperGestures, ExpandingAHalfMaximizedWindowRestoresPastTheMaximization) {
+  // Vertically maximised, so there's still room to grow sideways: the double
+  // click expands (dropping the maximisation), and the geometry to come back
+  // to is the one from before the maximisation, not the tall one.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->FrameRect();
+  const Rect screen = LScr::I->GetPrimaryVisibleArea(true);
+  c->SetMaximized(true, false);
+  ASSERT_NE(c->FrameRect(), before);
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              48 * kSlowly);
+  ASSERT_EQ(c->FrameRect(), screen);
+  ASSERT_FALSE(c->IsMaximized());
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              49 * kSlowly);
+  EXPECT_EQ(c->FrameRect(), before)
+      << "the restore should skip the maximised size the window passed through";
+}
+
+TEST(SuperGestures, NothingToRestoreLeavesTheWindowWhereItIs) {
+  // A window which was born filling the screen has never been expanded, so
+  // there's no recorded geometry to go back to. It must stay put rather than
+  // be moved to whatever an empty Rect means.
+  wmtest::World world;
+  const Rect screen = LScr::I->GetPrimaryVisibleArea(true);
+  Client* c = world.MapClientWindow(screen);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              50 * kSlowly);
+
+  EXPECT_EQ(c->ContentRect(), before);
+}
+
+TEST(SuperGestures, TheRestoreOnlyHappensOnce) {
+  // Un-expanding spends the record, so a window the user has since grown by
+  // hand doesn't jump back to a geometry from before that.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->FrameRect();
+
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              51 * kSlowly);
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              52 * kSlowly);
+  ASSERT_EQ(c->FrameRect(), before);
+
+  // The window is small again, so this one expands rather than restoring.
+  // What it must not do is put the window back to a stale rect.
+  doubleClick(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+              53 * kSlowly);
+  EXPECT_EQ(c->FrameRect(), LScr::I->GetPrimaryVisibleArea(true));
+}
+
 TEST(SuperGestures, TwoSlowClicksAreNotADoubleClick) {
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);

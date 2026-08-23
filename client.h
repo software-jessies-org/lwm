@@ -72,6 +72,26 @@ class Client {
   // resized isn't maximised any more, whatever the flags used to say.
   void DropMaximization();
 
+  // The Windows-key double click grows a window in one shot, and from the
+  // middle of the window it grows every edge, which on an otherwise empty
+  // screen means "maximise". Doing it again in the middle puts the window
+  // back, and these two are how it remembers where "back" is. There's no
+  // state flag for "expanded" - such a window looks exactly like one the user
+  // sized that way by hand - so the recorded rect is lwm's only record that
+  // there is anything to undo.
+  //
+  // Call NotePreExpandRect() just before the window grows, and before
+  // dropping any maximisation: a window that's big because it was maximised
+  // should come back to the size it had before *that*, not to a screen-sized
+  // rect.
+  void NotePreExpandRect();
+
+  // Puts the window back to the geometry NotePreExpandRect() recorded, or
+  // un-maximises it if that's how it got big. Does nothing at all if there's
+  // no record of an earlier size: an un-expand with nothing to go back to
+  // leaves the window alone rather than inventing a size for it.
+  void Unexpand();
+
   Window window = 0;  // Client's window.
   Window parent = 0;  // Window manager frame.
   Window trans = 0;   // Window that client is a transient for.
@@ -171,10 +191,22 @@ class Client {
   // screen. Only meaningful while IsMaximized().
   Rect pre_maximize_content_rect_ = {};
 
+  // Where the window was before the Windows-key double click grew it. Empty
+  // if it hasn't been grown, or if we've already put it back: Unexpand()
+  // spends the record rather than keeping it, so a window which has been
+  // restored has nothing left to restore to.
+  Rect pre_expand_content_rect_ = {};
+
   // The rect this window should occupy, given `restored` as its un-maximised
   // geometry and wstate's two maximisation flags. Returns `restored` itself if
   // neither is set.
   Rect MaximizedRect(const Rect& restored) const;
+
+  // Nudges a content rect back onto the monitors that exist now. The
+  // geometries we restore to were recorded some time ago, and the xrandr
+  // layout can have changed since: don't put a window back on a monitor
+  // that's been unplugged.
+  Rect MakeContentRectVisible(const Rect& content) const;
 
   const DimensionLimiter x_limiter_;
   const DimensionLimiter y_limiter_;

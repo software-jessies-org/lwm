@@ -182,15 +182,43 @@ both and `MaximizedRect` applies whichever are set. Three things about it:
 
 Full screen wins while it lasts: `SetMaximized` records the flags and returns,
 and `ExitFullScreen` applies whatever they say by then. Restoring goes through
-`makeVisible`, because the monitor layout can change while a window is
-maximised and the rect to go back to may name a monitor that has since been
-unplugged.
+`Client::MakeContentRectVisible` (`makeVisible` in frame coordinates), because
+the monitor layout can change while a window is maximised and the rect to go
+back to may name a monitor that has since been unplugged. A restore with no
+saved rect at all does nothing rather than moving the window to a zero-sized
+rect at the origin — every route in records one, so this shouldn't happen, but
+"shouldn't" is not a reason to place a window at 0x0+0+0.
 
 lwm has no maximise gesture of its own — this exists for clients that ask, and
 `_NET_WM_ALLOWED_ACTIONS` now says they may. When the user takes the geometry
 into their own hands with a Super-drag or an expand, `DropMaximization` clears
 the flags without moving the window: whatever it is at that point, it isn't
 maximised.
+
+### Un-expanding
+
+The Super double click in the *middle* of a window grows every edge, which on
+an otherwise empty screen means "maximise". The same gesture on a window with
+nowhere left to grow does the opposite, so one gesture toggles:
+
+* `NotePreExpandRect` records the geometry just before an expansion, in
+  `pre_expand_content_rect_`. It's called before `DropMaximization`, so that a
+  window which is big *because* it was maximised (or full screen) records the
+  smaller rect that state was standing in front of, rather than the
+  screen-sized one.
+* `Unexpand` puts the window back there, and then forgets it: the record is
+  spent, so a window that's been restored has nothing to restore to until it's
+  expanded again. A maximised window is handed to `SetMaximized(false, false)`
+  instead, which owns both the flags and its own saved rect; a full-screen one
+  is left alone, since full screen is the client's to end.
+* With nothing recorded, `Unexpand` does nothing. There is no state flag for
+  "expanded" — such a window is indistinguishable from one the user sized by
+  hand — so the recorded rect is the whole of lwm's memory that there's
+  anything to undo, and inventing a geometry when it's missing is how windows
+  end up in silly places.
+
+Only the centre cell restores. From an edge, the user asked for that one edge
+to grow; if it can't, nothing happens, exactly as before.
 
 ### Borderless full screen, and `SnapToMonitor`
 

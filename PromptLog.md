@@ -79,6 +79,10 @@ We identified that lwm doesn't publish _NET_FRAME_EXTENTS. We should do that.
 
 ---
 
+Extend the 'Windows-double-click' in the middle of a window - currently it maximises the window, but if the window is already maximised, I want it to restore it to its pre-maximised size. This will involve storing the pre-maximised coordinates when maximisation takes place, so it can be restored. Ensure that the de-maximisation code properly checks for whether we have a pre-maximised rectangle, so that if it's missing we don't open the window at silly locations/sizes.
+
+---
+
 ## Not yet started
 
 I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
@@ -90,10 +94,6 @@ In a previous discussion, you reported this:
 One unrelated thing I tripped over: running lwm -debugcli=... < /dev/null spins the event loop on stdin-at-EOF — it wrote 3.4 GB to stdout in about a minute and filled /tmp. It's pre-existing (the unpatched binary does it too) and only affects that invocation, so I left it alone, but you may want it fixed.
 
 Fix this.
-
----
-
-Extend the 'Windows-double-click' in the middle of a window - currently it maximises the window, but if the window is already maximised, I want it to restore it to its pre-maximised size. This will involve storing the pre-maximised coordinates when maximisation takes place, so it can be restored. Ensure that the de-maximisation code properly checks for whether we have a pre-maximised rectangle, so that if it's missing we don't open the window at silly locations/sizes.
 
 ---
 

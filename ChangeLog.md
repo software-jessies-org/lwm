@@ -11,6 +11,11 @@ the nearest window or the edge of the monitor - or, on the middle button,
 straight to the monitor, ignoring other windows. Multi-monitor xrandr layouts
 are respected: nothing expands across a monitor boundary.
 
+The double click in the middle of a window is a toggle: once the window has
+nowhere left to grow, the same gesture shrinks it back to the size it had
+before it was expanded, and a window which is maximised because it asked to be
+is un-maximised. A window with no earlier size on record is left where it is.
+
 Super+right click anywhere within the client window hides the window.
 
 Super+left click on the client window raises the window.
