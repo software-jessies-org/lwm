@@ -37,6 +37,16 @@ constexpr int WithdrawnState = XCB_ICCCM_WM_STATE_WITHDRAWN;
 constexpr int NormalState = XCB_ICCCM_WM_STATE_NORMAL;
 constexpr int IconicState = XCB_ICCCM_WM_STATE_ICONIC;
 
+// Keysyms for the four arrow keys. X11's keysymdef.h calls these XK_Left and
+// so on, but it arrives with the rest of Xlib, which only xbridge.cc and
+// xfont.cc may include (see docs/code-map.md). They're protocol constants and
+// will not change, so repeating the four we need is cheaper than the
+// alternatives.
+constexpr uint32_t kKeysymLeft = 0xff51;
+constexpr uint32_t kKeysymUp = 0xff52;
+constexpr uint32_t kKeysymRight = 0xff53;
+constexpr uint32_t kKeysymDown = 0xff54;
+
 struct MousePos {
   int x;
   int y;
@@ -409,6 +419,26 @@ extern int XGrabButton(unsigned int button,
 extern int XUngrabButton(unsigned int button,
                          unsigned int modifiers,
                          Window grab_window);
+
+extern int XGrabKey(uint8_t keycode,
+                    unsigned int modifiers,
+                    Window grab_window,
+                    bool owner_events,
+                    int pointer_mode,
+                    int keyboard_mode);
+extern int XUngrabKey(uint8_t keycode,
+                      unsigned int modifiers,
+                      Window grab_window);
+
+// Returns every keycode which currently carries the given keysym, in
+// increasing order, or an empty vector if the keyboard has none.
+//
+// A keysym can sit on more than one key - the arrows exist on both the cursor
+// pad and, when Num Lock is off, the numeric keypad - so a caller grabbing a
+// key has to grab all of them or the gesture will work on one keyboard and
+// not another. Reads the mapping from the server on each call; callers do it
+// at start-up and on MappingNotify, not per keystroke.
+extern std::vector<uint8_t> KeycodesForKeysym(uint32_t keysym);
 
 extern void XChangeActivePointerGrab(unsigned int event_mask,
                                      Cursor cursor,

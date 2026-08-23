@@ -28,7 +28,9 @@ Notes-to-self for working on this codebase efficiently. Written for an agent
 * Three global singletons: `dpy` (Display*), `LScr::I` (screen + client
   registry), `Resources::I` (Xresources config). Nearly everything reaches them
   directly.
-* No hotkeys, no virtual desktops, no compositing, no colourmaps — see
-  `../README.md` for the philosophy behind those omissions.
+* No virtual desktops, no compositing, no colourmaps — see
+  `../README.md` for the philosophy behind those omissions. The one keyboard
+  binding is Super+arrow, which moves the input focus between windows
+  (`keyboard.{h,cc}`); there is no general hotkey mechanism.
 * Feature requests and known bugs live in `../BUGS` (it's a TODO list, not just
   bugs). `../ChangeLog` is history.

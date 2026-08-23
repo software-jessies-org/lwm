@@ -34,6 +34,7 @@
 #include "disp.h"
 #include "error.h"
 #include "ewmh.h"
+#include "keyboard.h"
 #include "manage.h"
 #include "resource.h"
 #include "screen.h"

@@ -634,6 +634,52 @@ void FakeServer::UngrabButton(unsigned int button,
          std::to_string(button) + " modifiers=" + std::to_string(modifiers));
 }
 
+void FakeServer::GrabKey(uint8_t keycode,
+                         unsigned int modifiers,
+                         Window grab_window,
+                         bool owner_events,
+                         int pointer_mode,
+                         int keyboard_mode) {
+  (void)owner_events;
+  (void)pointer_mode;
+  (void)keyboard_mode;
+  Record("GrabKey(" + hex(grab_window) + ") keycode=" +
+         std::to_string(keycode) + " modifiers=" + std::to_string(modifiers));
+}
+
+void FakeServer::UngrabKey(uint8_t keycode,
+                           unsigned int modifiers,
+                           Window grab_window) {
+  Record("UngrabKey(" + hex(grab_window) + ") keycode=" +
+         std::to_string(keycode) + " modifiers=" + std::to_string(modifiers));
+}
+
+KeyboardMapping FakeServer::GetKeyboardMapping() {
+  // A keyboard with nothing on it but the four arrow keys, at the keycodes a
+  // PC keyboard really uses for them. Two keysyms per keycode, because that's
+  // the commonest shape of a real mapping and it means the flattening
+  // arithmetic in xlib.cc is exercised rather than sidestepped.
+  KeyboardMapping res;
+  res.min_keycode = 8;
+  res.keysyms_per_keycode = 2;
+  const uint8_t max_keycode = 255;
+  res.keysyms.assign((max_keycode - res.min_keycode + 1) * 2, 0);
+  const struct {
+    uint8_t keycode;
+    uint32_t keysym;
+  } arrows[] = {
+      {113, kKeysymLeft},
+      {111, kKeysymUp},
+      {114, kKeysymRight},
+      {116, kKeysymDown},
+  };
+  for (const auto& a : arrows) {
+    res.keysyms[(a.keycode - res.min_keycode) * res.keysyms_per_keycode] =
+        a.keysym;
+  }
+  return res;
+}
+
 void FakeServer::ChangeActivePointerGrab(unsigned int event_mask,
                                          Cursor cursor,
                                          Time t) {

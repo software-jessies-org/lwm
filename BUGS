@@ -39,6 +39,10 @@ currently has focus, and then (as the pointer is over the menu) take control of
 the arrow keys to navigate up and down the menu, using pointer-warping. Hitting
 Return would do the normal unhide action on the selected window, and warp the
 pointer to its middle.
+  Half of this now exists: keyboard.cc grabs Super+arrow on the root window
+  and moves the input focus with it, so the grabbing machinery (including the
+  lock-modifier repetition and the MappingNotify re-grab) is written and
+  tested. What's missing is the menu part, and making the key configurable.
 
 
 === CLEANUPS ===

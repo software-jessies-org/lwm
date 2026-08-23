@@ -285,6 +285,45 @@ super_click() {
   sleep 0.4
 }
 
+# super_arrow <left|right|up|down> - a Super+arrow press, the focus-navigation
+# gesture. Unlike the mouse gestures, this one doesn't touch the pointer: the
+# whole point of it is that the focus moves without the pointer having to.
+super_arrow() {
+  xdotool key "super+$1"
+  sleep 0.4
+}
+
+# focused_window -> the window id with the input focus, in hex, or "" if the
+# server says there isn't one. lwm focuses the client window itself, not the
+# frame, so this is comparable with a client id from start_client.
+focused_window() {
+  local id
+  id=$(xdotool getwindowfocus 2>/dev/null) || return 0
+  [ -n "${id}" ] && printf '0x%x' "${id}"
+}
+
+# focus_after_settling <hex-id> -> the focused window, having waited for it to
+# become the given one. Giving a window the focus is several round trips (lwm
+# sees the event, decides, and calls XSetInputFocus; the server then tells
+# everyone), and lwm deliberately defers a focus change that arrives hard on
+# the heels of another - see the timerfd in focus.h - so a fixed sleep is
+# either too short or a waste of time. Returns whatever it last saw, so a
+# focus which never arrives fails the check rather than hanging it. This can
+# only rescue a slow right answer, never turn a wrong one into a pass.
+focus_after_settling() {
+  local want="$1" got=""
+  # Three seconds. A focus lwm has decided on for itself - which is all of
+  # them here - appears as fast as the server can be asked; this is slack for
+  # a loaded machine, not for the focus-follows-mouse deferral, which the
+  # checks below stay away from.
+  for _ in $(seq 1 30); do
+    got=$(focused_window)
+    [ "${got}" = "${want}" ] && break
+    sleep 0.1
+  done
+  printf '%s' "${got}"
+}
+
 # super_ctrl_click <button> <x> <y> - the Super+Control gesture set.
 super_ctrl_click() {
   local button="$1" x="$2" y="$3"
@@ -571,6 +610,94 @@ WANT="$((FX + FURNITURE_X)) $((FY + FURNITURE_Y))"
 WANT="${WANT} $((FW - FURNITURE_W)) $((FH - FURNITURE_H))"
 check_eq "so the client shrinks back inside it by exactly the furniture" \
   "$(geom "${CLIENT}")" "${WANT}"
+
+# --- focus navigation -------------------------------------------------------
+#
+# Super+arrow moves the input focus to the next window that way. This needs a
+# real server for the same reason the gestures do, and one more besides: the
+# grab is on the root window and is matched on the modifier state, so a keymap
+# where Super isn't Mod4, or a stray lock modifier, would stop it dead.
+# keyboard_test.cc covers the same path against the fake server, and
+# navigate_test.cc the geometry underneath it.
+#
+# The pointer is parked on the root throughout, clear of both windows. That's
+# not just tidiness: focus follows the mouse by default, and a pointer sitting
+# over a window keeps generating enter events whose focus changes lwm delays
+# on the timer in focus.h - which on a server as slow as Xvfb can be seconds
+# later, landing in the middle of a check. Off the windows, nothing but the
+# arrow keys moves the focus, which is the thing being tested anyway.
+
+place "${CLIENT}" 700 300 200 200
+start_client lwmtest3 '200x200+100+300'
+NAV="${NEW_CLIENT}"
+NAV_PID="${NEW_CLIENT_PID}"
+if [ -z "${NAV}" ]; then
+  fail "third xlogo mapped and framed"
+else
+  pass "third xlogo mapped and framed"
+  place "${NAV}" 100 300 200 200
+  xdotool mousemove 5 5
+  sleep 0.4
+
+  # lwm focuses a window as it maps it, so the left-hand one starts with the
+  # focus by virtue of being the one just created. Nothing here relies on the
+  # pointer to establish that.
+  WANT=$(printf '0x%x' "${NAV}")
+  check_eq "the newly mapped left-hand window starts with the focus" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+
+  WANT=$(printf '0x%x' "${CLIENT}")
+  super_arrow Right
+  check_eq "Super+Right moves the focus to the window on the right" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+
+  WANT=$(printf '0x%x' "${NAV}")
+  super_arrow Left
+  check_eq "Super+Left moves it back again" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+
+  # The two windows are side by side, so neither is in the other's vertical
+  # cone: there is nothing above, and the focus must stay where it is rather
+  # than settling for the window to the right.
+  super_arrow Up
+  check_eq "Super+Up does nothing when there is no window above" \
+    "$(focused_window)" "$(printf '0x%x' "${NAV}")"
+
+  # Nothing further left than the left-hand window either.
+  super_arrow Left
+  check_eq "Super+Left does nothing at the left-hand end" \
+    "$(focused_window)" "$(printf '0x%x' "${NAV}")"
+
+  # Navigation moves the focus and nothing else: in particular it does not
+  # raise the window it moves to. The left-hand window goes up and to the
+  # left, further along x than y so that it stays in the left-hand cone, and
+  # clear of the point clicked below.
+  place "${NAV}" 400 150 200 200
+  NAV_FRAME=$(frame_of "${NAV}")
+  WANT=$(printf '0x%x' "${CLIENT}")
+  super_arrow Right
+  check_eq "the focus is on the right-hand window before the raise check" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+
+  # A Super+click raises the window under the pointer - which is the one that
+  # already has the focus, so the click can't change the focus either way.
+  read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+  super_click 1 "${CX}" "${CY}"
+  check "the right-hand window is in front before navigating" \
+    in_front "${FRAME}" "${NAV_FRAME}"
+
+  WANT=$(printf '0x%x' "${NAV}")
+  super_arrow Left
+  check_eq "Super+Left focuses the window it navigates to" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+  check "but does not raise it" in_front "${FRAME}" "${NAV_FRAME}"
+
+  xdotool mousemove 5 5
+  kill "${NAV_PID}" >/dev/null 2>&1
+  sleep 0.5
+fi
+
+place "${CLIENT}" 400 400 200 200
 
 # --- hide -------------------------------------------------------------------
 #

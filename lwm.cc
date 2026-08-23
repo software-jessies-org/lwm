@@ -146,6 +146,9 @@ extern int main(int argc, char* argv[]) {
 
   LScr::I = new LScr();
   LScr::I->Init();
+  // Needs the root window, so it has to follow LScr::Init. Re-run whenever a
+  // MappingNotify says the keyboard has been remapped; see disp.cc.
+  GrabNavigationKeys();
   session_init(argc, argv);
 
   // Do we need to support XRandR?

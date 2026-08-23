@@ -87,11 +87,21 @@ not a replacement for manual Xephyr testing of new behaviour.
 The mouse gestures, driven with `xdotool` under the same headless `Xvfb`
 arrangement as the smoke test: Windows-key drags to move and resize, double
 clicks to expand a window up to its neighbours or its monitor, clicks to raise
-or hide it, and the Super+Control click that turns its furniture on and off.
+or hide it, the Super+Control click that turns its furniture on and off, and
+Super+arrow to move the input focus between windows.
 These need a real server - the passive grabs, the modifier bits in the
 `ButtonPress` and the pointer grab that keeps a drag alive are all things
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
 the event level and this covers them at the pointer level.
+
+The focus-navigation section parks the pointer on the root window and stays
+off both test windows. Focus follows the mouse by default, and a pointer over
+a window keeps producing enter events whose focus changes lwm defers on the
+timer in `focus.h` — under Xvfb that deferral has been seen to take seconds,
+which lands in the middle of whatever check is running. Keyboard-driven focus
+has no such delay, so with the pointer out of the way the section is
+deterministic. Don't reintroduce a pointer-based way of deciding which window
+starts with the focus: use the fact that lwm focuses a window as it maps it.
 
 The decorations section is the one that most needs a real server: the client
 window is reparented out of its frame and back in again, and what that costs

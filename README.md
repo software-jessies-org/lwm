@@ -59,6 +59,20 @@ bumps into the nearest window, or the edge of the monitor - and from the middle
 square, it expands all four edges at once. The middle button does the same, but
 ignores the other windows, so it fills the monitor the window is on.
 
+### Moving the input focus from the keyboard
+
+Holding the `Windows` key and pressing an arrow key moves the input focus to
+the next window in that direction. Windows are compared by their centres: the
+window picked is the nearest one whose centre lies in the quarter of the screen
+opening out from the centre of the focused window towards the arrow you
+pressed, so `Windows`+`Left` will not jump to a window that is mostly above or
+below you even if it is somewhat to the left. Windows on other monitors are
+included, so this is also how you move the focus between screens. Hidden
+windows are not; unhide them from the desktop menu first.
+
+This moves the focus only. It does not raise the window, or move the mouse
+pointer.
+
 ### Changing window stacking order
 
 Left click on a window's title or border will bring it to the top of the window

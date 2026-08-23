@@ -30,6 +30,16 @@
 // See docs/refactoring-plan.md, phase E.
 namespace xlib {
 
+// The keyboard mapping, exactly as the X request hands it over: keysyms for
+// every keycode from min_keycode to max_keycode inclusive, keysyms_per_keycode
+// of them for each, in one flat run. Turning that into "which keycodes carry
+// this keysym?" is xlib.cc's job, so the fake has nothing to reimplement.
+struct KeyboardMapping {
+  uint8_t min_keycode = 0;
+  int keysyms_per_keycode = 0;
+  std::vector<uint32_t> keysyms;
+};
+
 class Server {
  public:
   virtual ~Server() = default;
@@ -148,6 +158,22 @@ class Server {
   virtual void UngrabButton(unsigned int button,
                             unsigned int modifiers,
                             Window grab_window) = 0;
+
+  // Keyboard grabs take no event mask: while a passive key grab is active,
+  // the key events go to grab_window whatever it has asked for.
+  virtual void GrabKey(uint8_t keycode,
+                       unsigned int modifiers,
+                       Window grab_window,
+                       bool owner_events,
+                       int pointer_mode,
+                       int keyboard_mode) = 0;
+  virtual void UngrabKey(uint8_t keycode,
+                         unsigned int modifiers,
+                         Window grab_window) = 0;
+
+  // Reads the whole keyboard mapping. Waits for its reply, but is only called
+  // at start-up and on MappingNotify, so the round trip is rare.
+  virtual KeyboardMapping GetKeyboardMapping() = 0;
   virtual void ChangeActivePointerGrab(unsigned int event_mask,
                                        Cursor cursor,
                                        Time t) = 0;

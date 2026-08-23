@@ -3,6 +3,28 @@
 
 ## 2026-08-23 (pn, Basel)
 
+Added keyboard navigation of the input focus: holding the 'Windows' key
+(Super/Mod4) and pressing an arrow key moves the focus to the next window in
+that direction. Windows are compared by the centres of their frames, and the
+one chosen is the nearest whose centre lies in the quarter-plane cone which
+starts at the centre of the focused window and opens towards the arrow
+pressed - so the delta along the arrow's own axis has to have the right sign,
+and be at least as large as the delta along the other one. A window which is
+mostly above or below the focused one is therefore not selected by Left or
+Right however far to the side it also is, and a window exactly on the diagonal
+belongs to both of the cones which meet there, so no window is unreachable.
+
+Windows on other monitors are candidates too, which makes this the way to move
+the focus between screens; hidden and withdrawn windows are not. If there is
+no window in the direction pressed, the focus stays where it is. Only the
+focus moves: the window is not raised, and the pointer is not warped.
+
+This is lwm's first key binding, and the first passive grab it places on the
+root window rather than on a client. The grab is repeated under both lock
+modifiers, as the mouse gestures are, and is re-taken on MappingNotify, since
+a change of keyboard layout can move the keycode an arrow sits on.
+
+
 Added mouse gestures on the 'Windows' key (Super/Mod4), which act on a
 window's own background rather than on its frame: left-drag moves, middle-drag
 resizes the edge or corner picked out by a 3x3 grid over the window, and a

@@ -241,6 +241,16 @@ class FakeServer : public Server {
   void UngrabButton(unsigned int button,
                     unsigned int modifiers,
                     Window grab_window) override;
+  void GrabKey(uint8_t keycode,
+               unsigned int modifiers,
+               Window grab_window,
+               bool owner_events,
+               int pointer_mode,
+               int keyboard_mode) override;
+  void UngrabKey(uint8_t keycode,
+                 unsigned int modifiers,
+                 Window grab_window) override;
+  KeyboardMapping GetKeyboardMapping() override;
   void ChangeActivePointerGrab(unsigned int event_mask,
                                Cursor cursor,
                                Time t) override;

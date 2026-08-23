@@ -104,6 +104,10 @@ The interesting handlers:
   all; the Windows-key (Super/Mod4) gestures are the exception, and the reason
   is `Client::GrabSuperButtons` — see below.
 * `EvEnterNotify` → `Focuser::EnterWindow` (sloppy focus) plus cursor reset.
+* `EvKeyPress` → `HandleKeyPress` (in `keyboard.cc`). The only keys lwm grabs
+  are Super+arrow; see below.
+* `EvMappingNotify` → `GrabNavigationKeys`, because a keymap change can move
+  the keycode an arrow sits on out from under the grab.
 * `EvPropertyNotify` — name, visible name, transient-for, strut, `_NET_WM_STATE`
   (this is where full-screen enter/exit is triggered).
 * `EvClientMessage` — EWMH requests: state change, activate, close, moveresize.
@@ -129,6 +133,33 @@ Three things about that grab are easy to get wrong:
   shape mid-drag.
 * Both grabs are asynchronous. lwm swallows these clicks and never replays
   them, so there's nothing to hold the pointer or keyboard frozen for.
+
+## Keyboard focus navigation
+
+Super plus an arrow key moves the input focus to the next window in that
+direction. It is the only keyboard binding lwm has, and the only passive grab
+that isn't on a client window: `GrabNavigationKeys` (`keyboard.cc`) puts it on
+the **root**, so it works over the desktop and whatever holds the focus. As
+with the mouse gestures, X matches modifiers exactly, so each key is grabbed
+once per combination of the two lock modifiers.
+
+Two things differ from the mouse side:
+
+* A keyboard grab takes no event mask - while it's active the key events go to
+  the grab window regardless - so there's no equivalent of the
+  `XChangeActivePointerGrab` dance. It does deliver the release as well as the
+  press; `DispatchXEvent` names `XCB_KEY_RELEASE` among the events it ignores.
+* Which keycode carries which keysym is not fixed. `KeycodesForKeysym`
+  (`xlib.cc`) reads the mapping and finds all of them - the arrows exist on
+  the keypad as well as the cursor pad - and `MappingNotify` re-runs the whole
+  grab, since a layout switch invalidates it.
+
+The choice of window is pure geometry and lives in `navigate.{h,cc}`:
+`PickWindowInDirection` compares window centres and takes the nearest one
+inside the quarter-plane cone opening from the focused window towards the
+arrow. `keyboard.cc` supplies the candidates - every client that isn't hidden
+or withdrawn, on every monitor - and hands the winner to `Focuser::FocusClient`.
+Nothing is raised and the pointer isn't moved.
 
 The gestures themselves reuse the existing `WindowMover`/`WindowResizer` (the
 button held is now a constructor argument, rather than always being

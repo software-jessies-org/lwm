@@ -611,6 +611,53 @@ int XUngrabButton(unsigned int button,
   return 0;
 }
 
+int XGrabKey(uint8_t keycode,
+             unsigned int modifiers,
+             Window grab_window,
+             bool owner_events,
+             int pointer_mode,
+             int keyboard_mode) {
+  LOGD(grab_window) << "XGrabKey(" << WinID(grab_window) << ") keycode="
+                    << (int)keycode;
+  server->GrabKey(keycode, modifiers, grab_window, owner_events, pointer_mode,
+                  keyboard_mode);
+  return 0;
+}
+
+int XUngrabKey(uint8_t keycode, unsigned int modifiers, Window grab_window) {
+  LOGD(grab_window) << "XUngrabKey(" << WinID(grab_window) << ") keycode="
+                    << (int)keycode;
+  server->UngrabKey(keycode, modifiers, grab_window);
+  return 0;
+}
+
+std::vector<uint8_t> KeycodesForKeysym(uint32_t keysym) {
+  std::vector<uint8_t> res;
+  if (!keysym) {
+    return res;  // Keysym 0 means "no symbol", and fills the unused slots.
+  }
+  const KeyboardMapping m = server->GetKeyboardMapping();
+  if (m.keysyms_per_keycode <= 0) {
+    return res;
+  }
+  const int keycodes = m.keysyms.size() / m.keysyms_per_keycode;
+  for (int i = 0; i < keycodes; i++) {
+    for (int j = 0; j < m.keysyms_per_keycode; j++) {
+      if (m.keysyms[i * m.keysyms_per_keycode + j] != keysym) {
+        continue;
+      }
+      // Which shift level the symbol sits at doesn't matter to us: we grab
+      // the key and match on the modifiers ourselves.
+      const int keycode = m.min_keycode + i;
+      if (keycode <= 255) {
+        res.push_back((uint8_t)keycode);
+      }
+      break;
+    }
+  }
+  return res;
+}
+
 void XChangeActivePointerGrab(unsigned int event_mask,
                               Cursor cursor,
                               Time time) {

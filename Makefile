@@ -64,11 +64,15 @@ SRCS = \
 	gesture.cc \
 	gesture_test.cc \
 	hider.cc \
+	keyboard.cc \
+	keyboard_test.cc \
 	log.cc \
 	lwm.cc \
 	manage.cc \
 	menulayout.cc \
 	menulayout_test.cc \
+	navigate.cc \
+	navigate_test.cc \
 	placement.cc \
 	placement_test.cc \
 	realserver.cc \

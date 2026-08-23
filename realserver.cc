@@ -361,6 +361,47 @@ class RealServer : public Server {
     // Possible errors: BadValue, BadWindow.
   }
 
+  void GrabKey(uint8_t keycode,
+               unsigned int modifiers,
+               Window grab_window,
+               bool owner_events,
+               int pointer_mode,
+               int keyboard_mode) override {
+    xcb_grab_key(conn, owner_events, grab_window, modifiers, keycode,
+                 pointer_mode, keyboard_mode);
+    // Possible errors: BadAccess (another client holds this combination),
+    // BadValue, BadWindow.
+  }
+
+  void UngrabKey(uint8_t keycode,
+                 unsigned int modifiers,
+                 Window grab_window) override {
+    xcb_ungrab_key(conn, keycode, grab_window, modifiers);
+    // Possible errors: BadValue, BadWindow.
+  }
+
+  KeyboardMapping GetKeyboardMapping() override {
+    const xcb_setup_t* setup = xcb_get_setup(conn);
+    KeyboardMapping res;
+    res.min_keycode = setup->min_keycode;
+    const int count = setup->max_keycode - setup->min_keycode + 1;
+    if (count <= 0) {
+      return res;
+    }
+    Reply<xcb_get_keyboard_mapping_reply_t> r(xcb_get_keyboard_mapping_reply(
+        conn,
+        xcb_get_keyboard_mapping(conn, setup->min_keycode, count),
+        nullptr));
+    if (!r) {
+      return res;
+    }
+    res.keysyms_per_keycode = r->keysyms_per_keycode;
+    const xcb_keysym_t* syms = xcb_get_keyboard_mapping_keysyms(r.get());
+    const int len = xcb_get_keyboard_mapping_keysyms_length(r.get());
+    res.keysyms.assign(syms, syms + len);
+    return res;
+  }
+
   void ChangeActivePointerGrab(unsigned int event_mask,
                                Cursor cursor,
                                Time t) override {

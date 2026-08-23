@@ -115,6 +115,22 @@ abandons it.  A window which is full screen, or one of the window types
 \fIlwm\fP never decorates (desktops, docks, menus and splash screens), is
 left alone.
 .PP
+Holding the Windows key and pressing an arrow key moves the input focus to the
+next window in that direction.  Windows are compared by the centres of their
+frames: the window chosen is the nearest one whose centre lies within the cone
+which starts at the centre of the focused window and opens out towards the
+arrow pressed.  For \fBWindows+Left\fP that means a centre further left than
+the focused window's, and no further away vertically than it is horizontally,
+so a window which is mostly above or below the current one is not selected
+however far to the left it also is.  A window lying exactly on the diagonal
+belongs to both of the cones which meet there, which is what stops any window
+being unreachable.
+.PP
+Windows on other monitors are included, so this is also the way to move the
+focus from one screen to another.  Hidden windows are not included.  If there
+is no window in the direction pressed, the focus does not move.  Only the
+input focus changes: the window is not raised, and the pointer is not moved.
+.PP
 It is possible to run commands when alt-clicking on a window's title bar.
 The configured command is run with the window id (in hex with 0x prefix)
 appended to it (separated by a space), so that the command run can be a script
