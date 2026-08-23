@@ -86,12 +86,17 @@ not a replacement for manual Xephyr testing of new behaviour.
 
 The mouse gestures, driven with `xdotool` under the same headless `Xvfb`
 arrangement as the smoke test: Windows-key drags to move and resize, double
-clicks to expand a window up to its neighbours or its monitor, and clicks to
-raise or hide it.
+clicks to expand a window up to its neighbours or its monitor, clicks to raise
+or hide it, and the Super+Control click that turns its furniture on and off.
 These need a real server - the passive grabs, the modifier bits in the
 `ButtonPress` and the pointer grab that keeps a drag alive are all things
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
 the event level and this covers them at the pointer level.
+
+The decorations section is the one that most needs a real server: the client
+window is reparented out of its frame and back in again, and what that costs
+(an unmap, a restack and the input focus) is exactly what `FakeServer` models
+only as far as lwm asked for it.
 
 The last section covers undecorated windows: the gestures and
 `_NET_WM_MOVERESIZE` on a client that draws its own decorations, which are

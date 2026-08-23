@@ -15,6 +15,13 @@ World::World(int width, int height)
     : server_(new xlib::FakeServer), previous_server_(nullptr) {
   server_->SetScreenSize(width, height);
   previous_server_ = xlib::SetServer(server_);
+  // The new FakeServer hands out window ids from the beginning again, so any
+  // id the last test's lwm windows claimed would make this test's client
+  // windows look like lwm's own - which lwm declines to manage. How far the
+  // ids get depends on how many windows a test creates, so without this the
+  // tests are order-dependent in a way that only shows up when someone adds
+  // one.
+  xlib::ForgetLWMWindows();
 
   // From here on the order matches main()'s, because the dependencies are the
   // same ones: Resources before anything that reads a colour, the atoms before

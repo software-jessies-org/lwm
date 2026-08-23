@@ -94,6 +94,12 @@ class LScr {
 
   void Furnish(Client* c);
 
+  // The reverse: destroys the client's frame window and forgets it, leaving
+  // the client parented to the root. The caller is expected to have already
+  // reparented the client window out of the frame - this only disposes of the
+  // frame itself. See Client::SetFramed.
+  void Unfurnish(Client* c);
+
   void Remove(Client* client);
 
   Hider* GetHider() { return &hider_; }

@@ -372,6 +372,13 @@ extern Window CreateNamedWindow(const std::string& name,
 
 extern bool IsLWMWindow(Window w);
 
+// Empties the set IsLWMWindow() answers from. Only wmtest::World calls this:
+// lwm itself never forgets a window it made, but each test stands up a fresh
+// FakeServer whose window ids start again from the beginning, so ids left
+// over from the previous test would make a new test's *client* windows look
+// like lwm's own - and lwm politely declines to manage those.
+extern void ForgetLWMWindows();
+
 struct WindowTree {
   Window self;
   Window parent;

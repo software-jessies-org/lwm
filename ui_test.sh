@@ -19,6 +19,10 @@
 #   button 2 double click  the same, but ignoring other windows
 #   button 3 click         hide the window
 #
+# ...plus the one Super+Control gesture:
+#
+#   button 1 click         turn lwm's furniture on or off for the window
+#
 # These need a real X server: the passive grabs in Client::GrabSuperButtons,
 # the modifier state in the ButtonPress event and the pointer grab that keeps
 # the drag alive are all things only the server does. drag_test.cc covers the
@@ -281,6 +285,18 @@ super_click() {
   sleep 0.4
 }
 
+# super_ctrl_click <button> <x> <y> - the Super+Control gesture set.
+super_ctrl_click() {
+  local button="$1" x="$2" y="$3"
+  xdotool keydown super
+  xdotool keydown ctrl
+  xdotool mousemove "${x}" "${y}"
+  xdotool click "${button}"
+  xdotool keyup ctrl
+  xdotool keyup super
+  sleep 0.4
+}
+
 # --- move -------------------------------------------------------------------
 
 start_client lwmtest1 '200x200+300+300'
@@ -294,13 +310,18 @@ FRAME=$(frame_of "${CLIENT}")
 pass "xlogo mapped and framed"
 
 # How much bigger the frame is than the window inside it - two borders wide,
-# and a border plus a title bar high. Measured rather than assumed, because
-# both come from Xresources, and `place` needs them to know what it's waiting
-# for.
-read -r _ _ CW CH <<<"$(geom "${CLIENT}")"
-read -r _ _ FW FH <<<"$(geom "${FRAME}")"
+# and a border plus a title bar high - and where inside the frame the client
+# window sits. Measured rather than assumed: the sizes come from Xresources,
+# and the offsets also carry the frame's own 1px X border, which lives outside
+# the frame's coordinate space and so isn't part of either size. `place` needs
+# the sizes to know what it's waiting for, and the decoration checks need the
+# offsets.
+read -r CX0 CY0 CW CH <<<"$(geom "${CLIENT}")"
+read -r FX0 FY0 FW FH <<<"$(geom "${FRAME}")"
 FURNITURE_W=$((FW - CW))
 FURNITURE_H=$((FH - CH))
+FURNITURE_X=$((CX0 - FX0))
+FURNITURE_Y=$((CY0 - FY0))
 
 place "${CLIENT}" 300 300 200 200
 read -r FX FY FW FH <<<"$(geom "${FRAME}")"
@@ -509,6 +530,44 @@ check_eq "a window on the second monitor expands within that monitor" \
 
 cli "xrandr"
 sleep 0.5
+
+# --- decorations ------------------------------------------------------------
+#
+# Super+Control+button 1 turns lwm's furniture on and off for the window under
+# the pointer, keeping its outer extent where it is. This needs a real server
+# more than most of the checks here: the client window is reparented out of
+# its frame and back in again, which is the sort of thing FakeServer models
+# only as far as lwm asked for it.
+
+place "${CLIENT}" 400 300 200 200
+read -r FX FY FW FH <<<"$(geom "${FRAME}")"
+read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+super_ctrl_click 1 "${CX}" "${CY}"
+
+check_eq "Super+Control+button 1 removes the furniture" \
+  "$(frame_of "${CLIENT}")" ""
+check_eq "and the client grows to keep the outer extent" \
+  "$(geom "${CLIENT}")" "${FX} ${FY} ${FW} ${FH}"
+check_eq "and the window is still on screen" \
+  "$(map_state "${CLIENT}")" "IsViewable"
+
+# It's still a window lwm manages, with all the gestures it had before.
+read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+super_drag 1 "${CX}" "${CY}" $((CX + 60)) $((CY + 40))
+check_eq "an undecorated window still moves with Super+button 1" \
+  "$(geom "${CLIENT}")" "$((FX + 60)) $((FY + 40)) ${FW} ${FH}"
+
+read -r FX FY FW FH <<<"$(geom "${CLIENT}")"
+read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+super_ctrl_click 1 "${CX}" "${CY}"
+FRAME=$(frame_of "${CLIENT}")
+check "the furniture comes back" test -n "${FRAME}"
+check_eq "and the outer extent is still where it was" \
+  "$(geom "${FRAME}")" "${FX} ${FY} ${FW} ${FH}"
+WANT="$((FX + FURNITURE_X)) $((FY + FURNITURE_Y))"
+WANT="${WANT} $((FW - FURNITURE_W)) $((FH - FURNITURE_H))"
+check_eq "so the client shrinks back inside it by exactly the furniture" \
+  "$(geom "${CLIENT}")" "${WANT}"
 
 # --- hide -------------------------------------------------------------------
 #

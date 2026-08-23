@@ -365,6 +365,18 @@ class WindowLowerer : public WindowClicker {
   }
 };
 
+// Super+Control+click: turn lwm's furniture on or off for this window. Like
+// the other clicks it waits for the release and does nothing if the pointer
+// wandered off in between, so a change of mind costs nothing.
+class WindowDecorationToggler : public WindowClicker {
+ public:
+  WindowDecorationToggler(Client* c) : WindowClicker(c) {}
+  virtual void act(Client* c) {
+    LOGD(c) << "Toggling decorations (user action)";
+    c->SetFramed(!c->framed);
+  }
+};
+
 class ShellRunner : public DragHandler {
  public:
   explicit ShellRunner(int button) : button_(button) {}
@@ -412,6 +424,11 @@ DoubleClickTracker super_clicks;
 //   button 3 click         hide the window, as a button 3 click on the
 //                          furniture does
 //
+// Holding Control as well switches to a second, much smaller set, which so
+// far has one gesture in it:
+//
+//   button 1 click         turn lwm's furniture on or off for this window
+//
 // A double click in the centre square grows every edge, and grows nothing
 // when the window is already as big as it goes - which is when it shrinks the
 // window back to its pre-expansion size instead.
@@ -425,6 +442,16 @@ DoubleClickTracker super_clicks;
 // square resizes nothing, but expands everything.
 DragHandler* getSuperDragHandler(Client* c,
                                  const xcb_button_press_event_t* e) {
+  if (e->state & SUPER_CTRL_MASK) {
+    // Super+Control, which is a gesture set of its own rather than a variation
+    // on the ones below: none of the grid, the double clicks or the drags
+    // means anything here. Only one button does anything, and the others
+    // deliberately do nothing rather than something the user didn't ask for.
+    if (e->detail == SUPER_DECORATE_BUTTON) {
+      return new WindowDecorationToggler(c);
+    }
+    return nullptr;
+  }
   if (e->detail == SUPER_HIDE_BUTTON) {
     // Hiding cares about neither the grid nor double clicks, so it goes
     // first: WindowHider waits for the release, and only acts if the pointer

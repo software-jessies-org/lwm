@@ -92,6 +92,33 @@ class Client {
   // leaves the window alone rather than inventing a size for it.
   void Unexpand();
 
+  // Adds or removes lwm's window furniture, at the user's request (the
+  // Super+Control click - see getSuperDragHandler). What stays put is the
+  // window's outer extent: a window which loses its frame grows into the
+  // space the furniture was using, and one which gains a frame shrinks to
+  // make room, so the toggle doesn't shuffle the desktop about.
+  //
+  // Does nothing in the three cases where there's nothing sensible to do: a
+  // window type which never gets furniture in the first place (see
+  // ewmh_hasframe), a full-screen window, whose furniture is already off for
+  // as long as that lasts, and a hidden one, which the Hider is holding by
+  // whichever window this would change.
+  void SetFramed(bool want_framed);
+
+  // Tells this Client that lwm has just asked the server to unmap the client
+  // window itself. An unmap lwm asked for is not the client withdrawing its
+  // window, and the UnmapNotify looks exactly the same either way, so the
+  // ones we cause have to be counted off as they arrive: see EvUnmapNotify.
+  //
+  // Reparenting counts. The server unmaps a mapped window on its way out of
+  // its old parent and maps it again afterwards, so SetFramed announces one
+  // of these in each direction.
+  void ExpectUnmap() { expected_unmaps_++; }
+
+  // Consumes one expected unmap, returning true if there was one to consume -
+  // that is, if this UnmapNotify is lwm's own doing and must be ignored.
+  bool TakeExpectedUnmap();
+
   Window window = 0;  // Client's window.
   Window parent = 0;  // Window manager frame.
   Window trans = 0;   // Window that client is a transient for.
@@ -208,6 +235,12 @@ class Client {
   // that's been unplugged.
   Rect MakeContentRectVisible(const Rect& content) const;
 
+  // The two halves of SetFramed, each taking the content rect the window is
+  // to end up with. Between them they're the only code outside manage() and
+  // Client::Release() that moves a client window from one parent to another.
+  void AddFrame(const Rect& new_content);
+  void RemoveFrame(const Rect& new_content);
+
   const DimensionLimiter x_limiter_;
   const DimensionLimiter y_limiter_;
 
@@ -216,6 +249,11 @@ class Client {
   // This value should not be used for anything during normal LWM running.
   int original_border_width_ = 0;
   int state_ = 0;  // Window state. See ICCCM and <X11/Xutil.h>
+
+  // Unmaps of the client window which lwm asked for and hasn't yet seen the
+  // UnmapNotify for. See ExpectUnmap().
+  int expected_unmaps_ = 0;
+
  public:
   bool hidden = false;  // true if this client is hidden.
   int proto = 0;

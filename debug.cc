@@ -249,6 +249,14 @@ void DebugCLI::NotifyFrameCreated(Client* c) {
 }
 
 // static
+void DebugCLI::NotifyFrameRemoved(Client* c) {
+  if (!debugCLI || !c) {
+    return;
+  }
+  debugCLI->DisableDebugging(c->parent);
+}
+
+// static
 void DebugCLI::NotifyClientRemove(Client* c) {
   if (!debugCLI || !c) {
     return;

@@ -37,9 +37,10 @@ the screen, and the frame's X border is a black pixel drawn all the way round.
 So the published extents are `FrameRect() - ContentRect()` plus one on each
 side — all four zero for an unframed, full-screen or withdrawn window. It's
 republished from `Client::SetState` (which covers being managed, hidden and
-withdrawn) and from `EnterFullScreen`/`ExitFullScreen`; those are the only
-moments it can change, because whether a window is framed is decided once in
-`manage()` and never revisited.
+withdrawn), from `EnterFullScreen`/`ExitFullScreen`, and from
+`Client::SetFramed`. Those are the only moments it can change: `manage()`
+makes the framing decision, and only the user's decoration toggle revisits
+it.
 
 Mutators: `MoveTo` (size must be unchanged — it `LOGF`s, i.e. exits, otherwise)
 and `MoveResizeTo`. Both update `content_rect_`, move the X windows and send a
@@ -119,12 +120,22 @@ acts on by deactivating its foreground window.
 ## Hiding (`Hider`, in `hider.cc`)
 
 Hiding = unmap the frame + `IconicState`. No icons are placed on the desktop.
-`hidden_` is a list of **frame** window ids (see `hiddenIDFor`). The unhide menu
-is rebuilt on open: hidden windows first, then normal ones, separated by a dotted
-line; entries whose `Client` has vanished are pruned at that point. The red
-outline box is four 1px-wide override windows (`highlightL/R/T/B`), hidden and
-re-shown around each menu repaint to avoid corruption — the menu GC uses `GXxor`
-so highlights are drawn by EORing.
+`hidden_` is a list of the window ids `hiddenIDFor` returns: the frame for a
+framed client, and the client's own window for one with no frame — which is
+also what gets unmapped, since the server ignores an `UnmapWindow` on the root
+and an unframed client's `parent` *is* the root. Unmapping the client window
+directly means telling the `Client` to expect the resulting `UnmapNotify`; see
+"Turning the furniture on and off" below.
+
+The unhide menu is rebuilt on open: hidden windows first, then normal ones,
+separated by a dotted line; entries whose `Client` has vanished are pruned at
+that point. The normal half filters on `ewmh_hasframe()`, not `framed`, so an
+ordinary window the user has undecorated is still listed while the
+furniture-free window types are not.
+
+The red outline box is four 1px-wide override windows (`highlightL/R/T/B`),
+hidden and re-shown around each menu repaint to avoid corruption — the menu GC
+uses `GXxor` so highlights are drawn by EORing.
 
 ## The client lifecycle and the save-set
 
@@ -296,6 +307,49 @@ mouse gesture would be refused with "already doing something".
 Covered by the `Undecorated` and `MoveResize` tests in `drag_test.cc`, and
 end-to-end against a real server by the undecorated-window section of
 `ui_test.sh`.
+
+### Turning the furniture on and off
+
+Super+Control+button 1 (`WindowDecorationToggler` in `drag.cc`) calls
+`Client::SetFramed`, which moves a live client between the two states above —
+though only the *second* kind of undecorated window, since it refuses when
+`ewmh_hasframe()` says no. It also refuses while the window is full screen
+(the furniture is already off, and the geometry that means anything belongs to
+`ExitFullScreen`) and while it is hidden (the `Hider` is holding it by
+whichever window would be mapped or unmapped). What is
+preserved is `FrameRect()`, lwm's idea of the outer extent everywhere else
+(maximisation and expansion both work in those coordinates): the client window
+grows into the space the furniture was using, and shrinks back out of it.
+`LimitResize` still gets the last word, so an xterm rounds that to whole
+character cells. The frame's own 1px X border is not accounted for, because it
+isn't part of `FrameRect()` either.
+
+`SetFramed`'s two halves — `AddFrame`/`RemoveFrame`, with `LScr::Furnish` and
+the new `LScr::Unfurnish` — are the only code outside `manage()` and
+`Client::Release()` that reparents a client window. Three things that costs:
+
+* **The reparent unmaps the window.** X unmaps a mapped window on its way out
+  of its old parent and maps it again afterwards, and the `UnmapNotify` is
+  indistinguishable from the client withdrawing its own window — which lwm
+  answers by dropping the window. So `Client::ExpectUnmap()` counts the unmaps
+  lwm causes and `EvUnmapNotify` ticks them off. `Hider::Hide` uses the same
+  counter, because an unframed window has no frame to unmap in its place.
+* **The reparent restacks it.** A reparented window goes to the top of its new
+  siblings, so both halves put it back with an explicit `Above`/`Sibling`
+  configure: gaining or losing furniture must not raise or lower the window.
+* **The reparent drops the input focus.** The server hands it back to
+  `PointerRoot` when the window holding it stops being viewable, and nothing
+  in lwm's focus history changed, so `FocusClient()` sees a client which is
+  already focused and does nothing. `Focuser::ReassertFocus` is for exactly
+  that case.
+
+Order matters in `RemoveFrame`: the client window is reparented and restacked
+relative to the frame *before* `Unfurnish` destroys it, and `Unfurnish` erases
+the `parents_` entry before the `XDestroyWindow`, so the `DestroyNotify` that
+comes back doesn't find a client to remove.
+
+Covered by the `Decorations` tests in `drag_test.cc` and the decorations
+section of `ui_test.sh`.
 
 ## Icons (`xlib::ImageIcon`)
 

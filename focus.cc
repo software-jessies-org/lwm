@@ -166,6 +166,14 @@ void Focuser::FocusClient(Client* c) {
   }
 }
 
+void Focuser::ReassertFocus(Client* c) {
+  if (!c || !c->HasFocus()) {
+    return;
+  }
+  LOGD(c) << "Re-asserting input focus";
+  ReallyFocusClient(c, true);
+}
+
 void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
   Client* was_focused = GetFocusedClient();
   RemoveFromHistory(c);

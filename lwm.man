@@ -100,6 +100,19 @@ Clicking button 3 with the Windows key held hides the window, just as a
 button 3 click on its frame does.  As on the frame, the click is abandoned if
 the pointer moves away before the button is released.
 .PP
+Holding Control as well as the Windows key selects a different gesture
+altogether: clicking button 1 turns \fIlwm\fP's furniture on or off for that
+window.  A decorated window loses its title bar and borders, and grows into
+the space they were using; an undecorated one - whether \fIlwm\fP never gave
+it furniture, or the user took it away - gains them, and shrinks to make room.
+Either way the window's outer extent stays exactly where it was, so nothing
+else on the desktop has to move.  The gestures above keep working on a window
+with no furniture, which is the only way such a window can be moved at all.
+As with the other clicks, moving the pointer away before releasing the button
+abandons it.  A window which is full screen, or one of the window types
+\fIlwm\fP never decorates (desktops, docks, menus and splash screens), is
+left alone.
+.PP
 It is possible to run commands when alt-clicking on a window's title bar.
 The configured command is run with the window id (in hex with 0x prefix)
 appended to it (separated by a space), so that the command run can be a script

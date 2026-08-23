@@ -16,6 +16,15 @@ nowhere left to grow, the same gesture shrinks it back to the size it had
 before it was expanded, and a window which is maximised because it asked to be
 is un-maximised. A window with no earlier size on record is left where it is.
 
+Super+Control+left click on a client window turns lwm's window furniture on or
+off for it. The window's outer extent is preserved, so a window which loses
+its title bar and borders grows into the space they were using, and one which
+gains them shrinks to make room; nothing else on the desktop moves. This works
+in both directions on any ordinary window, including ones lwm chose not to
+decorate because the client said it draws its own title bar. Full-screen
+windows, and window types which never get furniture in the first place, are
+left alone.
+
 Super+right click anywhere within the client window hides the window.
 
 Super+left click on the client window raises the window.
@@ -24,6 +33,12 @@ Fixed a bug where a restart of lwm made gummiband's closed drop-down menu
 reappear.
 
 Fixed a pile of bugs related to steam games.
+
+Hiding an undecorated window now works. Hiding used to unmap the frame and let
+the client window inside it go too, which for a window with no frame meant
+asking the server to unmap the root - which it ignores, leaving the window on
+screen, marked hidden, and unreachable from the unhide menu. Undecorated
+windows also appear in the unhide menu now, alongside the decorated ones.
 
 lwm now publishes `_NET_FRAME_EXTENTS` on every window it manages, and
 advertises it in `_NET_SUPPORTED`. This is how a client finds out how much

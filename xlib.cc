@@ -570,6 +570,10 @@ bool IsLWMWindow(Window w) {
   return lwm_owned_windows.count(w);
 }
 
+void ForgetLWMWindows() {
+  lwm_owned_windows.clear();
+}
+
 WindowTree WindowTree::Query(Window w) {
   return server->QueryTree(w);
 }

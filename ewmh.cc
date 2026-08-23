@@ -229,7 +229,7 @@ xlib::ImageIcon* ewmh_get_window_icon(Client* c) {
                                            prop.Data32().size());
 }
 
-bool ewmh_hasframe(Client* c) {
+bool ewmh_hasframe(const Client* c) {
   switch (c->wtype) {
     case WTypeDesktop:
     case WTypeDock:

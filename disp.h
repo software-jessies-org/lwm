@@ -16,6 +16,14 @@
 #define SUPER_RESIZE_BUTTON XCB_BUTTON_INDEX_2
 #define SUPER_HIDE_BUTTON XCB_BUTTON_INDEX_3
 
+// Holding Control as well as the Windows key selects a different gesture set
+// altogether. There's only one of them so far: a click turns lwm's furniture
+// on or off for the window under the pointer. It's a separate modifier rather
+// than a fourth button because the plain Super gestures have taken all three,
+// and because a decoration toggle is a rarer thing to want than a move.
+#define SUPER_CTRL_MASK XCB_MOD_MASK_CONTROL
+#define SUPER_DECORATE_BUTTON XCB_BUTTON_INDEX_1
+
 // MOVING_BUTTON_MASK describes the bits which are set in the mouse statis mask
 // value while either of the mouse buttons we can use for dragging/reshaping
 // is down.

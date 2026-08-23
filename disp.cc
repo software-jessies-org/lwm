@@ -196,6 +196,15 @@ void EvUnmapNotify(xcb_generic_event_t* ev) {
   if (c->window != e->window) {
     return;
   }
+  // An unmap lwm itself asked for. That's either a direct one - hiding a
+  // client with no frame to unmap in its place - or the server's own doing on
+  // the way through a reparent, which is how the decoration toggle works. The
+  // event is identical either way, so Client counts the ones we cause and we
+  // tick them off here.
+  if (c->TakeExpectedUnmap()) {
+    LOGD(c) << "Ignoring an unmap we asked for";
+    return;
+  }
   // Plus, when we reparent the client window to our frame, we'll receive an
   // unmap notification with window=child window, and parent=root. Check for
   // this, and ignore it.

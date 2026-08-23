@@ -3,6 +3,7 @@
 #include <set>
 
 #include "client.h"
+#include "ewmh.h"
 #include "lwm.h"
 #include "menulayout.h"
 #include "resource.h"
@@ -12,11 +13,26 @@
 
 namespace {
 
-// hiddenIDFor returns the parent Window ID for the given client. We have a
-// specially-named function for this so that we don't get confused about which
-// Window ID we're using, as this is used in both Hide and OpenMenu.
+// hiddenIDFor returns the Window ID which stands for a client in the hidden_
+// list and in the unhide menu. It's the client's own window: unlike the frame,
+// that lasts for as long as the client does, which matters now the user can
+// take a window's furniture away and give it back (see Client::SetFramed).
+// LScr::GetClient resolves it either way round.
+// We have a specially-named function for this so that we don't get confused
+// about which Window ID we're using, as it's used in Hide, Unhide and
+// OpenMenu.
 Window hiddenIDFor(const Client* c) {
-  return c->parent;
+  return c->window;
+}
+
+// hideTargetFor returns the window Hide unmaps and Unhide maps again: the
+// frame if there is one, and the client's own window if not. It is *not* the
+// same as hiddenIDFor - unmapping the frame implicitly takes the client
+// window inside it with it, which saves re-mapping and repositioning the
+// client afterwards, and an unframed client's 'parent' is the root, which the
+// server declines to unmap at all.
+Window hideTargetFor(const Client* c) {
+  return c->framed ? c->parent : c->window;
 }
 
 void mapAndRaise(Window w, int xmin, int ymin, int width, int height) {
@@ -127,11 +143,14 @@ void Hider::hideHighlightBox() {
 void Hider::Hide(Client* c) {
   hidden_.push_front(hiddenIDFor(c));
 
-  // Actually hide the window.
-  xlib::XUnmapWindow(c->parent);
-  // We don't need to unmap the client window, as it's implicitly unmapped
-  // via its frame. Indeed, doing so requires us to then re-map it, which causes
-  // extra unnecessary repositioning code to run.
+  // Actually hide the window. An unframed client has nothing to hide behind,
+  // so its own window is what goes - and the Client has to be warned first,
+  // or the UnmapNotify that comes back looks exactly like the client
+  // withdrawing the window, and lwm stops managing it.
+  if (!c->framed) {
+    c->ExpectUnmap();
+  }
+  xlib::XUnmapWindow(hideTargetFor(c));
 
   c->hidden = true;
   // Remove input focus, and drop from focus history.
@@ -143,7 +162,7 @@ void Hider::Unhide(Client* c) {
   // If anyone ever hides so many windows that we notice the O(n) scan, they're
   // doing something wrong.
   for (auto it = hidden_.begin(); it != hidden_.end(); ++it) {
-    if (*it == c->parent) {
+    if (*it == hiddenIDFor(c)) {
       hidden_.erase(it);
       c->hidden = false;
       break;
@@ -151,7 +170,7 @@ void Hider::Unhide(Client* c) {
   }
   // Always raise and give focus if we're trying to unhide, even if it wasn't
   // hidden.
-  xlib::XMapWindow(c->parent);
+  xlib::XMapWindow(hideTargetFor(c));
   c->Raise();
   c->SetState(NormalState);
   // Windows are given input focus when they're unhidden.
@@ -204,7 +223,12 @@ void Hider::OpenMenu(const xcb_button_press_event_t* e) {
     // 3: Verify the preferences window appears in the right-click unhide menu.
     // 4: Click on the X icon of the preferences window.
     // 5: Verify the preferences window no longer appears in the unhide menu.
-    if (!c->framed || added.count(w) || !c->IsNormal()) {
+    // ewmh_hasframe rather than c->framed: what's being excluded here is the
+    // window types that are furniture-free by their nature (desktops, docks,
+    // menus, splash screens), not the ordinary windows lwm happens not to
+    // have decorated - one of which the user may well have undecorated
+    // themselves, and would be surprised to find missing from this list.
+    if (!ewmh_hasframe(c) || added.count(w) || !c->IsNormal()) {
       continue;
     }
     open_content_.push_back(Item(w, false));

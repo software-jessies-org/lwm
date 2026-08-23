@@ -267,6 +267,20 @@ void LScr::Furnish(Client* c) {
   DebugCLI::NotifyFrameCreated(c);
 }
 
+void LScr::Unfurnish(Client* c) {
+  if (c->parent == root_) {
+    return;  // Never had a frame, or has already lost it.
+  }
+  LOGD(c) << "Destroying frame " << WinID(c->parent);
+  DebugCLI::NotifyFrameRemoved(c);
+  // Forget the frame before destroying it, not after: the DestroyNotify comes
+  // back to us, and EvDestroyNotify looks the window up in parents_ - where
+  // it would still find this client, and remove it.
+  parents_.erase(c->parent);
+  xlib::XDestroyWindow(c->parent);
+  c->parent = root_;
+}
+
 Client* LScr::GetClient(Window w, bool scan_parents) const {
   if (w == 0 || w == Root()) {
     return nullptr;

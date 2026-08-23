@@ -143,17 +143,30 @@ void Client::SetIcon(xlib::ImageIcon* icon) {
   }
 }
 
-// The modifier combinations the Windows-key gestures have to be grabbed
-// under. X matches a passive grab's modifiers exactly, so a grab on Super
-// alone quietly stops working the moment Num Lock or Caps Lock is on. There
-// is no "don't care" mask, so every combination of the two locks has to be
-// asked for separately.
-static const unsigned int superGrabModifiers[] = {
-    SUPER_MASK,
-    SUPER_MASK | XCB_MOD_MASK_LOCK,
-    SUPER_MASK | XCB_MOD_MASK_2,
-    SUPER_MASK | XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2,
+// The lock modifiers a passive grab has to be repeated under. X matches a
+// grab's modifiers exactly, so a grab on Super alone quietly stops working
+// the moment Num Lock or Caps Lock is on. There is no "don't care" mask, so
+// every combination of the two locks has to be asked for separately.
+static const unsigned int lockModifiers[] = {
+    0,
+    XCB_MOD_MASK_LOCK,
+    XCB_MOD_MASK_2,
+    XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2,
 };
+
+// Asks for one button under one set of modifiers, and under those modifiers
+// plus every combination of the two locks.
+static void grabGestureButton(Window w, int button, unsigned int modifiers) {
+  for (unsigned int locks : lockModifiers) {
+    // Asynchronous, so that neither pointer nor keyboard is frozen waiting
+    // for lwm to allow the events through: lwm swallows these clicks whole,
+    // and never replays them to the client.
+    xlib::XGrabButton(button, modifiers | locks, w, false,
+                      ButtonMask | XCB_EVENT_MASK_POINTER_MOTION,
+                      XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+                      XCB_NONE);
+  }
+}
 
 void Client::GrabSuperButtons() {
   // Not 'framed'. A window can be unframed for two quite different reasons,
@@ -172,18 +185,15 @@ void Client::GrabSuperButtons() {
   if (!ewmh_hasframe(this)) {
     return;
   }
-  for (unsigned int modifiers : superGrabModifiers) {
-    for (int button :
-         {SUPER_MOVE_BUTTON, SUPER_RESIZE_BUTTON, SUPER_HIDE_BUTTON}) {
-      // Asynchronous, so that neither pointer nor keyboard is frozen waiting
-      // for lwm to allow the events through: lwm swallows these clicks
-      // whole, and never replays them to the client.
-      xlib::XGrabButton(button, modifiers, window, false,
-                        ButtonMask | XCB_EVENT_MASK_POINTER_MOTION,
-                        XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
-                        XCB_NONE);
-    }
+  for (int button :
+       {SUPER_MOVE_BUTTON, SUPER_RESIZE_BUTTON, SUPER_HIDE_BUTTON}) {
+    grabGestureButton(window, button, SUPER_MASK);
   }
+  // Super+Control is its own small gesture set, and only the decoration
+  // toggle is in it. The other buttons are deliberately left ungrabbed under
+  // that modifier, so a Control-click the user meant for the application
+  // still reaches it.
+  grabGestureButton(window, SUPER_DECORATE_BUTTON, SUPER_MASK | SUPER_CTRL_MASK);
 }
 
 void Client::FocusGained() {
@@ -613,6 +623,126 @@ void Client::Unexpand() {
   LOGD(this) << "Un-expanding to " << target;
   // As ever, the client gets the last word on its size.
   MoveResizeTo(LimitResize(target));
+}
+
+bool Client::TakeExpectedUnmap() {
+  if (expected_unmaps_ <= 0) {
+    return false;
+  }
+  expected_unmaps_--;
+  return true;
+}
+
+void Client::SetFramed(bool want_framed) {
+  if (want_framed == framed) {
+    return;
+  }
+  if (!ewmh_hasframe(this)) {
+    // A desktop, dock, menu or splash screen: furniture-free by its nature
+    // rather than by anyone's choice, and a title bar on one would be
+    // nonsense. GrabSuperButtons doesn't ask for the clicks on these at all,
+    // so in practice nothing reaches this.
+    LOGD(this) << "Not decorating a furniture-free window type";
+    return;
+  }
+  if (wstate.fullscreen) {
+    // The furniture is already off for as long as full screen lasts, and the
+    // geometry that means anything is the one full screen is standing in
+    // front of. Both belong to EnterFullScreen/ExitFullScreen; toggling now
+    // would only fight with them.
+    LOGD(this) << "Not changing decorations while full screen";
+    return;
+  }
+  if (hidden) {
+    // The Hider is holding this window by the one AddFrame/RemoveFrame would
+    // map or unmap, and has its own idea of which that is. Nothing reaches
+    // this today - a hidden window can't be clicked on - but a hidden window
+    // that came back half-unhidden would be a miserable thing to debug.
+    LOGD(this) << "Not changing decorations while hidden";
+    return;
+  }
+  // The outer extent is what stays put. FrameRect() is lwm's idea of it
+  // everywhere else (maximisation and expansion both work in those
+  // coordinates), so it is here too: the frame's own 1px X border lives
+  // outside that rect and is not accounted for, which makes the window a
+  // pixel bigger all round while it's decorated.
+  const Rect outer = FrameRect();
+  // As ever, the client gets the last word on its size, so an xterm rounds
+  // the space it gains or loses to a whole number of character cells.
+  // LimitResize also rescues the pathological case of a window smaller than
+  // the furniture it's being asked to fit inside, which would otherwise come
+  // out with a negative width or height.
+  const Rect content =
+      LimitResize(want_framed ? ContentFromFrameRect(outer) : outer);
+  const bool had_focus = HasFocus();
+  LOGD(this) << (want_framed ? "Adding" : "Removing")
+             << " decorations; content " << content_rect_ << " -> " << content;
+  if (want_framed) {
+    AddFrame(content);
+  } else {
+    RemoveFrame(content);
+  }
+  // Reparenting unmaps the client window on the way, and X hands the input
+  // focus back to PointerRoot whenever the window holding it stops being
+  // viewable. Nothing about lwm's focus history changed, so only the server
+  // needs telling.
+  if (had_focus) {
+    LScr::I->GetFocuser()->ReassertFocus(this);
+  }
+  // The furniture came or went, so the extents the client is told to expect
+  // have changed, and so has the geometry it believes it has.
+  ewmh_set_frame_extents(this);
+  SendConfigureNotify();
+}
+
+void Client::AddFrame(const Rect& new_content) {
+  // Furnish() creates the frame at FrameRect(), so both of these have to be
+  // right before it's called.
+  content_rect_ = new_content;
+  framed = true;
+  LScr::I->Furnish(this);
+  // Slot the new frame into the stacking order immediately above the client
+  // window, which is where the client window itself is: gaining furniture
+  // shouldn't bring a window to the front of the desktop.
+  xlib::XConfigureWindow(
+      parent,
+      xlib::WindowChanges().Sibling(window).StackMode(XCB_STACK_MODE_ABOVE));
+  const Rect relative = ContentRectRelative();
+  ExpectUnmap();
+  xlib::XReparentWindow(window, parent, relative.xMin, relative.yMin);
+  // The reparent placed the window inside the frame; only the size is left.
+  xlib::XResizeWindow(window, relative.area());
+  // Last, so that the frame's blank background doesn't flash up on its own
+  // before the client window is inside it.
+  xlib::XMapWindow(parent);
+  // A shaped client which the user has chosen to decorate anyway needs its
+  // shape applied to the new frame, or the frame draws a rectangle behind the
+  // parts of the window that aren't there.
+  setShape(this);
+  // The frame is brand new, so whatever cursor the old one had means nothing.
+  // EContents is EvEnterNotify's "not any of the edge cursors" value, which
+  // is what makes the next motion over an edge switch to that edge's cursor.
+  cursor = EContents;
+  DrawBorder();
+}
+
+void Client::RemoveFrame(const Rect& new_content) {
+  const Window frame = parent;
+  content_rect_ = new_content;
+  framed = false;
+  ExpectUnmap();
+  xlib::XReparentWindow(window, LScr::I->Root(), content_rect_.xMin,
+                        content_rect_.yMin);
+  xlib::XResizeWindow(window, content_rect_.area());
+  // Reparenting puts a window on top of its new siblings, so put it back
+  // where its frame was: losing the furniture shouldn't raise the window
+  // either. This has to happen while the frame is still there to name.
+  xlib::XConfigureWindow(
+      window,
+      xlib::WindowChanges().Sibling(frame).StackMode(XCB_STACK_MODE_ABOVE));
+  // No frame, so no furniture cursor to keep track of.
+  cursor = ENone;
+  LScr::I->Unfurnish(this);
 }
 
 void Client::ExitFullScreen() {

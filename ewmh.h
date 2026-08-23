@@ -144,7 +144,7 @@ extern EWMHWindowType ewmh_get_window_type(Window w);
 extern bool ewmh_get_window_name(Client* c);
 extern bool ewmh_get_visible_window_name(Client* c);
 extern xlib::ImageIcon* ewmh_get_window_icon(Client* c);
-extern bool ewmh_hasframe(Client* c);
+extern bool ewmh_hasframe(const Client* c);
 extern void ewmh_set_state(Client* c);
 extern void ewmh_get_state(Client* c);
 extern void ewmh_change_state(Client* c,

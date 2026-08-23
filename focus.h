@@ -73,6 +73,14 @@ class Focuser {
   // if the given client already has input focus.
   void FocusClient(Client* c);
 
+  // Re-asserts the X input focus on a client lwm already believes has it.
+  // Reparenting a window unmaps it on the way, and the server hands the input
+  // focus back to PointerRoot whenever the window holding it stops being
+  // viewable - without anything happening that would change the focus
+  // history, so FocusClient() sees a client which is already focused and
+  // quite correctly does nothing. Does nothing if c isn't the focused client.
+  void ReassertFocus(Client* c);
+
   Client* GetFocusedClient();
 
  private:
