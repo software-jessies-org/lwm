@@ -71,11 +71,11 @@ The main steam launcher window has no window decorations. It's one of those apps
 
 ---
 
-## Not yet started
-
 In our last discussion, you uncovered a bug introduced during the xlib->xcb transition, caused by function call argument order changing between the two APIs, and the LWM code not being correctly modified. Go through all of the LWM code that touches xcb, and check that the argument ordering is correct.
 
 ---
+
+## Not yet started
 
 We identified that lwm doesn't publish _NET_FRAME_EXTENTS. We should do that.
 

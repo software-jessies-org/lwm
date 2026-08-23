@@ -511,8 +511,7 @@ WindowGeometry FakeServer::GetGeometry(Window w) {
     return res;
   }
   res.ok = true;
-  // Mirroring the real shim, which fills this from the reply's `root` field.
-  res.parent = root_;
+  res.root = root_;
   res.rect = win->rect;
   res.border_width = win->border_width;
   res.bpp = win->depth;

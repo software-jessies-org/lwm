@@ -303,7 +303,10 @@ struct WindowAttributes {
 extern WindowAttributes XGetWindowAttributes(Window w);
 
 struct WindowGeometry {
-  Window parent;
+  // The root window of the screen the window is on, which is what the
+  // GetGeometry reply carries - not the window's parent. Xlib's XGetGeometry
+  // returned the same thing.
+  Window root;
   Rect rect;
   int border_width;
   int bpp;

@@ -257,7 +257,7 @@ class RealServer : public Server {
       return res;  // ok = false on creation.
     }
     res.ok = true;
-    res.parent = geom->root;
+    res.root = geom->root;
     res.rect = Rect::FromXYWH(geom->x, geom->y, geom->width, geom->height);
     res.border_width = geom->border_width;
     res.bpp = geom->depth;
