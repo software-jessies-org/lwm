@@ -71,10 +71,24 @@ void EvExpose(xcb_generic_event_t* ev) {
 
 static DragHandler* current_dragger = nullptr;
 
+// Set while the drag in progress is one lwm had to take an explicit pointer
+// grab for; see EvClientMessage's _NET_WM_MOVERESIZE handling. Every other
+// drag begins with a button press lwm received itself, which comes with an
+// implicit grab the server tears down on the button release, so there is
+// nothing for lwm to give back.
+static bool drag_owns_pointer_grab = false;
+
 // Use this to set or clear the drag handler. Will destroy the old handler if
 // one is present. The new handler's Start() function is called with ev.
+//
+// This is the one place a drag ends, so it is also where the pointer grab is
+// returned. Every path that finishes a drag must come through here.
 void startDragging(DragHandler* handler, xcb_generic_event_t* ev) {
   delete current_dragger;
+  if (drag_owns_pointer_grab) {
+    xlib::XUngrabPointer(XCB_CURRENT_TIME);
+    drag_owns_pointer_grab = false;
+  }
   current_dragger = handler;
   if (current_dragger) {
     current_dragger->Start(ev);
@@ -429,13 +443,34 @@ void EvClientMessage(xcb_generic_event_t* ev) {
     Edge edge = E_LAST;
     EWMHDirection direction = (EWMHDirection)data[2];
 
+    if (direction == DMoveResizeCancel) {
+      // Only cancel a drag we started for this client; a stale cancel must not
+      // interrupt whatever the user is doing to some other window.
+      if (current_dragger && drag_owns_pointer_grab) {
+        LOGD(c) << "_NET_WM_MOVERESIZE: cancelled by client";
+        startDragging(nullptr, nullptr);
+      }
+      return;
+    }
+    if (current_dragger) {
+      // The user is already dragging something. Whatever this client thinks is
+      // happening, taking the pointer away mid-gesture would be worse.
+      LOGD(c) << "_NET_WM_MOVERESIZE: ignored, a drag is already in progress";
+      return;
+    }
+
     // before we can do any resizing, make the window visible
     if (c->IsHidden()) {
       c->Unhide();
     }
-    xlib::XMapWindow(c->parent);
+    if (c->framed) {
+      xlib::XMapWindow(c->parent);
+    }
     c->Raise();
-    // FIXME: we're ignoring x_root, y_root and button!
+    // x_root and y_root (data[0] and data[1]) are ignored on purpose: the drag
+    // handlers ask the server where the pointer is when they start, which is
+    // both more current than the coordinates in the message and correct even
+    // if the client rounded them.
     switch (direction) {
       case DSizeTopLeft:
         edge = ETopLeft;
@@ -479,19 +514,38 @@ void EvClientMessage(xcb_generic_event_t* ev) {
                 argv0);
         break;
     }
-    switch (edge) {
-      case E_LAST:
-        break;
-      case ENone:
-        // Should do a move, but this currently can't work because we only allow
-        // the move to continue while a mouse button is pressed. We should
-        // consider adding back this functionality, but for now it's not used
-        // and won't work.
-        break;
-      default:
-        // Same here, this functionality can't work right now. Need to fix it.
-        break;
+    if (edge == E_LAST) {
+      return;  // A direction we don't implement; nothing to start.
     }
+    // The press that began this drag went to the client, not to lwm, so there
+    // is no implicit grab bringing us the motion and release events the drag
+    // needs. Take an explicit one, with the cursor for the edge, exactly as
+    // the Windows-key gestures do.
+    //
+    // Two details. The grab goes on the root, not on the client: a resize drag
+    // routinely takes the pointer outside the window being resized, and the
+    // events have to keep coming when it does. And owner_events is false, so
+    // that every button and motion event comes to lwm for the duration rather
+    // than being delivered to whichever of our own windows it lands on.
+    //
+    // Asynchronous, like the gesture grabs: freezing the pointer until lwm
+    // replays the events would stall the client for the whole drag.
+    if (!xlib::XGrabPointer(
+            LScr::I->Root(), false, ButtonMask | XCB_EVENT_MASK_POINTER_MOTION,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+            LScr::I->Cursors()->ForEdge(edge), XCB_CURRENT_TIME)) {
+      LOGD(c) << "_NET_WM_MOVERESIZE: could not grab the pointer";
+      return;
+    }
+    // data[3] is the button the user is holding. A handler is only returned if
+    // it's one whose release we can recognise; see getMoveResizeHandler.
+    DragHandler* handler = getMoveResizeHandler(c, edge, data[3]);
+    if (!handler) {
+      xlib::XUngrabPointer(XCB_CURRENT_TIME);
+      return;
+    }
+    startDragging(handler, ev);
+    drag_owns_pointer_grab = true;
   }
 }
 
@@ -612,8 +666,12 @@ void EvEnterNotify(xcb_generic_event_t* ev) {
 
 void EvMotionNotify(xcb_generic_event_t* ev) {
   if (current_dragger) {
+    // A handler returning false has cancelled itself (the client vanished, or
+    // the button is no longer down). Retire it through startDragging rather
+    // than just forgetting it, so that it's destroyed and any pointer grab it
+    // owns is handed back.
     if (!current_dragger->Move(ev)) {
-      current_dragger = nullptr;
+      startDragging(nullptr, nullptr);
     }
     return;
   }

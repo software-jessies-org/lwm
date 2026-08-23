@@ -38,7 +38,10 @@ enum EWMHDirection {
   DSizeLeft,
   DMove,
   DSizeKeyboard,
-  DMoveKeyboard
+  DMoveKeyboard,
+  // _NET_WM_MOVERESIZE_CANCEL. Clients send this to abandon a move or resize
+  // they started, typically because the user pressed Escape.
+  DMoveResizeCancel
 };
 
 // Dispatches one event from the queue. The event is the raw XCB one; note

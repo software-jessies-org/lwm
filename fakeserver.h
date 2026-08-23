@@ -129,6 +129,11 @@ class FakeServer : public Server {
   // Where QueryPointer() says the mouse is.
   void SetMousePosition(int x, int y, unsigned int mod_mask);
 
+  // What GrabPointer() answers. Defaults to success; set it to one of the
+  // other xcb_grab_status_t values to test what lwm does when the pointer is
+  // already grabbed by somebody else.
+  void SetPointerGrabStatus(int status) { pointer_grab_status_ = status; }
+
   // ---------------------------------------------------------------------
   // Inspection: what the code under test did.
   // ---------------------------------------------------------------------
@@ -239,6 +244,15 @@ class FakeServer : public Server {
   void ChangeActivePointerGrab(unsigned int event_mask,
                                Cursor cursor,
                                Time t) override;
+  int GrabPointer(Window grab_window,
+                  bool owner_events,
+                  unsigned int event_mask,
+                  int pointer_mode,
+                  int keyboard_mode,
+                  Window confine_to,
+                  Cursor cursor,
+                  Time time) override;
+  void UngrabPointer(Time time) override;
   MousePos QueryPointer() override;
 
   std::vector<Atom> InternAtoms(const std::vector<std::string>& names) override;
@@ -309,6 +323,7 @@ class FakeServer : public Server {
   int height_ = 1024;
   Window focused_ = 0;
   MousePos mouse_{};
+  int pointer_grab_status_ = XCB_GRAB_STATUS_SUCCESS;
   uint32_t next_id_ = 0x100;
   Atom next_atom_ = 1000;
   uint32_t sequence_ = 1;

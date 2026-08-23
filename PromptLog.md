@@ -67,6 +67,10 @@ goings-on in wine land.*
 
 ---
 
+The main steam launcher window has no window decorations. It's one of those apps that provides its own close button and resize widget. However, I also can't move or resize it, as its own widgets aren't responding. I also can't resize or move it using lwm's 'windows key plus mouse drag/click' features. Diagnose this, and figure out how best to fix it. The steam launcher window is currently open (visible on the left-hand display).
+
+---
+
 ## Not yet started
 
 In our last discussion, you uncovered a bug introduced during the xlib->xcb transition, caused by function call argument order changing between the two APIs, and the LWM code not being correctly modified. Go through all of the LWM code that touches xcb, and check that the argument ordering is correct.
@@ -74,10 +78,6 @@ In our last discussion, you uncovered a bug introduced during the xlib->xcb tran
 ---
 
 We identified that lwm doesn't publish _NET_FRAME_EXTENTS. We should do that.
-
----
-
-The main steam launcher window has no window decorations. It's one of those apps that provides its own close button and resize widget. However, I also can't move or resize it, as its own widgets aren't responding. I also can't resize or move it using lwm's 'windows key plus mouse drag/click' features. Diagnose this, and figure out how best to fix it.
 
 ---
 
@@ -94,6 +94,10 @@ Fix this.
 ---
 
 Extend the 'Windows-double-click' in the middle of a window - currently it maximises the window, but if the window is already maximised, I want it to restore it to its pre-maximised size. This will involve storing the pre-maximised coordinates when maximisation takes place, so it can be restored. Ensure that the de-maximisation code properly checks for whether we have a pre-maximised rectangle, so that if it's missing we don't open the window at silly locations/sizes.
+
+---
+
+I want a new hotkey: windows-shift-click on a client window will toggle whether it has lwm decorations. The client window will resize so that the outer extent is preserved.
 
 ---
 

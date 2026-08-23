@@ -57,7 +57,7 @@ class WindowDragger : public DragHandler {
   // MOVING_BUTTON_MASK: the Windows-key resize gesture drags with button 2,
   // and could as easily be given a button that isn't in that mask at all.
   WindowDragger(Client* c, unsigned int button_mask)
-      : window_(c->parent), button_mask_(button_mask) {}
+      : window_(c->window), button_mask_(button_mask) {}
 
   virtual void Start(xcb_generic_event_t*) {
     start_pos_ = getMousePosition();
@@ -100,7 +100,12 @@ class WindowDragger : public DragHandler {
   }
 
  protected:
-  // LWM's frame window.
+  // The client's own window, which is what identifies the client for the rest
+  // of the drag. It has to be the client window rather than the frame: an
+  // undecorated client (one lwm gave no furniture to, such as anything that
+  // draws its own title bar) has no frame, and its 'parent' is still the root
+  // - for which LScr::GetClient deliberately answers nullptr. Keying off the
+  // frame made every such drag cancel itself on the first motion event.
   Window window() const { return window_; }
   // Where the pointer was when the button went down.
   MousePos startPos() const { return start_pos_; }
@@ -237,7 +242,7 @@ class WindowResizer : public WindowDragger {
 class WindowExpander : public DragHandler {
  public:
   WindowExpander(Client* c, Edge edge, bool ignore_obstacles)
-      : window_(c->parent), edge_(edge), ignore_obstacles_(ignore_obstacles) {}
+      : window_(c->window), edge_(edge), ignore_obstacles_(ignore_obstacles) {}
 
   virtual void Start(xcb_generic_event_t*) {
     Client* c = LScr::I->GetClient(window_);
@@ -294,7 +299,7 @@ class WindowExpander : public DragHandler {
 // released close to where it was pressed will it trigger the action.
 class WindowClicker : public DragHandler {
  public:
-  WindowClicker(Client* c) : window_(c->parent) {}
+  WindowClicker(Client* c) : window_(c->window) {}
   virtual void Start(xcb_generic_event_t*) { start_pos_ = getMousePosition(); }
   virtual bool Move(xcb_generic_event_t*) { return true; }
 
@@ -312,7 +317,8 @@ class WindowClicker : public DragHandler {
   virtual void act(Client* c) = 0;
 
  private:
-  // LWM's frame window.
+  // The client's own window; see WindowDragger::window() for why this can't be
+  // the frame.
   Window window_;
   MousePos start_pos_;
 };
@@ -455,6 +461,25 @@ void RunConfiguredAltCommand(Window w, Edge edge, int button) {
 }
 
 }  // namespace
+
+DragHandler* getMoveResizeHandler(Client* c, Edge edge, int button) {
+  // WindowDragger follows the pointer until the button it started with comes
+  // back up, so a button we can't find in a pointer state mask is one whose
+  // release we would never recognise: the drag would then run for ever, and
+  // because lwm refuses to start a second drag while one is in progress, every
+  // later mouse gesture would be refused too. Decline instead.
+  const unsigned int mask = buttonStateMask(button);
+  if (!mask) {
+    return nullptr;
+  }
+  // Deliberately WindowMover and not WindowMoverRaiser: the raise-on-click half
+  // of that gesture belongs to the Windows-key bindings, and the caller has
+  // already raised this window on the client's behalf.
+  if (edge == ENone) {
+    return new WindowMover(c, mask);
+  }
+  return new WindowResizer(c, edge, mask);
+}
 
 DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
   // Deal with root window button presses.

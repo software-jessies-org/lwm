@@ -643,6 +643,29 @@ void FakeServer::ChangeActivePointerGrab(unsigned int event_mask,
   Record("ChangeActivePointerGrab() cursor=" + hex(cursor));
 }
 
+int FakeServer::GrabPointer(Window grab_window,
+                            bool owner_events,
+                            unsigned int event_mask,
+                            int pointer_mode,
+                            int keyboard_mode,
+                            Window confine_to,
+                            Cursor cursor,
+                            Time time) {
+  (void)owner_events;
+  (void)event_mask;
+  (void)pointer_mode;
+  (void)keyboard_mode;
+  (void)confine_to;
+  (void)time;
+  Record("GrabPointer(" + hex(grab_window) + ") cursor=" + hex(cursor));
+  return pointer_grab_status_;
+}
+
+void FakeServer::UngrabPointer(Time time) {
+  (void)time;
+  Record("UngrabPointer()");
+}
+
 MousePos FakeServer::QueryPointer() {
   return mouse_;
 }

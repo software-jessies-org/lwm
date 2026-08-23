@@ -156,9 +156,20 @@ static const unsigned int superGrabModifiers[] = {
 };
 
 void Client::GrabSuperButtons() {
-  // Unframed windows are the ones lwm has decided not to put furniture on
-  // (shaped windows, mostly), and the gestures are furniture.
-  if (!framed) {
+  // Not 'framed'. A window can be unframed for two quite different reasons,
+  // and only one of them is a reason to withhold the gestures.
+  //
+  // Some window types are furniture-free by their nature - the desktop, docks,
+  // menus, splash screens - and dragging one around is meaningless. That's
+  // what ewmh_hasframe() screens out.
+  //
+  // The rest are ordinary, movable windows which lwm merely chose not to
+  // decorate: shaped windows, and anything that draws its own title bar and
+  // says so through _MOTIF_WM_HINTS (Steam's launcher, GTK client-side
+  // decorations). For those the gestures aren't a duplicate of the furniture,
+  // they're the only way the user can move or resize the window at all, so
+  // withholding them left such windows pinned to the screen.
+  if (!ewmh_hasframe(this)) {
     return;
   }
   for (unsigned int modifiers : superGrabModifiers) {

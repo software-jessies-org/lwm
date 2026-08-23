@@ -12,7 +12,9 @@
 #include "client.h"
 #include "disp.h"
 #include "drag.h"
+#include "ewmh.h"
 #include "gesture.h"
+#include "lwm.h"
 #include "screen.h"
 #include "test.h"
 #include "wmtest.h"
@@ -135,6 +137,76 @@ Point gridCell(const Client* c, int col, int row) {
   const Rect r = c->ContentRect();
   return Point{r.xMin + r.width() * (2 * col + 1) / 6,
                r.yMin + r.height() * (2 * row + 1) / 6};
+}
+
+// Maps a client which says through _MOTIF_WM_HINTS that it draws its own
+// decorations, so lwm frames it but leaves the furniture off - the Steam
+// launcher case. `type` is the _NET_WM_WINDOW_TYPE to advertise.
+Client* mapUndecorated(wmtest::World& world, const Rect& rect, Atom type) {
+  const Window w = world.server().AddClientWindow(rect);
+  world.server().SetProperty32(w, motif_wm_hints, motif_wm_hints,
+                               {1 << 1 /* MWM_HINTS_DECORATIONS */, 0, 0, 0,
+                                0});
+  if (type) {
+    world.server().SetProperty32(w, ewmh_atom[_NET_WM_WINDOW_TYPE],
+                                 XCB_ATOM_ATOM, {type});
+  }
+  xcb_map_request_event_t e{};
+  e.response_type = XCB_MAP_REQUEST;
+  e.parent = world.server().Root();
+  e.window = w;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
+}
+
+Client* mapUndecorated(wmtest::World& world, const Rect& rect) {
+  return mapUndecorated(world, rect, 0);
+}
+
+// Sends the _NET_WM_MOVERESIZE a client sends when the user grabs its own
+// title bar or resize grip.
+void sendMoveResize(wmtest::World& world,
+                    const Client* c,
+                    EWMHDirection direction,
+                    int button) {
+  xcb_client_message_event_t e{};
+  e.response_type = XCB_CLIENT_MESSAGE;
+  e.format = 32;
+  e.window = c->window;
+  e.type = ewmh_atom[_NET_WM_MOVERESIZE];
+  e.data.data32[0] = 0;  // x_root, ignored: we ask the server instead.
+  e.data.data32[1] = 0;  // y_root, ditto.
+  e.data.data32[2] = direction;
+  e.data.data32[3] = button;
+  e.data.data32[4] = 1;  // Source indication: a normal application.
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+}
+
+// Moves the pointer to p with button held, and delivers the motion event that
+// makes a drag in progress act on it.
+void dragTo(wmtest::World& world, Point p, int button) {
+  world.server().SetMousePosition(p.x, p.y, heldMask(button));
+  xcb_motion_notify_event_t motion{};
+  motion.response_type = XCB_MOTION_NOTIFY;
+  motion.event = LScr::I->Root();
+  motion.root_x = p.x;
+  motion.root_y = p.y;
+  world.server().PushEvent(motion);
+  ProcessPendingEvents();
+}
+
+// Releases button at p, ending whatever drag is in progress. Every test that
+// starts a drag must finish it: the current DragHandler is a file static in
+// disp.cc, so one left running outlives the World and drives the next test's
+// motion events - and the fake server hands out the same window ids each
+// time, so it even finds a client to act on.
+void releaseAt(wmtest::World& world, const Client* c, Point p, int button) {
+  world.server().SetMousePosition(p.x, p.y, 0);
+  world.server().PushEvent(
+      buttonEvent(XCB_BUTTON_RELEASE, c, button, 0, p, 1000));
+  ProcessPendingEvents();
 }
 
 }  // namespace
@@ -479,4 +551,173 @@ TEST(SuperGestures, DraggingAMaximizedWindowUnmaximizesIt) {
   // how far it actually travels. What matters here is that dropping the state
   // leaves the window the size it was rather than restoring it.
   EXPECT_EQ(c->ContentRect().area(), maximized.area());
+}
+
+// ---------------------------------------------------------------------------
+// Undecorated windows.
+//
+// A client that draws its own title bar and resize grip asks lwm for no
+// decorations, and lwm obliges by giving it no frame. That must not also cost
+// it every other way of being moved: with no furniture to drag, the Windows-
+// key gestures and _NET_WM_MOVERESIZE are the only two left, and for a while
+// neither of them worked, which pinned such a window to the screen for good.
+// ---------------------------------------------------------------------------
+
+TEST(Undecorated, ClicksOnAnUndecoratedWindowAreGrabbed) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  std::ostringstream prefix;
+  prefix << "GrabButton(0x" << std::hex << c->window << ")";
+  EXPECT_FALSE(world.server().CallsMatching(prefix.str()).empty())
+      << "an undecorated window got no gesture grabs, so it can't be moved";
+}
+
+TEST(Undecorated, WindowTypesWithNoFurnitureByNatureGetNoGrabs) {
+  // A dock isn't undecorated because it asked to draw its own title bar; it's
+  // undecorated because dragging a dock around is meaningless. It should still
+  // be left alone.
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect,
+                             ewmh_atom[_NET_WM_WINDOW_TYPE_DOCK]);
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  std::ostringstream prefix;
+  prefix << "GrabButton(0x" << std::hex << c->window << ")";
+  EXPECT_TRUE(world.server().CallsMatching(prefix.str()).empty());
+}
+
+TEST(Undecorated, SuperDragMovesAnUndecoratedWindow) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, Point{400, 400},
+       Point{450, 470}, 10000);
+
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{50, 70}));
+}
+
+TEST(MoveResize, MoveRequestFollowsThePointer) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  // The user has pressed button 1 on the client's own title bar; the client
+  // hands the drag to us from there.
+  world.server().SetMousePosition(400, 400, XCB_KEY_BUT_MASK_BUTTON_1);
+  sendMoveResize(world, c, DMove, XCB_BUTTON_INDEX_1);
+  dragTo(world, Point{460, 440}, XCB_BUTTON_INDEX_1);
+
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{60, 40}));
+
+  releaseAt(world, c, Point{460, 440}, XCB_BUTTON_INDEX_1);
+  // The grab we took to receive those events has to go back, or no other
+  // client sees the mouse again.
+  EXPECT_FALSE(world.server().CallsMatching("UngrabPointer()").empty());
+}
+
+TEST(MoveResize, ResizeRequestDragsTheNamedEdge) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  world.server().SetMousePosition(600, 600, XCB_KEY_BUT_MASK_BUTTON_1);
+  sendMoveResize(world, c, DSizeBottomRight, XCB_BUTTON_INDEX_1);
+  dragTo(world, Point{640, 660}, XCB_BUTTON_INDEX_1);
+
+  const Rect after = c->ContentRect();
+  EXPECT_EQ(after.xMin, before.xMin);
+  EXPECT_EQ(after.yMin, before.yMin);
+  EXPECT_EQ(after.xMax, before.xMax + 40);
+  EXPECT_EQ(after.yMax, before.yMax + 60);
+
+  releaseAt(world, c, Point{640, 660}, XCB_BUTTON_INDEX_1);
+}
+
+TEST(MoveResize, ADragThatCannotBeTrackedIsRefused) {
+  // Direction DSizeKeyboard has no button behind it, so there is no release
+  // for lwm to wait for. Starting a drag anyway would leave one running for
+  // ever, and lwm refuses to start a second while one is in progress - so the
+  // symptom would be that every later mouse gesture stopped working.
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  world.server().SetMousePosition(400, 400, 0);
+  sendMoveResize(world, c, DSizeKeyboard, 0);
+
+  // A later gesture still works, which is what says no drag was left stuck.
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, Point{400, 400},
+       Point{430, 400}, 20000);
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{30, 0}));
+}
+
+TEST(MoveResize, AFailedPointerGrabLeavesNoDragRunning) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  world.server().SetPointerGrabStatus(XCB_GRAB_STATUS_ALREADY_GRABBED);
+  world.server().SetMousePosition(400, 400, XCB_KEY_BUT_MASK_BUTTON_1);
+  sendMoveResize(world, c, DMove, XCB_BUTTON_INDEX_1);
+  dragTo(world, Point{460, 440}, XCB_BUTTON_INDEX_1);
+  EXPECT_EQ(c->ContentRect(), before) << "moved despite not holding the pointer";
+
+  // And the gestures still work afterwards.
+  world.server().SetPointerGrabStatus(XCB_GRAB_STATUS_SUCCESS);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, Point{400, 400},
+       Point{430, 400}, 30000);
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{30, 0}));
+}
+
+TEST(MoveResize, CancelStopsTheDragAndReturnsTheGrab) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+
+  world.server().SetMousePosition(400, 400, XCB_KEY_BUT_MASK_BUTTON_1);
+  sendMoveResize(world, c, DMove, XCB_BUTTON_INDEX_1);
+  dragTo(world, Point{460, 440}, XCB_BUTTON_INDEX_1);
+  const Rect moved = c->ContentRect();
+
+  world.server().ClearCalls();
+  sendMoveResize(world, c, DMoveResizeCancel, XCB_BUTTON_INDEX_1);
+  EXPECT_FALSE(world.server().CallsMatching("UngrabPointer()").empty());
+
+  // Further motion no longer moves the window.
+  dragTo(world, Point{500, 500}, XCB_BUTTON_INDEX_1);
+  EXPECT_EQ(c->ContentRect(), moved);
+}
+
+TEST(MoveResize, ARequestIsIgnoredWhileTheUserIsAlreadyDragging) {
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  const Rect before = c->ContentRect();
+
+  // Start a Windows-key move, and leave it in progress.
+  world.server().SetMousePosition(400, 400, SUPER_MASK);
+  world.server().PushEvent(buttonEvent(XCB_BUTTON_PRESS, c, SUPER_MOVE_BUTTON,
+                                       SUPER_MASK, Point{400, 400}, 40000));
+  ProcessPendingEvents();
+
+  world.server().ClearCalls();
+  sendMoveResize(world, c, DSizeBottomRight, XCB_BUTTON_INDEX_1);
+  EXPECT_TRUE(world.server().CallsMatching("GrabPointer(").empty())
+      << "took the pointer away from a gesture already in progress";
+
+  // The user's own drag is still the one in charge.
+  dragTo(world, Point{450, 400}, SUPER_MOVE_BUTTON);
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{50, 0}));
+
+  releaseAt(world, c, Point{450, 400}, SUPER_MOVE_BUTTON);
 }

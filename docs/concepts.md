@@ -217,6 +217,47 @@ handled by mirroring and top/bottom by flipping x/y), then free-floating windows
 scaled proportionally into the tallest screen at their new mid-x. Extend
 `screenlayout_test.cc` when touching it.
 
+## Undecorated windows
+
+`Client::framed` is false for two quite different kinds of window, and the
+difference matters every time you touch code that keys off it.
+
+* **Furniture-free by nature** — `_NET_WM_WINDOW_TYPE_DESKTOP`, `DOCK`, `MENU`
+  and `SPLASH`, screened out by `ewmh_hasframe()`. Dragging one is
+  meaningless.
+* **Ordinary windows lwm chose not to decorate** — shaped windows, and
+  anything that draws its own title bar and says so through
+  `_MOTIF_WM_HINTS` (the Steam launcher, GTK client-side decorations, Java's
+  `setUndecorated(true)`). These are perfectly normal, movable windows.
+
+The second kind is the trap. They have no furniture to drag, so the only two
+ways left to move or resize them are the Windows-key gestures and the
+`_NET_WM_MOVERESIZE` message the client sends when the user grabs its own
+title bar or resize grip. Withhold both and the window is pinned to the
+screen for the rest of its life, with no way out — which is exactly what used
+to happen. So:
+
+* `Client::GrabSuperButtons()` keys off `ewmh_hasframe()`, **not** `framed`.
+* An unframed client is never reparented, so `c->parent` is still the root,
+  and `LScr::GetClient()` answers `nullptr` for the root on purpose. Anything
+  that remembers a client across a drag must therefore hold `c->window`, not
+  `c->parent`. Every `DragHandler` does.
+
+`_NET_WM_MOVERESIZE` (`EvClientMessage` in `disp.cc`) has one wrinkle the
+other gestures don't: the button press that started the drag went to the
+*client*, so lwm has no implicit grab bringing it the motion and release
+events. It takes an explicit `XGrabPointer` on the root — the root, because a
+resize drag routinely leaves the window being resized — and gives it back in
+`startDragging()`, which is the single point every drag ends at. That grab is
+the one place in the shim that waits for its reply: a grab that silently
+failed would leave a `DragHandler` running which can never receive the events
+that would retire it, and lwm starts only one drag at a time, so every later
+mouse gesture would be refused with "already doing something".
+
+Covered by the `Undecorated` and `MoveResize` tests in `drag_test.cc`, and
+end-to-end against a real server by the undecorated-window section of
+`ui_test.sh`.
+
 ## Icons (`xlib::ImageIcon`)
 
 Sourced from `WM_HINTS` pixmaps or `_NET_WM_ICON` pixel data. Three pre-rendered

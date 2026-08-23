@@ -152,6 +152,27 @@ class Server {
                                        Cursor cursor,
                                        Time t) = 0;
 
+  // Takes an active pointer grab, returning XCB_GRAB_STATUS_SUCCESS or one of
+  // the other xcb_grab_status_t values.
+  //
+  // Unlike almost everything else here, this one waits for its reply. A drag
+  // started by _NET_WM_MOVERESIZE has no button press of lwm's own behind it,
+  // so this grab is the only thing that will deliver the motion and release
+  // events which move the window and end the drag. If it fails and we don't
+  // notice, lwm installs a DragHandler that can never receive the events that
+  // would retire it, and every later mouse gesture is refused with "already
+  // doing something". One round trip on a rare, user-initiated action is a
+  // cheap price for not wedging the window manager.
+  virtual int GrabPointer(Window grab_window,
+                          bool owner_events,
+                          unsigned int event_mask,
+                          int pointer_mode,
+                          int keyboard_mode,
+                          Window confine_to,
+                          Cursor cursor,
+                          Time time) = 0;
+  virtual void UngrabPointer(Time time) = 0;
+
   // The pointer's position right now, straight from the server rather than
   // from the coordinates in the most recent event.
   virtual MousePos QueryPointer() = 0;

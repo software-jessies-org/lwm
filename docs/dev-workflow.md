@@ -93,6 +93,13 @@ These need a real server - the passive grabs, the modifier bits in the
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
 the event level and this covers them at the pointer level.
 
+The last section covers undecorated windows: the gestures and
+`_NET_WM_MOVERESIZE` on a client that draws its own decorations, which are
+the only two ways such a window can be moved at all (see "Undecorated
+windows" in `concepts.md`). It compiles `csdclient.cc` into its temp dir to
+play the part of that client, and skips the section with a failed check if
+there's no compiler to hand.
+
 ## Strut test
 
 ```sh

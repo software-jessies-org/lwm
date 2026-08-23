@@ -613,6 +613,26 @@ void XChangeActivePointerGrab(unsigned int event_mask,
   server->ChangeActivePointerGrab(event_mask, cursor, time);
 }
 
+bool XGrabPointer(Window grab_window,
+                  bool owner_events,
+                  unsigned int event_mask,
+                  int pointer_mode,
+                  int keyboard_mode,
+                  Window confine_to,
+                  Cursor cursor,
+                  Time time) {
+  const int status =
+      server->GrabPointer(grab_window, owner_events, event_mask, pointer_mode,
+                          keyboard_mode, confine_to, cursor, time);
+  LOGD(grab_window) << "XGrabPointer(" << WinID(grab_window)
+                    << ") status=" << status;
+  return status == XCB_GRAB_STATUS_SUCCESS;
+}
+
+void XUngrabPointer(Time time) {
+  server->UngrabPointer(time);
+}
+
 // ---------------------------------------------------------------------------
 // Properties and ICCCM hints.
 // ---------------------------------------------------------------------------

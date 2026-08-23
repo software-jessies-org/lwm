@@ -404,6 +404,18 @@ extern void XChangeActivePointerGrab(unsigned int event_mask,
                                      Cursor cursor,
                                      Time time);
 
+// Takes an active pointer grab. Returns true if we got it. See
+// Server::GrabPointer for why this one waits for its reply.
+extern bool XGrabPointer(Window grab_window,
+                         bool owner_events,
+                         unsigned int event_mask,
+                         int pointer_mode,
+                         int keyboard_mode,
+                         Window confine_to,
+                         Cursor cursor,
+                         Time time);
+extern void XUngrabPointer(Time time);
+
 // ---------------------------------------------------------------------------
 // Properties and ICCCM hints.
 // ---------------------------------------------------------------------------

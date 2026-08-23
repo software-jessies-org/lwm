@@ -367,6 +367,27 @@ class RealServer : public Server {
     xcb_change_active_pointer_grab(conn, cursor, t, event_mask);
   }
 
+  int GrabPointer(Window grab_window,
+                  bool owner_events,
+                  unsigned int event_mask,
+                  int pointer_mode,
+                  int keyboard_mode,
+                  Window confine_to,
+                  Cursor cursor,
+                  Time time) override {
+    Reply<xcb_grab_pointer_reply_t> r(xcb_grab_pointer_reply(
+        conn,
+        xcb_grab_pointer(conn, owner_events, grab_window, event_mask,
+                         pointer_mode, keyboard_mode, confine_to, cursor, time),
+        nullptr));
+    // No reply means the request died rather than the grab being refused, but
+    // either way we did not get the pointer, so report it as a failure. Any
+    // non-success value will do; the caller only compares against success.
+    return r ? int(r->status) : int(XCB_GRAB_STATUS_NOT_VIEWABLE);
+  }
+
+  void UngrabPointer(Time time) override { xcb_ungrab_pointer(conn, time); }
+
   MousePos QueryPointer() override {
     MousePos res;
     memset(&res, 0, sizeof(res));

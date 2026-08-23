@@ -517,6 +517,106 @@ super_click 3 "${CX}" "${CY}"
 check_eq "Super+button 3 click hides the window" \
   "$(map_state "${FRAME}")" "IsUnMapped"
 
+# --- undecorated windows ----------------------------------------------------
+#
+# A client that draws its own title bar asks lwm, through _MOTIF_WM_HINTS, for
+# no decorations, and lwm gives it no frame. That leaves it exactly two ways
+# of being moved: these gestures, and the _NET_WM_MOVERESIZE message the
+# client sends when the user grabs its own title bar. Both used to do nothing
+# at all, which pinned such a window where it opened - the Steam launcher
+# being the case that found it.
+
+CSD_BIN="${WORKDIR}/csdclient"
+if ! g++ -o "${CSD_BIN}" -std=c++17 csdclient.cc -lxcb \
+    >>"${WORKDIR}/clients.log" 2>&1; then
+  fail "could not build csdclient.cc, skipping the undecorated-window checks"
+else
+  "${CSD_BIN}" window 200 200 300 250 >"${WORKDIR}/csdwin" 2>&1 &
+  CSD_PID=$!
+  CLIENT_PIDS+=("${CSD_PID}")
+  CSD=""
+  for _ in $(seq 1 50); do
+    CSD=$(xdotool search --name '^csdwin$' 2>/dev/null | head -1)
+    [ -n "${CSD}" ] && break
+    sleep 0.1
+  done
+  sleep 0.3
+
+  if [ -z "${CSD}" ]; then
+    fail "the undecorated test client never appeared"
+  else
+    # lwm gives it no frame at all, which is what the rest of this section is
+    # about. If this fails the others are meaningless.
+    check_eq "an undecorated client is left unframed" \
+      "$(frame_of "${CSD}")" ""
+
+    # 1. The Windows-key gestures. With no furniture, these are the only
+    #    gesture the user has.
+    read -r BX BY BW BH <<<"$(geom "${CSD}")"
+    read -r CX CY <<<"$(cell "${CSD}" 1 1)"
+    super_drag 1 "${CX}" "${CY}" $((CX + 90)) $((CY + 60))
+    check_eq "Super+button 1 drag moves an undecorated window" \
+      "$(geom "${CSD}")" "$((BX + 90)) $((BY + 60)) ${BW} ${BH}"
+
+    read -r BX BY BW BH <<<"$(geom "${CSD}")"
+    read -r CX CY <<<"$(cell "${CSD}" 2 2)"
+    super_drag 2 "${CX}" "${CY}" $((CX + 40)) $((CY + 30))
+    check_eq "Super+button 2 drag resizes an undecorated window" \
+      "$(geom "${CSD}")" "${BX} ${BY} $((BW + 40)) $((BH + 30))"
+
+    # 2. _NET_WM_MOVERESIZE: the client's own title bar and resize grip. The
+    #    press goes to the client, not to lwm, so lwm has to take a pointer
+    #    grab of its own to see the drag at all.
+    read -r BX BY BW BH <<<"$(geom "${CSD}")"
+    xdotool mousemove $((BX + 40)) $((BY + 10))
+    xdotool mousedown 1
+    "${CSD_BIN}" moveresize "${CSD}" 8 1   # 8 = _NET_WM_MOVERESIZE_MOVE
+    sleep 0.3
+    xdotool mousemove $((BX + 110)) $((BY + 60))
+    sleep 0.3
+    xdotool mouseup 1
+    sleep 0.3
+    check_eq "_NET_WM_MOVERESIZE move drags an undecorated window" \
+      "$(geom "${CSD}")" "$((BX + 70)) $((BY + 50)) ${BW} ${BH}"
+
+    # The press has to land inside the client, where a real resize grip is: a
+    # press on the root is lwm's own gesture, and the request would then
+    # quite rightly be refused as arriving mid-drag.
+    read -r BX BY BW BH <<<"$(geom "${CSD}")"
+    GX=$((BX + BW - 3))
+    GY=$((BY + BH - 3))
+    xdotool mousemove "${GX}" "${GY}"
+    xdotool mousedown 1
+    "${CSD_BIN}" moveresize "${CSD}" 4 1   # 4 = SIZE_BOTTOMRIGHT
+    sleep 0.3
+    xdotool mousemove $((GX + 50)) $((GY + 40))
+    sleep 0.3
+    xdotool mouseup 1
+    sleep 0.3
+    check_eq "_NET_WM_MOVERESIZE resizes from the bottom right corner" \
+      "$(geom "${CSD}")" "${BX} ${BY} $((BW + 50)) $((BH + 40))"
+
+    # 3. The grab has to be handed back, or nothing else on the display ever
+    #    sees the mouse again - including the gestures, which is what this
+    #    checks by using one.
+    read -r BX BY BW BH <<<"$(geom "${CSD}")"
+    read -r CX CY <<<"$(cell "${CSD}" 1 1)"
+    super_drag 1 "${CX}" "${CY}" $((CX + 30)) $((CY + 20))
+    check_eq "the pointer grab is released when the drag ends" \
+      "$(geom "${CSD}")" "$((BX + 30)) $((BY + 20)) ${BW} ${BH}"
+
+    # 4. A direction lwm can't track must not leave a drag running: it would
+    #    block every later gesture, since lwm starts only one at a time.
+    read -r BX BY BW BH <<<"$(geom "${CSD}")"
+    "${CSD_BIN}" moveresize "${CSD}" 9 0   # 9 = SIZE_KEYBOARD, no button
+    sleep 0.3
+    read -r CX CY <<<"$(cell "${CSD}" 1 1)"
+    super_drag 1 "${CX}" "${CY}" $((CX + 25)) $((CY + 15))
+    check_eq "an untrackable move/resize request leaves no drag stuck" \
+      "$(geom "${CSD}")" "$((BX + 25)) $((BY + 15)) ${BW} ${BH}"
+  fi
+fi
+
 # --- the session survived it ------------------------------------------------
 
 if kill -0 "${LWM_PID}" 2>/dev/null; then
