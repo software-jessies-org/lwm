@@ -578,11 +578,10 @@ extern void XChangeGC(GC gc, const GCValues& values);
 // value to draw with. Returns black if the name can't be resolved.
 extern unsigned long ColourByName(const std::string& name);
 
-// Creates a cursor from the standard cursor font. Unlike Xlib, the colours
-// are given at creation time, so there is no separate recolour step.
-extern Cursor CreateFontCursor(unsigned int shape,
-                               unsigned long fg,
-                               unsigned long bg);
+// Loads a cursor by its theme name ("left_ptr", "fleur", ...) from the user's
+// configured cursor theme, at the size that theme is configured for. Falls
+// back to the fixed-size core cursor font for names the theme doesn't supply.
+extern Cursor CreateNamedCursor(const std::string& name);
 
 // ---------------------------------------------------------------------------
 // Extensions.

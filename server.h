@@ -254,9 +254,10 @@ class Server {
   virtual bool AllocNamedColour(const std::string& name,
                                 unsigned long* pixel) = 0;
 
-  virtual Cursor CreateFontCursor(unsigned int shape,
-                                  unsigned long fg,
-                                  unsigned long bg) = 0;
+  // Loads a cursor by its theme name ("left_ptr", "fleur", ...), honouring
+  // the user's configured cursor theme and size. Falls back to the core
+  // cursor font if the name isn't in the theme, or if there's no theme at all.
+  virtual Cursor CreateNamedCursor(const std::string& name) = 0;
 
   // -------------------------------------------------------------------------
   // Pixmaps and images.

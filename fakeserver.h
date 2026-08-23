@@ -292,9 +292,7 @@ class FakeServer : public Server {
                    unsigned long* pixel) override;
   bool AllocNamedColour(const std::string& name,
                         unsigned long* pixel) override;
-  Cursor CreateFontCursor(unsigned int shape,
-                          unsigned long fg,
-                          unsigned long bg) override;
+  Cursor CreateNamedCursor(const std::string& name) override;
 
   std::vector<uint32_t> GetImagePixels(Pixmap src,
                                        int width,

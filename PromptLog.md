@@ -95,6 +95,10 @@ I want to add key handling for switching input focus between windows. When the W
 
 ---
 
+The mouse pointer is too small on my main monitor when lwm decides how it should be drawn. On apps like grezvany and Java apps a larger mouse pointer is shown, but lwm shows it as tiny. Why is that, and how should we best fix it?
+
+---
+
 ## Not yet started
 
 I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
@@ -106,10 +110,6 @@ In a previous discussion, you reported this:
 One unrelated thing I tripped over: running lwm -debugcli=... < /dev/null spins the event loop on stdin-at-EOF — it wrote 3.4 GB to stdout in about a minute and filled /tmp. It's pre-existing (the unpatched binary does it too) and only affects that invocation, so I left it alone, but you may want it fixed.
 
 Fix this.
-
----
-
-The mouse pointer is too small on my main monitor when lwm decides how it should be drawn. On apps like grezvany and Java apps a larger mouse pointer is shown, but lwm shows it as tiny. Why is that, and how should we best fix it?
 
 ---
 

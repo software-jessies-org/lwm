@@ -30,7 +30,7 @@ DEFINES = -DSHAPE
 # in docs/xcb-migration-plan.md; dropping x11-xcb and xft is phase 4.
 #
 # libSM and libICE are unchanged by any of this: neither links libX11.
-PKGS = xcb xcb-icccm xcb-randr xcb-shape xcb-xrm sm ice x11-xcb xft
+PKGS = xcb xcb-cursor xcb-icccm xcb-randr xcb-shape xcb-xrm sm ice x11-xcb xft
 
 PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKGS))
 PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKGS))

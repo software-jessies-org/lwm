@@ -23,36 +23,35 @@
 
 namespace {
 
-// Glyph indices into the standard "cursor" font. Xlib spelled these XC_left_ptr
-// and so on in <X11/cursorfont.h>; XCB ships no equivalent header, and these
-// are fixed by the font itself rather than by any library, so here they are.
-// Each cursor occupies two glyphs, the image and its mask, which is why they
-// go up in twos.
-constexpr unsigned int kLeftPtr = 68;
-constexpr unsigned int kTopLeftCorner = 134;
-constexpr unsigned int kTopSide = 138;
-constexpr unsigned int kTopRightCorner = 136;
-constexpr unsigned int kRightSide = 96;
-constexpr unsigned int kFleur = 52;
-constexpr unsigned int kLeftSide = 70;
-constexpr unsigned int kBottomLeftCorner = 12;
-constexpr unsigned int kBottomSide = 16;
-constexpr unsigned int kBottomRightCorner = 14;
-constexpr unsigned int kXCursor = 0;
-
-const char kCursorFG[] = "Black";  //"Medium Turquoise";
-const char kCursorBG[] = "White";  //"Navy Blue";
+// Cursor names, as found in the "cursors" directory of an icon theme. These
+// are the traditional X names rather than the newer freedesktop ones
+// ("default", "nw-resize", ...): themes reliably ship the old names, whether
+// as files or as symlinks to the new ones, and libxcb-cursor knows how to map
+// each of them onto the core cursor font if the theme doesn't have it at all.
+constexpr char kLeftPtr[] = "left_ptr";
+constexpr char kTopLeftCorner[] = "top_left_corner";
+constexpr char kTopSide[] = "top_side";
+constexpr char kTopRightCorner[] = "top_right_corner";
+constexpr char kRightSide[] = "right_side";
+constexpr char kFleur[] = "fleur";
+constexpr char kLeftSide[] = "left_side";
+constexpr char kBottomLeftCorner[] = "bottom_left_corner";
+constexpr char kBottomSide[] = "bottom_side";
+constexpr char kBottomRightCorner[] = "bottom_right_corner";
+constexpr char kXCursor[] = "X_cursor";
 
 }  // namespace
 
 CursorMap::CursorMap() {
-  // Unlike Xlib's XCreateFontCursor, the colours are supplied when the cursor
-  // is created, so there's no follow-up recolouring step.
-  const unsigned long fg = xlib::ColourByName(kCursorFG);
-  const unsigned long bg = xlib::ColourByName(kCursorBG);
-  root_ = xlib::CreateFontCursor(kLeftPtr, fg, bg);
+  // These come from the user's cursor theme, so they're drawn at whatever size
+  // that theme is configured for (XCURSOR_SIZE, or the Xcursor.size resource,
+  // or a size derived from the screen height). Using the core cursor font
+  // instead, as lwm used to, gave a 16-pixel pointer over lwm's frames and the
+  // root window while every toolkit-drawn window got the themed one, which on
+  // a high resolution display is a glaring difference.
+  root_ = xlib::CreateNamedCursor(kLeftPtr);
 
-#define MC(e, s) edges_[e] = xlib::CreateFontCursor(s, fg, bg)
+#define MC(e, s) edges_[e] = xlib::CreateNamedCursor(s)
   MC(ETopLeft, kTopLeftCorner);
   MC(ETop, kTopSide);
   MC(ETopRight, kTopRightCorner);

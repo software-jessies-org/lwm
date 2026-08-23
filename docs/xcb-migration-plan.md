@@ -67,7 +67,7 @@ Everything lwm needs has an XCB equivalent (all present on this machine):
 | `XGetWMHints`/`NormalHints`/`Protocols`/`TransientFor` | `xcb-icccm` | 0.4.1 |
 | `XRR*` | `xcb-randr` | 1.15 |
 | `XShape*` | `xcb-shape` | 1.15 |
-| `XCreateFontCursor`/`XRecolorCursor` | `xcb-cursor` (or `xcb_create_glyph_cursor`) | 0.1.4 |
+| `XCreateFontCursor`/`XRecolorCursor` | `xcb-cursor` | 0.1.4 |
 | `XCreateImage`/`XGetImage`/`XPutImage` | `xcb-image` | 0.4.0 |
 | `Xrm*` resource database | `xcb-xrm` | 1.0 |
 | `XAllocNamedColor` | `xcb_alloc_named_color` | — |
@@ -272,7 +272,7 @@ throughout. Ordered lowest-risk first; each step is independently shippable.
 
 | # | Group | Files | Notes |
 | --- | --- | --- | --- |
-| 1 | Cursors | `cursor.cc` (60 lines) | `xcb_create_glyph_cursor` takes fg/bg at creation, so `XRecolorCursor` disappears entirely. Fully self-contained — a good confidence-builder. |
+| 1 | Cursors | `cursor.cc` (60 lines) | Done, and then done again: the first pass used `xcb_create_glyph_cursor`, which takes fg/bg at creation so `XRecolorCursor` disappeared entirely; the second switched to `xcb-cursor`'s themed cursors, which took the colours away too. Fully self-contained — a good confidence-builder. |
 | 2 | Resources + colours | `resource.cc` | `xcb-xrm`; `xcb_alloc_named_color`. `Resources::Set(name, class, default)` maps directly onto `xcb_xrm_resource_get_string`. |
 | 3 | Atoms | `lwm.cc`, `ewmh.cc` | Batch the ~70 interns: fire all cookies, then collect. First real latency win, and trivially safe. |
 | 4 | Window ops | most of `xlib.cc` | Biggest by call count, purely mechanical. Introduce the `ValueList` builder (hazard 3) here and use it everywhere. |

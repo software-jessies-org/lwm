@@ -13,6 +13,7 @@
 #include "xlib.h"
 
 #include <xcb/randr.h>
+#include <xcb/xcb_cursor.h>
 #include <xcb/xcb_icccm.h>
 #ifdef SHAPE
 #include <xcb/shape.h>
@@ -55,12 +56,6 @@ NormalHints normalHintsFrom(const xcb_size_hints_t& hints) {
   res.width_inc = hints.width_inc;
   res.height_inc = hints.height_inc;
   return res;
-}
-
-// Converts an 8-bit colour component to the 16-bit one the protocol wants.
-uint16_t extend8To16(unsigned long c) {
-  const uint16_t v = c & 0xff;
-  return v | (v << 8);
 }
 
 class RealServer : public Server {
@@ -659,27 +654,24 @@ class RealServer : public Server {
     return true;
   }
 
-  Cursor CreateFontCursor(unsigned int shape,
-                          unsigned long fg,
-                          unsigned long bg) override {
-    // The standard cursor font holds each cursor as a glyph plus the mask
-    // glyph immediately after it, which is why the source and mask characters
-    // differ by one. Unlike Xlib's XCreateFontCursor the colours are given
-    // here rather than in a follow-up XRecolorCursor, so there is no separate
-    // recolour step.
-    if (!cursor_font_) {
-      cursor_font_ = xcb_generate_id(conn);
-      static const char kCursorFontName[] = "cursor";
-      xcb_open_font(conn, cursor_font_, sizeof(kCursorFontName) - 1,
-                    kCursorFontName);
+  Cursor CreateNamedCursor(const std::string& name) override {
+    // xcb-cursor is the XCB reimplementation of libXcursor: it finds the
+    // theme from XCURSOR_THEME or the Xcursor.theme resource, picks a size
+    // from XCURSOR_SIZE, Xcursor.size, or failing both the screen height,
+    // and loads the ARGB cursor images. Cursors from the core "cursor" font,
+    // which is a fixed 16-pixel bitmap font that no amount of configuration
+    // can enlarge, are its fallback for names the theme doesn't have.
+    if (!cursor_ctx_ && !cursor_ctx_failed_) {
+      if (xcb_cursor_context_new(conn, screen_, &cursor_ctx_) < 0) {
+        LOGW() << "Couldn't initialise xcb-cursor; using default cursors";
+        cursor_ctx_ = nullptr;
+        cursor_ctx_failed_ = true;
+      }
     }
-    const Cursor c = xcb_generate_id(conn);
-    xcb_create_glyph_cursor(conn, c, cursor_font_, cursor_font_, shape,
-                            shape + 1, extend8To16(fg >> 16),
-                            extend8To16(fg >> 8), extend8To16(fg),
-                            extend8To16(bg >> 16), extend8To16(bg >> 8),
-                            extend8To16(bg));
-    return c;
+    if (!cursor_ctx_) {
+      return XCB_NONE;  // The server then uses the parent window's cursor.
+    }
+    return xcb_cursor_load_cursor(cursor_ctx_, name.c_str());
   }
 
   // -------------------------------------------------------------------------
@@ -860,7 +852,10 @@ class RealServer : public Server {
  private:
   // The setup information for our one screen, cached at connect time.
   xcb_screen_t* screen_ = nullptr;
-  xcb_font_t cursor_font_ = 0;
+  // Created on first use by CreateNamedCursor, and deliberately never freed:
+  // it lives as long as the connection does.
+  xcb_cursor_context_t* cursor_ctx_ = nullptr;
+  bool cursor_ctx_failed_ = false;
   Atom wm_protocols_atom_ = 0;
 };
 

@@ -1,5 +1,29 @@
 # Change Log for "lwm"
 
+## 2026-08-23 (pn, Basel)
+
+The mouse pointer now comes from the user's cursor theme instead of the core
+X11 "cursor" font. That font is a fixed-size bitmap font from the 1980s: it
+exists at exactly one size, around 16 pixels, and nothing scales it, so lwm
+drew a tiny pointer over its own frames and the root window while every window
+belonging to a GTK, Qt or Java application showed the large themed one the
+toolkits load through libXcursor. On a high resolution display the difference
+was hard to miss.
+
+`CursorMap` now asks `xcb-cursor` - the XCB reimplementation of libXcursor -
+for each cursor by name, so the theme comes from `XCURSOR_THEME` or the
+`Xcursor.theme` resource and the size from `XCURSOR_SIZE`, `Xcursor.size`, or
+failing both a size derived from the screen height. lwm therefore matches
+whatever the rest of the desktop is doing without needing any setting of its
+own. The names used are the traditional X ones ("left_ptr", "fleur",
+"top_left_corner" and so on) rather than the newer freedesktop spellings,
+because themes reliably ship those, and because `xcb_cursor_load_cursor` knows
+how to fall back to the corresponding core font glyph for any name the theme
+turns out not to have.
+
+The cursor foreground and background colours are gone with the font: theme
+cursors are full-colour images and there is nothing to recolour.
+
 
 ## 2026-08-23 (pn, Basel)
 

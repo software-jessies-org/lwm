@@ -819,10 +819,8 @@ unsigned long ColourByName(const std::string& name) {
   return pixel;
 }
 
-Cursor CreateFontCursor(unsigned int shape,
-                        unsigned long fg,
-                        unsigned long bg) {
-  return server->CreateFontCursor(shape, fg, bg);
+Cursor CreateNamedCursor(const std::string& name) {
+  return server->CreateNamedCursor(name);
 }
 
 // ---------------------------------------------------------------------------

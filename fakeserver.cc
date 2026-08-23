@@ -892,12 +892,8 @@ bool FakeServer::AllocNamedColour(const std::string& name,
   return false;
 }
 
-Cursor FakeServer::CreateFontCursor(unsigned int shape,
-                                    unsigned long fg,
-                                    unsigned long bg) {
-  (void)shape;
-  (void)fg;
-  (void)bg;
+Cursor FakeServer::CreateNamedCursor(const std::string& name) {
+  (void)name;
   return next_id_++;
 }
 
