@@ -146,6 +146,18 @@ extern void ewmh_change_state(Client* c,
                               unsigned long atom);
 extern void ewmh_set_allowed(Client* c);
 extern void ewmh_set_client_list();
+
+// Applies one _NET_WM_STATE action (0 = remove, 1 = add, 2 = toggle) to a
+// current boolean state, returning the new one.
+extern bool new_state(unsigned long action, bool current);
+
+// Restacks every window according to the EWMH spec's ordering rules (section
+// 7.10): _NET_WM_STATE_BELOW at the bottom, then the desktop, then ordinary
+// windows, then _NET_WM_STATE_ABOVE and docks, with full-screen windows on
+// top. Called by ewmh_set_client_list(), which is also what stops it
+// recursing: the Raise() and Lower() calls it makes each want to update the
+// client list again.
+extern void fix_stack();
 extern void ewmh_get_strut(Client* c);
 extern void ewmh_set_strut();
 

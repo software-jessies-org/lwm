@@ -2,17 +2,18 @@
 
 Build list lives in `SRCS` in the hand-written `Makefile` (imake is gone; see
 `xcb-migration-plan.md`). This page tracks progress against
-`refactoring-plan.md`: phases A through D are done — tier-0 layer extracted
-and tested with no X11 dependency, `lwm.h` is split into one header per
-`.cc`, and the misplaced classes
-(`Focuser`/`Hider`/`DragHandler`) now live in their own files. `mouse.cc`/
-`mouse.h` no longer exist: `Hider` moved to `hider.{h,cc}`, and
+`refactoring-plan.md`: phases A through E are done. Tier 0 is extracted and
+tested with no X11 dependency, `lwm.h` is split into one header per `.cc`, the
+misplaced classes (`Focuser`/`Hider`/`DragHandler`) live in their own files,
+and the `xlib` shim has been inverted into an interface — `xlib::Server`
+(`server.h`) with `RealServer` (`realserver.cc`) and `FakeServer`
+(`fakeserver.cc`) behind it — so the event handlers, `Focuser`, the client
+lifecycle and the EWMH stacking rules are now unit-tested with no display.
+`mouse.cc`/`mouse.h` no longer exist: `Hider` moved to `hider.{h,cc}`, and
 `getMousePosition()`/`MousePos` moved to `xlib.{h,cc}` (it's an X query, per
 the plan's "wrong place" table) — between the two, nothing was left in
-`mouse.cc`. Phase E (completing and inverting the `xlib` shim into a
-`Server`/`FakeServer` interface, then the group-2 tests that need it) is not
-started — but the ground for it is much better now that the shim sits on XCB,
-which is pure request-in/reply-out with no hidden `Display*` state.
+`mouse.cc`. Only phase F (putting `Client`'s public data members behind
+accessors) remains.
 
 lwm now speaks **XCB**, not Xlib. The migration in `xcb-migration-plan.md` is
 done except its optional phase 4 (replacing Xft with Pango + cairo-xcb, which
@@ -57,12 +58,15 @@ all, and neither do `xbridge.cc` or `xfont.cc` (they *can't*: see below).
 | `drag.cc` / `drag.h` | ~335 | The 8 `DragHandler` subclasses (`MenuDragger`, `WindowMover`/`Resizer`/`Closer`/`Hider`/`Lowerer`, `ShellRunner`, plus their `WindowDragger`/`WindowClicker` base classes) and `getDragHandlerForEvent`, the factory that picks one from a `ButtonPress`. Only the factory is exported; the subclasses are an anonymous-namespace implementation detail. Moved out of `disp.cc`. |
 | `xdebugprint.cc` / `xdebugprint.h` | ~90 | `operator<<` for raw XCB event structs (`xcb_configure_request_event_t`, `xcb_configure_notify_event_t`, `xcb_focus_in_event_t`) plus `diff` (an `EWMHWindowState` before/after formatter), used only by `LOGD`/`LOGI` calls in `disp.cc`. Moved out of `disp.cc`; `EWMHWindowState`'s own `operator<<` moved to `ewmh.cc` instead, next to the type. |
 | `client.cc` / `client.h` | ~552 | `Client` methods (geometry, border drawing, raise/lower/close/state, full-screen). Also the resize-feedback popup. `Focuser` moved out to `focus.{h,cc}`. |
-| `focus.cc` / `focus.h` | ~214 | `Focuser`: focus history, the focus-follows-mouse race-avoidance timerfd (see the long comment in `focus.h`), `ReallyFocusClient`'s three paths (normal/Java/give-up — don't "simplify" this, see `concepts.md`). Moved out of `client.cc`. |
+| `focus.cc` / `focus.h` | ~225 | `Focuser`: focus history, the focus-follows-mouse race-avoidance timerfd (see the long comment in `focus.h`), `ReallyFocusClient`'s three paths (normal/Java/give-up — don't "simplify" this, see `concepts.md`). Moved out of `client.cc`. `focus::NowMillis` is the clock it reads, replaceable so the A→B→C race can be tested rather than waited for. |
 | `hider.cc` / `hider.h` | ~320 | `Hider`: hide/unhide, the unhide menu (layout, paint, hit-testing, the red highlight box), built on `menulayout.h`. `menuItemHeight()` is the one function here also used outside `Hider` (by `xlib.cc`'s icon sizing), so it's the one non-anonymous-namespace free function. Moved out of `mouse.cc`, which no longer exists. |
 | `screen.cc` / `screen.h` | ~345 | `LScr`: window/client registry, GCs and colours, EWMH root properties, window-tree scan at start-up, `SetVisibleAreas` (calls into `screenlayout.cc`). Owns `Hider`/`Focuser` by value, so `screen.h` includes `hider.h`/`focus.h`. |
-| `xlib.cc` / `xlib.h` | ~1150 | `namespace xlib`: logging wrappers around **XCB** requests (the name is now historical), `CreateNamedWindow`, `WindowTree`, `ImageIcon` (icon scaling, compositing, refcounted pixmap cache — on plain 32-bit buffers, no `XImage`). Also home to `conn`, the resource-ID typedefs, `ButtonMask`, `MousePos`/`getMousePosition()`, `Reply<T>` (RAII for reply memory), and the `ValueList`/`WindowAttrs`/`WindowChanges`/`GCValues` builders. **Use the builders.** XCB takes a bare `uint32_t[]` that must be ordered by increasing mask bit and checks nothing, so a hand-written array is a silent-corruption bug waiting to happen. |
+| `xlib.cc` / `xlib.h` | ~1210 | `namespace xlib`: the public face of the shim, and the only thing above it that anything calls. Every function here logs, composes (`XMoveWindow` is a `ConfigureWindow` with two fields set) and delegates to the installed `Server`; none of them issues an X request itself. Also `CreateNamedWindow`, `WindowTree`, the client-side parser for `#rrggbb` colour specifications, and `ImageIcon` (icon scaling, compositing, refcounted pixmap cache — on plain 32-bit buffers, no `XImage`). Home to `conn`, the resource-ID typedefs, `ButtonMask`, `MousePos`/`getMousePosition()`, `Reply<T>` (RAII for reply memory), and the `ValueList`/`WindowAttrs`/`WindowChanges`/`GCValues` builders. **Use the builders.** XCB takes a bare `uint32_t[]` that must be ordered by increasing mask bit and checks nothing, so a hand-written array is a silent-corruption bug waiting to happen. |
+| `server.h` | ~250 | `xlib::Server`: one pure-virtual method per X request, plus `xlib::server` (the installed one) and `SetServer`. The seam sits *below* `xlib.cc`'s composition on purpose, so what a fake records is what would have gone on the wire. |
+| `realserver.cc` | ~700 | `RealServer`: the XCB implementation. Nothing here does anything but issue one request (or the smallest group that must travel together, such as the attributes-plus-geometry pair XCB needs where Xlib pretended one request would do). Installed by `OpenDisplay()` unless something got in first. |
+| `fakeserver.cc` / `fakeserver.h` | ~700 | `FakeServer`: an in-memory window tree that answers queries and records every mutating call as a readable one-line string. Models the parts of the protocol lwm depends on — reparenting, stacking order, viewability, properties, hints — and nothing else. |
 | `xbridge.cc` / `xbridge.h` | ~60 | The last of libX11, quarantined. Opens the connection with `XOpenDisplay`, hands the event queue to XCB (`XSetEventQueueOwner`), exposes the XCB connection, and installs Xlib's error handler so an Xft error can't exit the process. Also `Flush()`: Xlib has *its own* output buffer that `xcb_flush` knows nothing about, so both must be flushed. Deliberately does not include `xlib.h` — see the boundary note below. Disappears entirely if phase 4 ever happens. |
-| `xfont.cc` / `xfont.h` | ~95 | All text rendering, via Xft. The other file allowed to include Xlib, and the reason libX11 is still linked: Xft has no XCB port. Its interface (`TextHeight`, `TextAscent`, `TextWidth`, `DrawString`) names no X type more specific than `xcb_window_t`, so replacing the implementation with Pango + cairo-xcb would touch nothing above it. |
+| `xfont.cc` / `xfont.h` | ~110 | All text rendering, via Xft. The other file allowed to include Xlib, and the reason libX11 is still linked: Xft has no XCB port. Its interface (`TextHeight`, `TextAscent`, `TextWidth`, `DrawString`) names no X type more specific than `xcb_window_t`, so replacing the implementation with Pango + cairo-xcb would touch nothing above it. `InitForTest()` substitutes fixed metrics for a real font, which is what lets everything derived from the title bar height be tested without a display. |
 | `ewmh.cc` / `ewmh.h` | ~580 | EWMH atom table (interned in one batch) and every `ewmh_*` getter/setter; `fix_stack()` stacking policy; `ewmh_set_client_list()`. `ewmh.h` also carries `EWMHWindowType`/`EWMHWindowState` (used by `Client`); `ewmh.cc` has the `EWMHWindowState` debug `operator<<`, next to the type it prints. Note lwm deliberately does **not** use `xcb-ewmh`: this file's hand-rolled table encodes specific policy (`fix_stack`'s stacking rules, `ewmh_hasframe`'s window-type rules, the recursion guard) that a library swap would quietly rewrite. |
 | `manage.cc` / `manage.h` | ~315 | `manage()` — the big "adopt this window" routine (hints, protocols, icons, framing decision, reparent, initial placement via `LScr::NextAutoPosition`). Also `withdraw()`, `Terminate()`, name/transient/state getters. |
 | `debug.cc` / `debug.h` | 328 | `DebugCLI` — stdin command interpreter (`ls`, `dbg`, `xrandr`, `help`) and the fake-xrandr "dead zone" overlay windows. |
@@ -79,7 +83,9 @@ all, and neither do `xbridge.cc` or `xfont.cc` (they *can't*: see below).
 | --- | --- |
 | `test.h`/`test.cc` | The self-registering framework: `TEST`, `EXPECT_*`/`ASSERT_*`, `testing::RunAll`. See `../docs/dev-workflow.md`. |
 | `tests.cc` | Just the `RunAllTests()` glue now; all suites live in `*_test.cc`. |
-| `geometry_test.cc`, `sizelimits_test.cc`, `strings_test.cc`, `screenlayout_test.cc`, `placement_test.cc`, `framegeometry_test.cc`, `menulayout_test.cc` | One per tier-0 file above. |
+| `geometry_test.cc`, `sizelimits_test.cc`, `strings_test.cc`, `screenlayout_test.cc`, `placement_test.cc`, `framegeometry_test.cc`, `menulayout_test.cc` | One per tier-0 file above. No fakes needed. |
+| `wmtest.cc` / `wmtest.h` | `wmtest::World`: stands up a `FakeServer`, `Resources`, the atoms, the fake font and `LScr` in main()'s own order, and puts everything back afterwards. One per test, on the stack. |
+| `disp_test.cc`, `focus_test.cc`, `client_test.cc`, `ewmh_test.cc` | The tests that need a server: `EvConfigureRequest`'s Nautilus offset arithmetic, `Focuser`'s history and its timerfd deferral, the client lifecycle across `LScr`'s registries, and `fix_stack` plus the recursion guard. |
 
 Still compiled straight into the main binary and run via `./lwm -test`; the
 separate X11-free tier-0 test target mentioned in the plan doesn't exist yet.
@@ -115,6 +121,10 @@ Each carries its own compile command in a comment at the top of the file.
 
 * **A new X event needs handling** → `disp.cc`, add `Ev<Name>` and an `EV()`
   line in `DispatchXEvent`.
+* **A new X request** → add a method to `xlib::Server` (`server.h`), implement
+  it in `realserver.cc` and `fakeserver.cc`, and give it a logging wrapper in
+  `xlib.{h,cc}` for everything else to call. Nothing outside those three files
+  calls `xcb_*` directly.
 * **A new mouse gesture** → `getDragHandlerForEvent` in `drag.cc`, plus a
   `DragHandler` subclass.
 * **A new config option** → `Resources::SR`/`IR` enum in `resource.h`, default

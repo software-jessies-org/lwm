@@ -124,6 +124,13 @@ void EvCirculateRequest(xcb_generic_event_t* ev) {
 void EvMapRequest(xcb_generic_event_t* ev) {
   const xcb_map_request_event_t* e = (const xcb_map_request_event_t*)ev;
   Client* c = LScr::I->GetOrAddClient(e->window, false);
+  if (c == nullptr) {
+    // Nothing we can manage. In practice this means the window was destroyed
+    // between the server sending us this request and our asking about it, so
+    // the attributes came back empty; GetOrAddClient also declines our own
+    // windows and override-redirect ones.
+    return;
+  }
   LOGD(c) << "MapRequest";
   if (c->hidden) {
     c->Unhide();

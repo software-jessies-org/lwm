@@ -8,6 +8,20 @@
 
 class Client;
 
+// The clock the Focuser reads, in milliseconds since some fixed point.
+//
+// Whether an enter-window notification is acted on at once or deferred turns
+// entirely on how long ago the previous one arrived, so the A->B->C race this
+// class exists to avoid is a property of the clock. Making it replaceable is
+// what lets that be tested, rather than waited for. Defaults to
+// CLOCK_MONOTONIC; see focus_test.cc.
+namespace focus {
+
+using ClockFn = uint64_t (*)();
+extern ClockFn NowMillis;
+
+}  // namespace focus
+
 // The Focuser has the job of ensuring the right window gets focus at the
 // right time. It maintains the focus history, so that when a client loses
 // focus, it will give focus to the last window to have it.

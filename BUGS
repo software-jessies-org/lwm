@@ -43,11 +43,14 @@ pointer to its middle.
 
 === CLEANUPS ===
 
-The work on xlib.h and xlib.cc has helped a lot, but this could be extended
-such that:
-1: All xlib access goes through this shim layer.
-2: The shim layer becomes an interface with a concrete implementation.
-3: We can then add a test implementation, and then proper unit testing.
+Done (docs/refactoring-plan.md, phase E): all X access goes through the shim,
+the shim is an interface (xlib::Server in server.h) with a real implementation
+(realserver.cc) and a fake one (fakeserver.cc), and the event handlers, the
+Focuser, the client lifecycle and the EWMH stacking rules now have unit tests
+that run against the fake with no display.
+
+Still to do from that plan: phase F, putting Client's public data members
+behind accessors.
 
 We still have too many globals and static variables. These should be moved into
 classes.

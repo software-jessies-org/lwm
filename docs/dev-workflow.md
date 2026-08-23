@@ -3,19 +3,13 @@
 ## Build
 
 ```sh
-xmkmf && make      # Imakefile -> Makefile; the Makefile is gitignored
-make -j20          # incremental
+make -j20          # incremental; the Makefile is hand-written and checked in
 ```
 
-FreeBSD: `ln -s Makefile.freebsd Makefile; make` (note `INSTALL` misspells it
-as `Makefile.FreeBSD`, and it still says `-std=c++14`, which no longer builds —
-`manage.cc` uses `std::optional`). `no_xmkmf_makefile` is a fallback sample for
-systems without imake, and is likewise stale. Flags live in `Imakefile`:
-`-std=c++17 -g3 -O0 -DSHAPE -Wall -Werror -Wextra -Wpedantic -Wno-sign-compare`.
-**`-Werror` is on**, so warnings break the build.
+Flags live in the `Makefile`: `-std=c++17 -g3 -O0 -DSHAPE -Wall -Werror -Wextra
+-Wpedantic -Wno-sign-compare`. **`-Werror` is on**, so warnings break the build.
 
-Adding a source file means adding it to `SRCS` in `Imakefile` (and re-running
-`xmkmf`), plus `no_xmkmf_makefile` and `Makefile.freebsd` if you care.
+Adding a source file means adding it to `SRCS` in the `Makefile`.
 
 ## Tests
 
@@ -30,11 +24,44 @@ self-registers at static-init time, no central list to update. Assertions are
 `ASSERT_EQ/NE/TRUE/FALSE/NEAR` (return from the test on failure); both accept
 extra context via `<<`, evaluated only on failure. Wrap table-driven case
 bodies in `testing::Context ctx(tc.name)` so failures are labelled with the
-case name. Tests live next to what they test: `geometry_test.cc`
-(`Rect::Parse`, `DimensionLimiter`), `strings_test.cc` (`Split`), `tests.cc`
-(the `MapToNewAreas` table — still here because `MapToNewAreas` itself hasn't
-moved out of `screen.cc` yet). Still compiled straight into the main binary;
-a separate X11-free tier-0 test target is planned but not built yet.
+case name. Tests live next to what they test. Still compiled straight into the
+main binary; a separate X11-free tier-0 test target is planned but not built
+yet.
+
+There are two kinds of test:
+
+* **Tier-0 tests** (`geometry_test.cc`, `sizelimits_test.cc`,
+  `strings_test.cc`, `screenlayout_test.cc`, `placement_test.cc`,
+  `framegeometry_test.cc`, `menulayout_test.cc`) call pure functions. Nothing
+  to set up.
+* **Tests that need a server** (`disp_test.cc`, `focus_test.cc`,
+  `client_test.cc`, `ewmh_test.cc`) start with a `wmtest::World` on the stack.
+  That installs an `xlib::FakeServer` and stands up `Resources`, the atoms, a
+  fixed-metric font and `LScr` in the same order `main()` does, then puts it
+  all back when it goes out of scope. Drive lwm by pushing events —
+  `world.server().PushEvent(ev); ProcessPendingEvents();` — and assert either
+  on the resulting state (`world.server().Get(w)->rect`, `LScr::I->Clients()`)
+  or on what lwm asked the server to do
+  (`world.server().CallsMatching("ConfigureWindow(")`).
+
+```cpp
+TEST(Something, DoesTheThing) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 300, 200));
+  world.server().ClearCalls();
+  ...
+}
+```
+
+`FakeServer` records mutating calls only, one readable line each
+(`ConfigureWindow(0x102) x=10 y=20 width=100 height=50`); queries are answers
+rather than effects, so they'd only be noise. It models the parts of the
+protocol lwm relies on and no more — if a test starts depending on X error
+semantics, it has stopped testing lwm.
+
+Two clocks are injectable for testing: `focus::NowMillis` (so the A→B→C focus
+race can be provoked without waiting) and `xfont::InitForTest` (so title bar
+geometry doesn't need a font on a display).
 
 ## Functional smoke test
 
@@ -116,9 +143,11 @@ xprop -id <id>           # properties on one window
   application (Nautilus, Chrome, Java/Terminator, Rhythmbox, ImageMagick
   `display`). Those are regression notes — don't delete them, and re-test with
   the named app if you change that code.
-* All Xlib calls should go through `namespace xlib` where a wrapper exists; the
-  long-term plan in `../BUGS` is to make that shim complete enough to fake for
-  tests.
+* All X calls go through `namespace xlib` (`xlib.h`), which logs and composes,
+  and then through `xlib::Server` (`server.h`), which is one method per
+  request. A new request needs a `Server` method, an implementation in
+  `realserver.cc` and `fakeserver.cc`, and a wrapper in `xlib.{h,cc}`. Only
+  those files call `xcb_*`.
 * `../BUGS` is the TODO list (crashes → breakages → cosmetics → features →
   cleanups). `../ChangeLog` is history. `../PROMPTLOG` logs prompts used when
   working on lwm with an LLM.

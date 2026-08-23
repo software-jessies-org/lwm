@@ -19,6 +19,11 @@ Display* dpy;
 int screen;
 
 XftFont* g_font;
+// Non-zero once InitForTest has been called, in which case g_font is null and
+// these stand in for it.
+int g_test_height;
+int g_test_ascent;
+int g_test_char_width;
 XftColor g_active_title;
 XftColor g_inactive_title;
 XftColor g_popup;
@@ -44,6 +49,13 @@ void allocColour(Resources::SR res, XftColor* into) {
 
 }  // namespace
 
+void InitForTest(int height, int ascent, int char_width) {
+  g_font = nullptr;
+  g_test_height = height;
+  g_test_ascent = ascent;
+  g_test_char_width = char_width;
+}
+
 void Init() {
   dpy = static_cast<Display*>(xbridge::Display());
   screen = DefaultScreen(dpy);
@@ -63,14 +75,17 @@ void Init() {
 }
 
 int TextHeight() {
-  return g_font->height;
+  return g_font ? g_font->height : g_test_height;
 }
 
 int TextAscent() {
-  return g_font->ascent;
+  return g_font ? g_font->ascent : g_test_ascent;
 }
 
 int TextWidth(const std::string& s) {
+  if (!g_font) {
+    return int(s.size()) * g_test_char_width;
+  }
   XGlyphInfo extents;
   XftTextExtentsUtf8(dpy, g_font, reinterpret_cast<const FcChar8*>(s.c_str()),
                      s.size(), &extents);
@@ -82,6 +97,9 @@ void DrawString(xcb_window_t w,
                 int y,
                 const std::string& s,
                 Colour c) {
+  if (!g_font) {
+    return;
+  }
   XftDraw* draw = XftDrawCreate(dpy, w, DefaultVisual(dpy, screen),
                                 DefaultColormap(dpy, screen));
   XftDrawStringUtf8(draw, colourFor(c), g_font, x, y,

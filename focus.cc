@@ -26,7 +26,7 @@ void focusChildrenOf(Client* c, Window parent) {
   }
 }
 
-uint64_t GetTimeMilliseconds() {
+uint64_t RealTimeMilliseconds() {
   struct timespec spec = {};
   clock_gettime(CLOCK_MONOTONIC, &spec);
   return (uint64_t(spec.tv_sec) * 1000) + (uint64_t(spec.tv_nsec) / 1e6);
@@ -34,8 +34,18 @@ uint64_t GetTimeMilliseconds() {
 
 }  // namespace
 
+namespace focus {
+
+ClockFn NowMillis = RealTimeMilliseconds;
+
+}  // namespace focus
+
+// The timer fd is non-blocking because the only read of it happens in
+// response to select() saying it's ready. If that ever turns out not to be
+// true, the window manager should carry on rather than stop dead inside
+// read().
 Focuser::Focuser()
-    : timer_fd_(timerfd_create(CLOCK_MONOTONIC, 0)),
+    : timer_fd_(timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK)),
       second_entry_delay_millis_(
           Resources::I->GetInt(Resources::FOCUS_DELAY_MILLIS)) {}
 
@@ -69,7 +79,7 @@ void Focuser::EnterWindow(Window w) {
     return;
   }
   // At this point, we need the time.
-  uint64_t now = GetTimeMilliseconds();
+  uint64_t now = focus::NowMillis();
   // Determine whether this is to be an immediate focus change, or we should
   // delay it. We always delay if there's a delayed focus already going on,
   // and we also delay if the last change of focus was too recent.
@@ -99,9 +109,13 @@ void Focuser::EnterWindow(Window w) {
 
 void Focuser::TimerFDTriggered() {
   // We must read a single uint64_t value from the file descriptor, to silence
-  // it and stop it continually pinging the switch loop.
+  // it and stop it continually pinging the switch loop. The value is a count
+  // of expirations, which we don't care about, and a short read only means the
+  // timer hasn't fired - the fd is non-blocking. Either way, focus the pending
+  // window.
   uint64_t buf;
-  read(timer_fd_, &buf, sizeof(uint64_t));
+  const ssize_t ignored = read(timer_fd_, &buf, sizeof(uint64_t));
+  (void)ignored;
   // Good. Now actually focus the pending window.
   FocusPending();
 }

@@ -64,8 +64,12 @@ Result::~Result() {
     return;
   }
   failureCount()++;
+  // The separator matters: extra_ holds whatever the caller streamed in after
+  // the assertion, and without it the message runs straight into the last
+  // value the comparison printed.
+  const std::string extra = extra_.str();
   LOGE() << contextPrefix() << file_ << ":" << line_ << ": " << what_
-        << extra_.str();
+         << (extra.empty() ? "" : "; ") << extra;
 }
 
 Registrar::Registrar(const char* suite, const char* name, void (*fn)()) {

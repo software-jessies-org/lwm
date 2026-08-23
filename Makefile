@@ -43,14 +43,19 @@ LDFLAGS ?= -g3 -rdynamic
 
 SRCS = \
 	client.cc \
+	client_test.cc \
 	cursor.cc \
 	debug.cc \
 	disp.cc \
+	disp_test.cc \
 	drag.cc \
 	edge.cc \
 	error.cc \
 	ewmh.cc \
+	ewmh_test.cc \
+	fakeserver.cc \
 	focus.cc \
+	focus_test.cc \
 	framegeometry.cc \
 	framegeometry_test.cc \
 	geometry.cc \
@@ -76,6 +81,7 @@ SRCS = \
 	strings_test.cc \
 	test.cc \
 	tests.cc \
+	wmtest.cc \
 	xdebugprint.cc \
 	xbridge.cc \
 	xfont.cc \

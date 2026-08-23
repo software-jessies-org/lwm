@@ -161,21 +161,26 @@ bool RunAll(const std::string& filter = "");
 // ASSERT_* variants abandon the current test function (via `return`) on
 // failure. Must only be used directly inside a TEST() body (or a void
 // function called from one that's happy to be short-circuited).
+//
+// The trailing `<< ""` is what lets an assertion stand as a statement on its
+// own: without it the else branch is a bare expression, which -Werror rejects
+// as having no effect. It costs nothing, since the else branch is only
+// reached when the assertion passed, and Result only buffers on failure.
 #define ASSERT_EQ(a, b)                            \
   if (auto _assert_result = EXPECT_EQ(a, b); !_assert_result) return; \
-  else _assert_result
+  else _assert_result << ""
 #define ASSERT_NE(a, b)                            \
   if (auto _assert_result = EXPECT_NE(a, b); !_assert_result) return; \
-  else _assert_result
+  else _assert_result << ""
 #define ASSERT_TRUE(a)                              \
   if (auto _assert_result = EXPECT_TRUE(a); !_assert_result) return; \
-  else _assert_result
+  else _assert_result << ""
 #define ASSERT_FALSE(a)                              \
   if (auto _assert_result = EXPECT_FALSE(a); !_assert_result) return; \
-  else _assert_result
+  else _assert_result << ""
 #define ASSERT_NEAR(a, b, tol)                                \
   if (auto _assert_result = EXPECT_NEAR(a, b, tol); !_assert_result) \
     return;                                                   \
-  else _assert_result
+  else _assert_result << ""
 
 #endif  // TEST_H_included

@@ -200,10 +200,10 @@ assertion.
 
 **Build.** Keep `./lwm -test` working during the transition. Once tier 0
 exists, add a second target linking only tier-0 sources, the framework, and the
-`*_test.cc` files — no X11, no display, sub-second. Add to `Imakefile`
-alongside `ComplexProgramTarget(lwm)`; `Makefile.freebsd` and
-`no_xmkmf_makefile` are already stale (`-std=c++14`, missing `geometry.cc` in
-one) and should either be fixed in the same change or deleted.
+`*_test.cc` files — no X11, no display, sub-second. (The XCB migration replaced
+imake with a hand-written `Makefile`, and deleted the stale `Makefile.freebsd`
+and `no_xmkmf_makefile`; the separate tier-0 target still doesn't exist, since
+`./lwm -test` runs in well under a second as it is.)
 
 ## What to test first
 
@@ -276,14 +276,24 @@ relying on transitive includes.
 `hider.cc`, the `DragHandler`s → `drag.cc`, event `operator<<`s out of
 `disp.cc`. Cheap once C is done.
 
-**E. Complete and invert the xlib shim.** This is the BUGS list's steps 1–3,
-and the big one. First route the remaining ~140 direct X calls through
-`namespace xlib` (client.cc 42, manage.cc 23, ewmh.cc 22, screen.cc 21,
-lwm.cc 17, disp.cc 16, mouse.cc 15) — this needs new wrappers for properties,
-atoms, hints, GCs and event sending, not just window ops. Then turn the
-namespace into a `Server` interface with `RealServer` and a `FakeServer` that
-records calls and answers queries from a scripted window tree. Then write the
-group-2 tests.
+**E. Complete and invert the xlib shim.** *(Done.)* This is the BUGS list's
+steps 1–3, and the big one. First route the remaining ~140 direct X calls
+through `namespace xlib` — this needs new wrappers for properties, atoms,
+hints, GCs and event sending, not just window ops. Then turn the namespace
+into a `Server` interface with `RealServer` and a `FakeServer` that records
+calls and answers queries from a scripted window tree. Then write the group-2
+tests.
+
+The first part fell out of the XCB migration, which had to touch every call
+site anyway. The rest landed as `server.h` (the interface), `realserver.cc`,
+`fakeserver.cc` and `wmtest.{h,cc}` (the fixture), with the seam drawn *below*
+`xlib.cc`'s composition and logging so that what the fake records is what
+would have gone on the wire. Three seams had to be opened to make it work:
+`Resources` copes with a null connection, `xfont::InitForTest` substitutes
+fixed metrics for a real font, and `focus::NowMillis` replaces the clock. The
+tests are in `disp_test.cc`, `focus_test.cc`, `client_test.cc` and
+`ewmh_test.cc`; writing them turned up a null-pointer dereference in
+`EvMapRequest` for a window that dies between the request and our query.
 
 **F. Tighten `Client`.** Its public/private sections currently seesaw (there's
 an empty `private:` immediately followed by `public:` at `lwm.h:150`), and

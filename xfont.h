@@ -33,6 +33,17 @@ enum class Colour {
 // the X server is open. Panics if no usable font can be found.
 extern void Init();
 
+// Installs fixed metrics instead of a real font: TextHeight, TextAscent and
+// TextWidth answer from the numbers given, and DrawString does nothing.
+//
+// Everything lwm lays out - title bar height, close icon, unhide menu items -
+// is derived from the font's height, so the alternative to this is that none
+// of that code can be tested without a display and a font installed on it.
+// The measurements are the only thing above this interface that cares, and a
+// fixed-width font is a perfectly ordinary thing for it to be handed.
+// See docs/refactoring-plan.md, phase E.
+extern void InitForTest(int height, int ascent, int char_width);
+
 // The height of a line of text, in pixels. This is what the title bar height
 // is derived from, so it is effectively a layout constant.
 extern int TextHeight();
