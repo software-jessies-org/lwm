@@ -70,6 +70,13 @@ class Client {
   void FocusGained();
   void FocusLost();
 
+  // Asks the server for the button presses which make up the 'Windows' key
+  // mouse gestures. Without these, a click on the client's own window goes
+  // straight to the application and lwm never hears about it.
+  // Call this once the window is framed, and again after anything which
+  // releases the client window's grabs (click-to-focus does).
+  void GrabSuperButtons();
+
   // Lower this window in the window stack.
   void Lower();
 

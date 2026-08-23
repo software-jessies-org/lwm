@@ -142,6 +142,38 @@ void Client::SetIcon(xlib::ImageIcon* icon) {
   }
 }
 
+// The modifier combinations the Windows-key gestures have to be grabbed
+// under. X matches a passive grab's modifiers exactly, so a grab on Super
+// alone quietly stops working the moment Num Lock or Caps Lock is on. There
+// is no "don't care" mask, so every combination of the two locks has to be
+// asked for separately.
+static const unsigned int superGrabModifiers[] = {
+    SUPER_MASK,
+    SUPER_MASK | XCB_MOD_MASK_LOCK,
+    SUPER_MASK | XCB_MOD_MASK_2,
+    SUPER_MASK | XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2,
+};
+
+void Client::GrabSuperButtons() {
+  // Unframed windows are the ones lwm has decided not to put furniture on
+  // (shaped windows, mostly), and the gestures are furniture.
+  if (!framed) {
+    return;
+  }
+  for (unsigned int modifiers : superGrabModifiers) {
+    for (int button :
+         {SUPER_MOVE_BUTTON, SUPER_RESIZE_BUTTON, SUPER_HIDE_BUTTON}) {
+      // Asynchronous, so that neither pointer nor keyboard is frozen waiting
+      // for lwm to allow the events through: lwm swallows these clicks
+      // whole, and never replays them to the client.
+      xlib::XGrabButton(button, modifiers, window, false,
+                        ButtonMask | XCB_EVENT_MASK_POINTER_MOTION,
+                        XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+                        XCB_NONE);
+    }
+  }
+}
+
 void Client::FocusGained() {
   if (framed && Resources::I->ClickToFocus()) {
     // In click-to-focus mode, our FocusLost function will grab button events
@@ -149,6 +181,9 @@ void Client::FocusGained() {
     // focus, otherwise the client itself won't get the events when it is
     // focused.
     xlib::XUngrabButton(XCB_BUTTON_INDEX_ANY, XCB_MOD_MASK_ANY, window);
+    // That ungrab was indiscriminate, and took the Windows-key gestures with
+    // it. Ask for them back.
+    GrabSuperButtons();
   }
   DrawBorder();
 }

@@ -1,6 +1,24 @@
 # Change Log for "lwm"
 
 
+## 2026-08-23 (pn, Basel)
+
+Added mouse gestures on the 'Windows' key (Super/Mod4), which act on a
+window's own background rather than on its frame: left-drag moves, middle-drag
+resizes the edge or corner picked out by a 3x3 grid over the window, and a
+double click expands that edge (all four, from the middle of the grid) up to
+the nearest window or the edge of the monitor - or, on the middle button,
+straight to the monitor, ignoring other windows. Multi-monitor xrandr layouts
+are respected: nothing expands across a monitor boundary.
+
+Super+right click anywhere within the client window hides the window.
+
+Super+left click on the client window raises the window.
+
+Fixed a bug where a restart of lwm made gummiband's closed drop-down menu
+reappear.
+
+
 ## 2026-08-22 (pn, Basel)
 
 LWM is entering the AI era. I'd given up trying to fix it, because Xlib is just

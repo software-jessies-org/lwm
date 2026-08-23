@@ -4,12 +4,26 @@
 
 #include "client.h"
 #include "debug.h"
+#include "gesture.h"
 #include "lwm.h"
 #include "resource.h"
 #include "screen.h"
 #include "xlib.h"
 
 namespace {
+
+// Max distance between click and release, for closing, iconising etc.
+#define MAX_CLICK_DISTANCE 4
+
+// Whether a press at start and a release at end count as a click. X reports
+// presses and releases and has no opinion on which pairs of them are clicks,
+// so anything that acts on a click rather than a drag has to decide for
+// itself, and they all decide the same way: the pointer must have stayed
+// where it was put.
+bool isClick(MousePos start, MousePos end) {
+  return std::max(std::abs(start.x - end.x), std::abs(start.y - end.y)) <=
+         MAX_CLICK_DISTANCE;
+}
 
 class MenuDragger : public DragHandler {
  public:
@@ -37,7 +51,13 @@ class MenuDragger : public DragHandler {
 // Subclasses must implement the moveImpl function.
 class WindowDragger : public DragHandler {
  public:
-  WindowDragger(Client* c) : window_(c->parent) {}
+  // button_mask is the bit which must stay set in the pointer's state mask
+  // for the drag to continue; see the race described in Move below. It
+  // depends on which button started the drag, so it can't simply be
+  // MOVING_BUTTON_MASK: the Windows-key resize gesture drags with button 2,
+  // and could as easily be given a button that isn't in that mask at all.
+  WindowDragger(Client* c, unsigned int button_mask)
+      : window_(c->parent), button_mask_(button_mask) {}
 
   virtual void Start(xcb_generic_event_t*) {
     start_pos_ = getMousePosition();
@@ -52,7 +72,7 @@ class WindowDragger : public DragHandler {
     // while we were dragging it), or if we're somehow no longer holding the
     // mouse button down. This latter hack prevents randomly dragging around
     // windows due to a race condition in X.
-    if (!c || !(mp.modMask & MOVING_BUTTON_MASK)) {
+    if (!c || !(mp.modMask & button_mask_)) {
       // Either the client window closed underneath us, or we're somehow not
       // holding the mouse button down, despite not having seen the unclick
       // properly. In any case, cancel dragging.
@@ -75,16 +95,22 @@ class WindowDragger : public DragHandler {
     xlib::XUnmapWindow(LScr::I->Popup());
   }
 
- private:
+ protected:
   // LWM's frame window.
+  Window window() const { return window_; }
+  // Where the pointer was when the button went down.
+  MousePos startPos() const { return start_pos_; }
+
+ private:
   Window window_;
+  unsigned int button_mask_;
   MousePos start_pos_;
 };
 
 class WindowMover : public WindowDragger {
  public:
-  WindowMover(Client* c)
-      : WindowDragger(c),
+  WindowMover(Client* c, unsigned int button_mask)
+      : WindowDragger(c, button_mask),
         start_frame_rect_(c->FrameRect()),
         start_content_rect_(c->ContentRect()) {}
 
@@ -137,10 +163,34 @@ class WindowMover : public WindowDragger {
   const Rect start_content_rect_;
 };
 
+// The Windows-key move gesture doubles as a click: a press which goes nowhere
+// hasn't moved the window anywhere either, and raises it instead. That's what
+// a button 1 press on the frame does, and the point of these gestures is that
+// the whole window acts like the frame.
+class WindowMoverRaiser : public WindowMover {
+ public:
+  WindowMoverRaiser(Client* c, unsigned int button_mask)
+      : WindowMover(c, button_mask) {}
+
+  virtual void End(xcb_generic_event_t* ev) {
+    WindowMover::End(ev);
+    if (!isClick(startPos(), getMousePosition())) {
+      return;  // A real drag: the window has already gone where it was put.
+    }
+    Client* c = LScr::I->GetClient(window());
+    if (c) {
+      LOGD(c) << "Raising (user action)";
+      c->Raise();
+    }
+  }
+};
+
 class WindowResizer : public WindowDragger {
  public:
-  WindowResizer(Client* c, Edge edge)
-      : WindowDragger(c), edge_(edge), start_content_rect_(c->ContentRect()) {}
+  WindowResizer(Client* c, Edge edge, unsigned int button_mask)
+      : WindowDragger(c, button_mask),
+        edge_(edge),
+        start_content_rect_(c->ContentRect()) {}
 
   virtual void moveImpl(Client* c, int dx, int dy) {
     Client_SizeFeedback();
@@ -172,8 +222,64 @@ class WindowResizer : public WindowDragger {
   const Rect start_content_rect_;
 };
 
-// Max distance between click and release, for closing, iconising etc.
-#define MAX_CLICK_DISTANCE 4
+// WindowExpander is the double-click half of the Windows-key gestures: it
+// grows the window in one shot rather than following the mouse, so all the
+// work happens on the press and the rest of the click is simply absorbed.
+//
+// The edges to expand come from the same 3x3 grid the resize gesture uses,
+// with the centre square meaning "all of them". Windows in the way stop the
+// expansion unless ignore_obstacles_ is set, which is what makes button 2's
+// double click a "fill the monitor" and button 1's a "fill the space".
+class WindowExpander : public DragHandler {
+ public:
+  WindowExpander(Client* c, Edge edge, bool ignore_obstacles)
+      : window_(c->parent), edge_(edge), ignore_obstacles_(ignore_obstacles) {}
+
+  virtual void Start(xcb_generic_event_t*) {
+    Client* c = LScr::I->GetClient(window_);
+    if (!c) {
+      return;
+    }
+    const Rect frame = c->FrameRect();
+    const Rect grown =
+        ExpandRect(frame, edge_, obstacles(c), LScr::I->VisibleAreas(true));
+    LOGD(c) << "Expanding " << frame << " to " << grown;
+    if (grown == frame) {
+      return;
+    }
+    Rect content = c->framed ? Client::ContentFromFrameRect(grown) : grown;
+    // The client still gets the last word on its size: expanding into a gap
+    // an xterm can only half fill leaves the rest of the gap empty.
+    c->MoveResizeTo(c->LimitResize(content));
+  }
+
+  virtual bool Move(xcb_generic_event_t*) { return true; }
+  virtual void End(xcb_generic_event_t*) {}
+
+ private:
+  // The frames of the other windows on screen, which are what the expansion
+  // stops at. Hidden and withdrawn windows aren't on screen, so they don't
+  // get in the way.
+  std::vector<Rect> obstacles(const Client* self) const {
+    std::vector<Rect> res;
+    if (ignore_obstacles_) {
+      return res;
+    }
+    for (const auto& it : LScr::I->Clients()) {
+      const Client* c = it.second;
+      if (c == self || c->hidden || !c->IsNormal()) {
+        continue;
+      }
+      res.push_back(c->FrameRect());
+    }
+    return res;
+  }
+
+  // LWM's frame window.
+  Window window_;
+  const Edge edge_;
+  const bool ignore_obstacles_;
+};
 
 // WindowClicker is a dragger that handles cases when we want to deal with
 // simple clicks.
@@ -188,12 +294,8 @@ class WindowClicker : public DragHandler {
   virtual bool Move(xcb_generic_event_t*) { return true; }
 
   virtual void End(xcb_generic_event_t*) {
-    MousePos mp = getMousePosition();
-    const int dx = std::abs(start_pos_.x - mp.x);
-    const int dy = std::abs(start_pos_.y - mp.y);
-    if (std::max(dx, dy) > MAX_CLICK_DISTANCE) {
-      // Cancelled by mouse pointer having moved too far away.
-      return;
+    if (!isClick(start_pos_, getMousePosition())) {
+      return;  // Cancelled by mouse pointer having moved too far away.
     }
     Client* c = LScr::I->GetClient(window_);
     // Check if client still exists.
@@ -248,6 +350,84 @@ class ShellRunner : public DragHandler {
   int button_;
 };
 
+// The bit set in a pointer state mask while the given button is held down.
+unsigned int buttonStateMask(int button) {
+  switch (button) {
+    case XCB_BUTTON_INDEX_1:
+      return XCB_KEY_BUT_MASK_BUTTON_1;
+    case XCB_BUTTON_INDEX_2:
+      return XCB_KEY_BUT_MASK_BUTTON_2;
+    case XCB_BUTTON_INDEX_3:
+      return XCB_KEY_BUT_MASK_BUTTON_3;
+    case XCB_BUTTON_INDEX_4:
+      return XCB_KEY_BUT_MASK_BUTTON_4;
+    case XCB_BUTTON_INDEX_5:
+      return XCB_KEY_BUT_MASK_BUTTON_5;
+  }
+  return 0;
+}
+
+// The presses which might turn out to be the first half of a double click.
+// Only the Windows-key gestures use this; the rest of lwm's mouse handling
+// has no interest in double clicks.
+DoubleClickTracker super_clicks;
+
+// The gestures the user gets by holding the Windows key and clicking on the
+// window itself, rather than on lwm's furniture:
+//
+//   button 1 drag          move the window
+//   button 2 drag          resize the nearest edge or corner
+//   button 1 click         raise the window, as a button 1 press on the
+//                          furniture does
+//   button 1 double click  expand the nearest edge or corner up to whatever
+//                          is in the way
+//   button 2 double click  the same, but ignoring other windows, so it
+//                          expands to the monitor
+//   button 3 click         hide the window, as a button 3 click on the
+//                          furniture does
+//
+// A click is a drag that went nowhere, so the move and raise gestures are one
+// handler which decides between them on the button release.
+//
+// "Nearest edge or corner" means the 3x3 grid in gesture.h, laid over the
+// part of the window the gesture works on - the client's own window, not the
+// frame, since that's the whole area a press can arrive from. Its centre
+// square resizes nothing, but expands everything.
+DragHandler* getSuperDragHandler(Client* c,
+                                 const xcb_button_press_event_t* e) {
+  if (e->detail == SUPER_HIDE_BUTTON) {
+    // Hiding cares about neither the grid nor double clicks, so it goes
+    // first: WindowHider waits for the release, and only acts if the pointer
+    // has stayed put, exactly as it does on the frame.
+    return new WindowHider(c);
+  }
+  const Edge edge =
+      NineGridEdgeAt(c->ContentRect(), Point{e->root_x, e->root_y});
+  const bool double_click = super_clicks.IsDoubleClick(
+      e->detail, c->window, Point{e->root_x, e->root_y}, e->time);
+  if (double_click) {
+    return new WindowExpander(c, edge, e->detail == SUPER_RESIZE_BUTTON);
+  }
+  const bool moving = e->detail == SUPER_MOVE_BUTTON;
+  if (!moving && edge == ENone) {
+    return nullptr;  // Middle of the grid: no edge to resize.
+  }
+  // The press may have come through any of several passive grabs, whose event
+  // masks are none of this code's business - click-to-focus installs one of
+  // its own on the same window, and it asks for no motion events at all.
+  // Restate what this drag needs on the active grab, which is also how the
+  // pointer gets the right shape while the drag is going on.
+  xlib::XChangeActivePointerGrab(
+      ButtonMask | XCB_EVENT_MASK_POINTER_MOTION_HINT |
+          XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_OWNER_GRAB_BUTTON,
+      LScr::I->Cursors()->ForEdge(moving ? ENone : edge), XCB_CURRENT_TIME);
+  const unsigned int mask = buttonStateMask(e->detail);
+  if (moving) {
+    return new WindowMoverRaiser(c, mask);
+  }
+  return new WindowResizer(c, edge, mask);
+}
+
 void RunConfiguredAltCommand(Window w, Edge edge, int button) {
   // For now, we only run commands on the title bar, so we have two cases to
   // deal with. If and when we end up being able to configure any button on any
@@ -294,6 +474,12 @@ DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
   }
   const Edge edge = c->EdgeAt(e->event, e->event_x, e->event_y);
   if (edge == EContents) {
+    // A press on the client's own window. lwm only sees these at all when
+    // the user is holding the Windows key (Client::GrabSuperButtons), or in
+    // click-to-focus mode, where the click is just a request for focus.
+    if (e->state & SUPER_MASK) {
+      return getSuperDragHandler(c, e);
+    }
     return nullptr;
   }
 
@@ -323,14 +509,14 @@ DragHandler* getDragHandlerForEvent(const xcb_button_press_event_t* e) {
         ButtonMask | XCB_EVENT_MASK_POINTER_MOTION_HINT |
             XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_OWNER_GRAB_BUTTON,
         LScr::I->Cursors()->ForEdge(ENone), XCB_CURRENT_TIME);
-    return new WindowMover(c);
+    return new WindowMover(c, MOVING_BUTTON_MASK);
   }
   if (e->detail == RESHAPE_BUTTON) {
     c->Raise();
     if (edge == ENone) {
-      return new WindowMover(c);
+      return new WindowMover(c, MOVING_BUTTON_MASK);
     }
-    return new WindowResizer(c, edge);
+    return new WindowResizer(c, edge, MOVING_BUTTON_MASK);
   }
   return nullptr;
 }

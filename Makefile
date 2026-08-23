@@ -49,6 +49,7 @@ SRCS = \
 	disp.cc \
 	disp_test.cc \
 	drag.cc \
+	drag_test.cc \
 	edge.cc \
 	error.cc \
 	ewmh.cc \
@@ -60,6 +61,8 @@ SRCS = \
 	framegeometry_test.cc \
 	geometry.cc \
 	geometry_test.cc \
+	gesture.cc \
+	gesture_test.cc \
 	hider.cc \
 	log.cc \
 	lwm.cc \
@@ -135,6 +138,10 @@ test: lwm check-x11-boundary
 smoke: lwm
 	./smoke_test.sh ./lwm
 
+# The mouse gestures, driven with xdotool on a headless Xvfb display.
+ui: lwm
+	./ui_test.sh ./lwm
+
 install: lwm
 	install -d $(DESTDIR)$(bindir) $(DESTDIR)$(mandir)/man1
 	install -m 755 lwm $(DESTDIR)$(bindir)/lwm
@@ -143,4 +150,4 @@ install: lwm
 clean:
 	rm -f lwm $(OBJS) $(DEPS)
 
-.PHONY: all clean install test smoke check-x11-boundary
+.PHONY: all clean install test smoke ui check-x11-boundary

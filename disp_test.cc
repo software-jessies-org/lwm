@@ -11,6 +11,7 @@
 
 #include "client.h"
 #include "disp.h"
+#include "ewmh.h"
 #include "screen.h"
 #include "test.h"
 #include "wmtest.h"
@@ -190,4 +191,112 @@ TEST(EvConfigureRequest, StackOnlyRequestOnAFramedClientChangesNoGeometry) {
   EXPECT_EQ(c->ContentRect(), before);
   EXPECT_TRUE(world.server().CallsMatching("ConfigureWindow(").empty())
       << "nothing about the geometry changed, so nothing should be sent";
+}
+
+// --- EvUnmapNotify ----------------------------------------------------------
+//
+// A client that unmaps its own window has withdrawn it, and lwm has to notice:
+// withdraw() is what takes the window back out of our save-set. Miss it, and
+// the X server maps the window again when lwm disconnects, because a
+// disconnecting client's save-set is mapped in its entirety.
+//
+// The catch is that reparenting a framed client into its frame *also* produces
+// an UnmapNotify, reported against the root, which must not be mistaken for a
+// withdrawal. Unframed clients never get reparented, so for them the root is
+// the only place the real unmap can come from.
+
+namespace {
+
+// An unframed client: one with _NET_WM_WINDOW_TYPE_MENU, as gummiband's
+// drop-down menu window has. Driven through the same MapRequest path as
+// World::MapClientWindow, but with the window type set first, since it's the
+// type manage() reads to decide against framing.
+Client* mapMenuWindow(wmtest::World& world, const Rect& rect) {
+  const Window w = world.server().AddClientWindow(rect);
+  world.server().SetProperty32(w, ewmh_atom[_NET_WM_WINDOW_TYPE], XCB_ATOM_ATOM,
+                               {ewmh_atom[_NET_WM_WINDOW_TYPE_MENU]});
+  xcb_map_request_event_t ev{};
+  ev.response_type = XCB_MAP_REQUEST;
+  ev.parent = world.server().Root();
+  ev.window = w;
+  world.server().PushEvent(ev);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
+}
+
+xcb_unmap_notify_event_t unmapNotify(Window event_window, Window window) {
+  xcb_unmap_notify_event_t e{};
+  e.response_type = XCB_UNMAP_NOTIFY;
+  e.event = event_window;
+  e.window = window;
+  return e;
+}
+
+}  // namespace
+
+TEST(EvUnmapNotify, UnframedClientUnmappingItselfIsWithdrawn) {
+  wmtest::World world;
+  Client* c = mapMenuWindow(world, Rect::FromXYWH(kX, kY, kW, kH));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+  ASSERT_EQ(c->parent, LScr::I->Root());
+  ASSERT_EQ(c->State(), NormalState);
+
+  world.server().ClearCalls();
+  world.server().PushEvent(unmapNotify(LScr::I->Root(), c->window));
+  ProcessPendingEvents();
+
+  EXPECT_EQ(c->State(), WithdrawnState);
+  EXPECT_EQ(world.server().CallsMatching("RemoveFromSaveSet(").size(),
+            size_t(1))
+      << "an unmapped window left in the save-set is mapped again when lwm "
+         "disconnects";
+}
+
+TEST(EvUnmapNotify, FramedClientUnmappingItselfIsWithdrawn) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(kX, kY, kW, kH));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_TRUE(c->framed);
+
+  // Reported against the frame, which is where a framed client's unmaps come
+  // from once it has been reparented.
+  world.server().ClearCalls();
+  world.server().PushEvent(unmapNotify(c->parent, c->window));
+  ProcessPendingEvents();
+
+  EXPECT_EQ(c->State(), WithdrawnState);
+  EXPECT_EQ(world.server().CallsMatching("RemoveFromSaveSet(").size(),
+            size_t(1));
+}
+
+TEST(EvUnmapNotify, ReparentingAFramedClientIsNotAWithdrawal) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(kX, kY, kW, kH));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_TRUE(c->framed);
+  ASSERT_EQ(c->State(), NormalState);
+
+  // The unmap the server generates when we reparent the window into the frame
+  // is reported against the root. The window is still very much on screen.
+  world.server().ClearCalls();
+  world.server().PushEvent(unmapNotify(LScr::I->Root(), c->window));
+  ProcessPendingEvents();
+
+  EXPECT_EQ(c->State(), NormalState);
+  EXPECT_TRUE(world.server().CallsMatching("RemoveFromSaveSet(").empty());
+}
+
+TEST(EvUnmapNotify, UnmapOfSomethingOtherThanTheClientWindowIsIgnored) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(kX, kY, kW, kH));
+  ASSERT_TRUE(c != nullptr);
+
+  // The frame itself unmapping is lwm's own doing, not a withdrawal.
+  world.server().ClearCalls();
+  world.server().PushEvent(unmapNotify(LScr::I->Root(), c->parent));
+  ProcessPendingEvents();
+
+  EXPECT_EQ(c->State(), NormalState);
+  EXPECT_TRUE(world.server().CallsMatching("RemoveFromSaveSet(").empty());
 }

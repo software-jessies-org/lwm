@@ -7,6 +7,15 @@
 #define MOVE_BUTTON XCB_BUTTON_INDEX_2
 #define RESHAPE_BUTTON XCB_BUTTON_INDEX_1
 
+// The 'Windows' key: X calls it Mod4, and the keysym on it is Super. Holding
+// it turns the client's own window into window furniture - see the gestures
+// in drag.cc, and Client::GrabSuperButtons, which is what makes lwm see the
+// clicks at all.
+#define SUPER_MASK XCB_MOD_MASK_4
+#define SUPER_MOVE_BUTTON XCB_BUTTON_INDEX_1
+#define SUPER_RESIZE_BUTTON XCB_BUTTON_INDEX_2
+#define SUPER_HIDE_BUTTON XCB_BUTTON_INDEX_3
+
 // MOVING_BUTTON_MASK describes the bits which are set in the mouse statis mask
 // value while either of the mouse buttons we can use for dragging/reshaping
 // is down.

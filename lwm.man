@@ -64,6 +64,35 @@ to the back, under any other windows.
 A window may be closed by clicking on the little white cross in the top-left
 corner of its frame.
 .PP
+Holding down the 'Windows' key (known to X as Super, or Mod4) turns the whole
+of a window into window furniture, so that a window can be moved and resized
+without going anywhere near its frame.  These gestures work on the window's
+own background, and \fIlwm\fP swallows the clicks so that they never reach the
+application.
+.PP
+Dragging button 1 with the Windows key held moves the window, wherever in it
+the drag started.  Clicking button 1 without moving the pointer raises the
+window instead, just as a button 1 press on its frame does.
+.PP
+Dragging button 2 with the Windows key held resizes the window: which edge or
+corner moves depends on where in the window the drag started, taking the
+window to be divided into a 3x3 grid.  The corners of the grid drag the
+corresponding corner of the window, the sides drag the corresponding edge,
+and the middle square resizes nothing.
+.PP
+Double-clicking button 1 with the Windows key held expands the window instead:
+the edge or corner picked out by the same 3x3 grid grows until it meets the
+nearest window in its way, or the edge of the monitor, whichever comes first.
+From the middle square, all four edges grow, so a double click in the middle
+of an isolated window makes it as big as the space around it allows.  Double-
+clicking button 2 does the same thing but ignores the other windows, so it
+expands to the monitor - which, on a multi-monitor xrandr setup, means the
+monitor that window is on, not the whole desktop.
+.PP
+Clicking button 3 with the Windows key held hides the window, just as a
+button 3 click on its frame does.  As on the frame, the click is abandoned if
+the pointer moves away before the button is released.
+.PP
 It is possible to run commands when alt-clicking on a window's title bar.
 The configured command is run with the window id (in hex with 0x prefix)
 appended to it (separated by a space), so that the command run can be a script

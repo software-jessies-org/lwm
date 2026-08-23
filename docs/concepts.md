@@ -34,6 +34,15 @@ coordinate space. `closeBounds(false)` (the clickable area) is deliberately
 bigger than `closeBounds(true)` (the drawn cross) — clicking just below/right of
 the cross should close, not resize.
 
+There are two ways to arrive at an `Edge` from a click, and they cover
+different parts of the window. `Client::EdgeAt` is the furniture one, above.
+`NineGridEdgeAt` (`gesture.h`) is the Windows-key one: it divides the client
+area into a 3x3 grid and names the cell, so the whole window can pick an edge
+rather than just its border. Note the two disagree about `ENone` — for
+`EdgeAt` it means the title bar, and so "move"; for `NineGridEdgeAt` it means
+the centre cell, and so "no edge in particular", which the resize gesture
+reads as "do nothing" and the expand gesture as "all four".
+
 ## Size limits: `DimensionLimiter`
 
 One per axis, built in `LScr::AddClient` from `XGetWMNormalHints`. Holds
@@ -73,6 +82,28 @@ line; entries whose `Client` has vanished are pruned at that point. The red
 outline box is four 1px-wide override windows (`highlightL/R/T/B`), hidden and
 re-shown around each menu repaint to avoid corruption — the menu GC uses `GXxor`
 so highlights are drawn by EORing.
+
+## The client lifecycle and the save-set
+
+`manage()` adopts a window; `withdraw()` gives it back. Both are in `manage.cc`,
+and the pair has to balance, because `manage()` puts the client window in lwm's
+**save-set** and only `withdraw()` takes it out again.
+
+The save-set is the X server's insurance against a window manager dying while it
+holds other applications' windows inside its frames. It has a sting in the tail:
+when a client disconnects, the server maps *every* unmapped window in that
+client's save-set, whether or not it was ever reparented. So a window lwm still
+has in its save-set at exit, but which the application had deliberately unmapped,
+comes back on screen — and the next lwm's start-up scan then adopts it, which
+looks for all the world like the *new* lwm having made it visible.
+
+That's why `EvUnmapNotify` has to fire for unframed clients as well as framed
+ones. A framed client's unmaps arrive against its frame; the root-reported unmap
+is the spurious one the reparent into the frame produced, and is ignored. An
+unframed client (`ewmh_hasframe`: desktops, docks, menus, splash screens) is
+never reparented, so the root is the *only* place its unmap can come from, and
+the test has to be on whether this particular client was reparented rather than
+on where the event came from.
 
 ## Visible areas and struts
 

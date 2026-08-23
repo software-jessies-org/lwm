@@ -5,6 +5,7 @@ XChangeWindowAttributes
 XClearWindow
 XConfigureWindow
 XDestroyWindow
+XGrabButton
 XMapWindow
 XMoveResizeWindow
 XMoveWindow

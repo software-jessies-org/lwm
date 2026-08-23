@@ -21,7 +21,8 @@ Notes-to-self for working on this codebase efficiently. Written for an agent
 
 ## Project shape at a glance
 
-* C++17, X11 (Xlib), ~8k lines across 17 `.cc` files compiled into one binary.
+* C++17, X11 (XCB; libX11 survives only to serve Xft), ~15k lines across the
+  `.cc`/`.h` files in `SRCS`, tests included, all compiled into one binary.
 * Reparenting window manager: every framed client gets an LWM-owned *frame*
   window (`Client::parent`) which draws the title bar, borders and close cross.
 * Three global singletons: `dpy` (Display*), `LScr::I` (screen + client

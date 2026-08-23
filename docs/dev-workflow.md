@@ -32,10 +32,11 @@ There are two kinds of test:
 
 * **Tier-0 tests** (`geometry_test.cc`, `sizelimits_test.cc`,
   `strings_test.cc`, `screenlayout_test.cc`, `placement_test.cc`,
-  `framegeometry_test.cc`, `menulayout_test.cc`) call pure functions. Nothing
-  to set up.
+  `framegeometry_test.cc`, `menulayout_test.cc`, `gesture_test.cc`) call pure
+  functions. Nothing to set up.
 * **Tests that need a server** (`disp_test.cc`, `focus_test.cc`,
-  `client_test.cc`, `ewmh_test.cc`) start with a `wmtest::World` on the stack.
+  `client_test.cc`, `ewmh_test.cc`, `drag_test.cc`) start with a
+  `wmtest::World` on the stack.
   That installs an `xlib::FakeServer` and stands up `Resources`, the atoms, a
   fixed-metric font and `LScr` in the same order `main()` does, then puts it
   all back when it goes out of scope. Drive lwm by pushing events —
@@ -76,6 +77,31 @@ no `E `-level lines and is still alive at the end. Picks a random display
 number so it's safe to run alongside a real X session. Not exhaustive —
 it's a regression tripwire for the refactor in `../docs/refactoring-plan.md`,
 not a replacement for manual Xephyr testing of new behaviour.
+
+## UI tests
+
+```sh
+./ui_test.sh [path-to-lwm-binary]   # defaults to ./lwm; also `make ui`
+```
+
+The mouse gestures, driven with `xdotool` under the same headless `Xvfb`
+arrangement as the smoke test: Windows-key drags to move and resize, double
+clicks to expand a window up to its neighbours or its monitor, and clicks to
+raise or hide it.
+These need a real server - the passive grabs, the modifier bits in the
+`ButtonPress` and the pointer grab that keeps a drag alive are all things
+`FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
+the event level and this covers them at the pointer level.
+
+Two things worth knowing before adding a check:
+
+* Use `xlogo`, not `xterm`. `xlogo` sets no size hints, so it ends up exactly
+  the size it was asked for; `xterm` rounds every resize down to a whole
+  character cell and turns every expected geometry into an inequality.
+* Don't use `xdotool windowmove --sync`. It waits for the window to move, and
+  asking for the position it is already in makes lwm quite correctly do
+  nothing, so `--sync` waits for ever. `place()` polls the frame geometry
+  instead.
 
 ## Running it safely
 

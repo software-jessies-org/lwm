@@ -95,11 +95,52 @@ The interesting handlers:
   All mouse gestures are modelled as a `DragHandler` (`Start`/`Move`/`End`) held
   in the `current_dragger` static in `disp.cc`; `EvMotionNotify` and
   `EvButtonRelease` drive it. The concrete `DragHandler` subclasses live in
-  `drag.cc`.
+  `drag.cc`. Presses on the *client's own* window normally never reach lwm at
+  all; the Windows-key (Super/Mod4) gestures are the exception, and the reason
+  is `Client::GrabSuperButtons` — see below.
 * `EvEnterNotify` → `Focuser::EnterWindow` (sloppy focus) plus cursor reset.
 * `EvPropertyNotify` — name, visible name, transient-for, strut, `_NET_WM_STATE`
   (this is where full-screen enter/exit is triggered).
 * `EvClientMessage` — EWMH requests: state change, activate, close, moveresize.
+
+## The Windows-key mouse gestures
+
+Everything else lwm does with the mouse happens on window furniture, which is
+lwm's own window and delivers its events for free. Super-plus-button gestures
+act on the client's window instead, so lwm has to ask for those presses with a
+passive grab: `Client::GrabSuperButtons`, called from `manage()` and again from
+`FocusGained` (click-to-focus ungrabs `AnyButton`/`AnyModifier` on the client
+window, which would otherwise take these with it).
+
+Three things about that grab are easy to get wrong:
+
+* X matches a passive grab's modifiers **exactly**, so `Mod4` alone stops
+  working the moment Num Lock or Caps Lock is on. The grab is issued once per
+  combination of the two locks.
+* The grab's event mask is whatever the grab that fired says it is - and in
+  click-to-focus mode that might be the `AnyButton` one, which asks for no
+  motion events. `getSuperDragHandler` therefore restates what it needs with
+  `XChangeActivePointerGrab`, which is also how the pointer gets the right
+  shape mid-drag.
+* Both grabs are asynchronous. lwm swallows these clicks and never replays
+  them, so there's nothing to hold the pointer or keyboard frozen for.
+
+The gestures themselves reuse the existing `WindowMover`/`WindowResizer` (the
+button held is now a constructor argument, rather than always being
+`MOVING_BUTTON_MASK`, so that a drag on any button can keep a drag alive) and
+`WindowHider` for the button 3 click, and add `WindowExpander` for the double
+clicks and `WindowMoverRaiser` for button 1. The maths - which of the window's 3x3 grid cells was clicked, how far
+an edge may expand, and what counts as a double click, which X has no notion
+of - is pure, and lives in `gesture.{h,cc}`.
+
+`getSuperDragHandler` (`drag.cc`) is where the buttons are assigned: 1 drags
+to move and clicks to raise, 2 drags to resize the edge the grid picks out, a
+double click on either expands (button 2's ignoring the other windows), and 3
+hides. Button 3 is handled before anything else in there, because hiding cares
+about neither the grid nor double clicks. Button 1's two meanings can't be
+told apart until the release, so they're one handler (`WindowMoverRaiser`)
+which decides then: a press that went nowhere raises, and anything else has
+already moved the window.
 
 ## Ownership
 

@@ -36,6 +36,7 @@ Each has a matching `*_test.cc`.
 | `placement.{h,cc}` | `AutoPlacer` — auto-placement cascade for new windows (formerly `NextAutoPosition` in `manage.cc`, function-local statics turned into fields owned by `LScr::auto_placer_`). |
 | `framegeometry.{h,cc}` | `FrameStyle` value type (border width / top border width / text height) plus `CloseBounds`, `TitleBarBounds`, `EdgeBoundsFor`, `ContentFromFrameRect`, `FrameFromContentRect`. `Client`'s same-named methods in `client.cc` are now thin wrappers around these, built from `CurrentFrameStyle()`. |
 | `menulayout.{h,cc}` | `MenuStyle` value type (text height) plus the unhide-menu item/icon/margin arithmetic. `mouse.cc`'s `menu*()` free functions wrap these via `CurrentMenuStyle()`. |
+| `gesture.{h,cc}` | The pure half of the Windows-key mouse gestures: `NineGridEdgeAt` (which cell of a window's 3x3 grid a point is in), `ExpandRect` (how far an edge may grow before it meets another window or the monitor edge) and `DoubleClickTracker` (X has no double clicks; every client decides for itself). |
 
 ## Tier 1/2 — still needs X11, one header per `.cc` (phases C and D)
 
@@ -55,7 +56,7 @@ all, and neither do `xbridge.cc` or `xfont.cc` (they *can't*: see below).
 | `lwm.h` | ~80 | What's left of the god header: `main()`'s own globals/atoms/fn decls, plus `#include`s of every other header as a convenience umbrella (mainly for `lwm.cc` and the files listed above). |
 | `lwm.cc` | ~330 | `main()`: arg parsing, atoms (interned in one batch), signal handlers, the `select()` event loop — which drains with `xcb_poll_for_event` and flushes exactly once per pass, immediately before `select()`. XRandR notification handling (`randrEvent`, deduplicated on `config_timestamp`), `RunCommand`/`shell`. |
 | `disp.cc` / `disp.h` | ~600 | X event dispatch (`DispatchXEvent`, `ProcessPendingEvents`) and one `Ev<EventName>` handler per event type. Handlers take a raw `xcb_generic_event_t*` and cast: there is no `XAnyEvent` equivalent, and the window an event concerns is called `window` in some structs and `event` in others. `response_type` must be masked with `0x7f`; bit `0x80` means the event came from `SendEvent`. Response type 0 is an *error*, routed to `HandleXError`. Includes `EvConfigureRequest`, the Nautilus-offset code; don't touch without re-testing against Nautilus. `disp.h` declares the `DragHandler` interface and `EWMHDirection`; `current_dragger`/`startDragging`/`stopDragging` (drives whichever `DragHandler` is active) stay here too. |
-| `drag.cc` / `drag.h` | ~335 | The 8 `DragHandler` subclasses (`MenuDragger`, `WindowMover`/`Resizer`/`Closer`/`Hider`/`Lowerer`, `ShellRunner`, plus their `WindowDragger`/`WindowClicker` base classes) and `getDragHandlerForEvent`, the factory that picks one from a `ButtonPress`. Only the factory is exported; the subclasses are an anonymous-namespace implementation detail. Moved out of `disp.cc`. |
+| `drag.cc` / `drag.h` | ~470 | The 9 `DragHandler` subclasses (`MenuDragger`, `WindowMover`/`Resizer`/`Expander`/`Closer`/`Hider`/`Lowerer`, `ShellRunner`, plus their `WindowDragger`/`WindowClicker` base classes) and `getDragHandlerForEvent`, the factory that picks one from a `ButtonPress`. Only the factory is exported; the subclasses are an anonymous-namespace implementation detail. Moved out of `disp.cc`. `getSuperDragHandler` is the Windows-key branch of the factory, reached only for a press on the client's own window; the arithmetic it runs on is in `gesture.{h,cc}`. |
 | `xdebugprint.cc` / `xdebugprint.h` | ~90 | `operator<<` for raw XCB event structs (`xcb_configure_request_event_t`, `xcb_configure_notify_event_t`, `xcb_focus_in_event_t`) plus `diff` (an `EWMHWindowState` before/after formatter), used only by `LOGD`/`LOGI` calls in `disp.cc`. Moved out of `disp.cc`; `EWMHWindowState`'s own `operator<<` moved to `ewmh.cc` instead, next to the type. |
 | `client.cc` / `client.h` | ~552 | `Client` methods (geometry, border drawing, raise/lower/close/state, full-screen). Also the resize-feedback popup. `Focuser` moved out to `focus.{h,cc}`. |
 | `focus.cc` / `focus.h` | ~225 | `Focuser`: focus history, the focus-follows-mouse race-avoidance timerfd (see the long comment in `focus.h`), `ReallyFocusClient`'s three paths (normal/Java/give-up — don't "simplify" this, see `concepts.md`). Moved out of `client.cc`. `focus::NowMillis` is the clock it reads, replaceable so the A→B→C race can be tested rather than waited for. |
@@ -83,9 +84,9 @@ all, and neither do `xbridge.cc` or `xfont.cc` (they *can't*: see below).
 | --- | --- |
 | `test.h`/`test.cc` | The self-registering framework: `TEST`, `EXPECT_*`/`ASSERT_*`, `testing::RunAll`. See `../docs/dev-workflow.md`. |
 | `tests.cc` | Just the `RunAllTests()` glue now; all suites live in `*_test.cc`. |
-| `geometry_test.cc`, `sizelimits_test.cc`, `strings_test.cc`, `screenlayout_test.cc`, `placement_test.cc`, `framegeometry_test.cc`, `menulayout_test.cc` | One per tier-0 file above. No fakes needed. |
+| `geometry_test.cc`, `sizelimits_test.cc`, `strings_test.cc`, `screenlayout_test.cc`, `placement_test.cc`, `framegeometry_test.cc`, `menulayout_test.cc`, `gesture_test.cc` | One per tier-0 file above. No fakes needed. |
 | `wmtest.cc` / `wmtest.h` | `wmtest::World`: stands up a `FakeServer`, `Resources`, the atoms, the fake font and `LScr` in main()'s own order, and puts everything back afterwards. One per test, on the stack. |
-| `disp_test.cc`, `focus_test.cc`, `client_test.cc`, `ewmh_test.cc` | The tests that need a server: `EvConfigureRequest`'s Nautilus offset arithmetic, `Focuser`'s history and its timerfd deferral, the client lifecycle across `LScr`'s registries, and `fix_stack` plus the recursion guard. |
+| `disp_test.cc`, `focus_test.cc`, `client_test.cc`, `ewmh_test.cc`, `drag_test.cc` | The tests that need a server: `EvConfigureRequest`'s Nautilus offset arithmetic, `Focuser`'s history and its timerfd deferral, the client lifecycle across `LScr`'s registries, `fix_stack` plus the recursion guard, and the Windows-key gestures from the `ButtonPress` down to the window moving. |
 
 Still compiled straight into the main binary and run via `./lwm -test`; the
 separate X11-free tier-0 test target mentioned in the plan doesn't exist yet.
@@ -116,6 +117,8 @@ Each carries its own compile command in a comment at the top of the file.
   alt-button1 on a title bar.
 * `smoke_test.sh` — Xvfb + xdotool functional smoke test; see
   `../docs/dev-workflow.md`.
+* `ui_test.sh` — Xvfb + xdotool UI test for the Windows-key mouse gestures;
+  see `../docs/dev-workflow.md`.
 
 ## Where to look for...
 
@@ -126,7 +129,8 @@ Each carries its own compile command in a comment at the top of the file.
   `xlib.{h,cc}` for everything else to call. Nothing outside those three files
   calls `xcb_*` directly.
 * **A new mouse gesture** → `getDragHandlerForEvent` in `drag.cc`, plus a
-  `DragHandler` subclass.
+  `DragHandler` subclass. If it acts on the client's own window rather than
+  on the frame, it also needs a passive grab: see `Client::GrabSuperButtons`.
 * **A new config option** → `Resources::SR`/`IR` enum in `resource.h`, default
   in `resource.cc`, and document it in `lwm.man` + `testXresources`.
 * **Window furniture appearance/geometry** → `framegeometry.{h,cc}`

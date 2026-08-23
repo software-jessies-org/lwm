@@ -47,16 +47,30 @@ The left button will move the window from the title bar, or resize it from the
 edges. The middle button will always move the window, but won't bring it to
 the top of the window stack.
 
+Holding the `Windows` key lets you do the same from anywhere in the window,
+without aiming for the border: left-drag moves it, and middle-drag resizes the
+edge or corner nearest to where you started the drag (imagine the window
+divided into a 3x3 grid; the middle square resizes nothing). A left *click*,
+which is a drag that went nowhere, raises the window instead.
+
+Double-clicking with the `Windows` key held grows the window instead. The left
+button expands the edge or corner picked out by that same 3x3 grid until it
+bumps into the nearest window, or the edge of the monitor - and from the middle
+square, it expands all four edges at once. The middle button does the same, but
+ignores the other windows, so it fills the monitor the window is on.
+
 ### Changing window stacking order
 
 Left click on a window's title or border will bring it to the top of the window
-stack; shift+right click on same will push it to the bottom.
+stack, as will a left click anywhere in it with the `Windows` key held;
+shift+right click on the title or border will push it to the bottom.
 
 ### Hiding/unhiding windows
 
 Also known as 'iconifying', except LWM doesn't clutter your desktop with icons.
 Right-clicking (without Shift) on a window's title or border will make it
-disappear.
+disappear. Right-clicking anywhere in the window with the `Windows` key held
+does the same, without aiming for the furniture.
 
 Holding down the right button on the desktop background opens a menu. At the
 top of this menu (above the dotted line) are hidden windows. Visible windows

@@ -185,6 +185,9 @@ void manage(Client* c) {
     xlib::XReparentWindow(c->window, c->parent, borderWidth(),
                           borderWidth() + xfont::TextHeight());
   }
+  // The client window is the only place a Windows-key gesture can start, so
+  // it's the window the grabs go on. Reparenting doesn't disturb them.
+  c->GrabSuperButtons();
 
   setShape(c);
 

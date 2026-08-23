@@ -184,11 +184,20 @@ void EvUnmapNotify(xcb_generic_event_t* ev) {
   // Plus, when we reparent the client window to our frame, we'll receive an
   // unmap notification with window=child window, and parent=root. Check for
   // this, and ignore it.
-  if (e->event == LScr::I->Root()) {
+  //
+  // Only for clients we actually reparented, though. An unframed client (a
+  // dock, a menu, a splash screen - see ewmh_hasframe) is left where it is, a
+  // direct child of the root, so the root's SubstructureNotify is the *only*
+  // way we ever hear that it has unmapped itself. Dropping that used to leave
+  // such a client in our save-set for ever, and when a client disconnects the
+  // X server maps every unmapped window in its save-set - so lwm's own exit
+  // reopened gummiband's closed menu, which then looked like the next lwm
+  // making it visible at start-up.
+  if (c->parent != LScr::I->Root() && e->event == LScr::I->Root()) {
     return;
   }
-  // If we got here, then this is a client withdrawing its own window that we
-  // have ourselves re-framed. We therefore withdraw ourselves.
+  // If we got here, then this is a client withdrawing a window we manage. We
+  // therefore withdraw ourselves.
   LOGD(c) << "Withdrawing unmapped window";
   withdraw(c);
 }
@@ -522,7 +531,11 @@ void EvFocusIn(xcb_generic_event_t* ev) {
     focus_window = e->event;
   }
   Client* c = LScr::I->GetClient(focus_window);
-  if (c) {
+  // A window which has just been hidden generates a FocusIn as the server
+  // moves the focus off it, and can still be what GetInputFocus reports.
+  // Chasing it would mean asking to focus an unmapped window, which X answers
+  // with a BadMatch.
+  if (c && !c->IsHidden()) {
     LOGD(c) << "  focusing client; focus window = " << WinID(focus_window);
     LScr::I->GetFocuser()->FocusClient(c);
   }
