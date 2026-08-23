@@ -225,8 +225,7 @@ void Client::FocusLost() {
 }
 
 void Client::DrawBorder() {
-  if (parent == LScr::I->Root() || parent == 0 || !framed ||
-      wstate.fullscreen) {
+  if (parent == LScr::I->Root() || parent == 0 || !HasFurniture()) {
     return;
   }
   const bool active = HasFocus();
@@ -276,13 +275,13 @@ void Client::DrawBorder() {
 }
 
 Rect Client::FrameRect() const {
-  // A full-screen window has no furniture to make room for, so its frame is
+  // A window with no furniture has nothing to make room for, so its frame is
   // exactly its content rect. This is not just cosmetic: it's the invariant
-  // MoveTo, MoveResizeTo and EnterFullScreen all place the two windows by, and
-  // ContentRectRelative below is derived from it. Get it wrong and the client
-  // window sits at an offset inside its own frame, which is only invisible
-  // when the frame happens to be at the screen origin.
-  if (!framed || wstate.fullscreen) {
+  // MoveTo, MoveResizeTo, EnterFullScreen and HideFurniture all place the two
+  // windows by, and ContentRectRelative below is derived from it. Get it
+  // wrong and the client window sits at an offset inside its own frame, which
+  // is only invisible when the frame happens to be at the screen origin.
+  if (!HasFurniture()) {
     return content_rect_;
   }
   return FrameFromContentRect(content_rect_);
@@ -502,7 +501,8 @@ Rect Client::MaximizedRect(const Rect& restored) const {
   // furniture and all, so the arithmetic happens in frame coordinates and is
   // converted back at the end. Doing it on the content rect would push the
   // title bar off the top of the screen.
-  const Rect frame = framed ? FrameFromContentRect(restored) : restored;
+  const Rect frame =
+      HasFurniture() ? FrameFromContentRect(restored) : restored;
   // With struts: unlike a full-screen window, a maximised one leaves the
   // panels alone. That is what the whole strut mechanism is for.
   const Rect area = findBestScreenFor(frame, LScr::I->VisibleAreas(true));
@@ -515,7 +515,7 @@ Rect Client::MaximizedRect(const Rect& restored) const {
     res.yMin = area.yMin;
     res.yMax = area.yMax;
   }
-  return framed ? ContentFromFrameRect(res) : res;
+  return HasFurniture() ? ContentFromFrameRect(res) : res;
 }
 
 void Client::SetMaximized(bool vert, bool horz) {
@@ -570,7 +570,7 @@ void Client::DropMaximization() {
 
 Rect Client::MakeContentRectVisible(const Rect& content) const {
   const std::vector<Rect> areas = LScr::I->VisibleAreas(true);
-  if (!framed) {
+  if (!HasFurniture()) {
     return makeVisible(content, areas);
   }
   // Work in frame coordinates: pulling only the content onto the screen can
@@ -633,8 +633,8 @@ bool Client::TakeExpectedUnmap() {
   return true;
 }
 
-void Client::SetFramed(bool want_framed) {
-  if (want_framed == framed) {
+void Client::SetFurniture(bool want_furniture) {
+  if (want_furniture == HasFurniture()) {
     return;
   }
   if (!ewmh_hasframe(this)) {
@@ -654,10 +654,10 @@ void Client::SetFramed(bool want_framed) {
     return;
   }
   if (hidden) {
-    // The Hider is holding this window by the one AddFrame/RemoveFrame would
-    // map or unmap, and has its own idea of which that is. Nothing reaches
-    // this today - a hidden window can't be clicked on - but a hidden window
-    // that came back half-unhidden would be a miserable thing to debug.
+    // The Hider is holding this window by the one ShowFurniture would map,
+    // and has its own idea of which that is. Nothing reaches this today - a
+    // hidden window can't be clicked on - but a hidden window that came back
+    // half-unhidden would be a miserable thing to debug.
     LOGD(this) << "Not changing decorations while hidden";
     return;
   }
@@ -672,77 +672,119 @@ void Client::SetFramed(bool want_framed) {
   // LimitResize also rescues the pathological case of a window smaller than
   // the furniture it's being asked to fit inside, which would otherwise come
   // out with a negative width or height.
+  //
+  // ...except on the way back to a geometry we already know is one the client
+  // accepted, and which nothing has disturbed since. See
+  // pre_undecorated_content_rect_ for why that case is worth having.
+  const bool going_straight_back =
+      want_furniture && content_rect_ == undecorated_content_rect_;
   const Rect content =
-      LimitResize(want_framed ? ContentFromFrameRect(outer) : outer);
-  const bool had_focus = HasFocus();
-  LOGD(this) << (want_framed ? "Adding" : "Removing")
+      going_straight_back
+          ? pre_undecorated_content_rect_
+          : LimitResize(want_furniture ? ContentFromFrameRect(outer) : outer);
+  LOGD(this) << (want_furniture ? "Adding" : "Removing")
              << " decorations; content " << content_rect_ << " -> " << content;
-  if (want_framed) {
-    AddFrame(content);
-  } else {
-    RemoveFrame(content);
-  }
-  // Reparenting unmaps the client window on the way, and X hands the input
-  // focus back to PointerRoot whenever the window holding it stops being
-  // viewable. Nothing about lwm's focus history changed, so only the server
-  // needs telling.
-  if (had_focus) {
-    LScr::I->GetFocuser()->ReassertFocus(this);
-  }
-  // The furniture came or went, so the extents the client is told to expect
-  // have changed, and so has the geometry it believes it has.
+  pre_undecorated_content_rect_ = want_furniture ? Rect{} : content_rect_;
+  undecorated_content_rect_ = want_furniture ? Rect{} : content;
+  // Both halves work from these, through FrameRect() and
+  // ContentRectRelative(), and so does ewmh_set_frame_extents.
+  content_rect_ = content;
+  furniture_ = want_furniture;
+  // The new extents go out ahead of every geometry request. A client which
+  // reacts to being resized by reading _NET_FRAME_EXTENTS - Java's XAWT does
+  // exactly that, to work out how much of the window is ours - asks the
+  // server after the event it is reacting to, so anything changed before that
+  // event is certain to be what it reads. Publishing afterwards is a race
+  // between our request and the client's, and when the client wins it sizes
+  // itself to fit inside furniture that has already gone.
   ewmh_set_frame_extents(this);
+  if (want_furniture) {
+    ShowFurniture();
+  } else {
+    HideFurniture();
+  }
   SendConfigureNotify();
 }
 
-void Client::AddFrame(const Rect& new_content) {
-  // Furnish() creates the frame at FrameRect(), so both of these have to be
-  // right before it's called.
-  content_rect_ = new_content;
-  framed = true;
-  LScr::I->Furnish(this);
-  // Slot the new frame into the stacking order immediately above the client
-  // window, which is where the client window itself is: gaining furniture
-  // shouldn't bring a window to the front of the desktop.
-  xlib::XConfigureWindow(
-      parent,
-      xlib::WindowChanges().Sibling(window).StackMode(XCB_STACK_MODE_ABOVE));
-  const Rect relative = ContentRectRelative();
-  ExpectUnmap();
-  xlib::XReparentWindow(window, parent, relative.xMin, relative.yMin);
-  // The reparent placed the window inside the frame; only the size is left.
-  xlib::XResizeWindow(window, relative.area());
-  // Last, so that the frame's blank background doesn't flash up on its own
-  // before the client window is inside it.
-  xlib::XMapWindow(parent);
+void Client::ShowFurniture() {
+  if (parent == LScr::I->Root()) {
+    // No frame yet, because lwm decided at manage() time not to decorate this
+    // window and the user has since disagreed. Making one means reparenting,
+    // with everything that costs: the client window is unmapped and remapped
+    // on the way, which we have to count off so EvUnmapNotify doesn't read it
+    // as the client withdrawing itself; it lands on top of its new siblings,
+    // so it has to be put back; and the server drops the input focus to
+    // PointerRoot while it isn't viewable, which only the server needs
+    // telling about, because lwm's focus history hasn't changed.
+    const bool had_focus = HasFocus();
+    framed = true;
+    // Furnish() creates the frame at FrameRect(), so this has to come after
+    // content_rect_ and framed are both right.
+    LScr::I->Furnish(this);
+    xlib::XConfigureWindow(
+        parent,
+        xlib::WindowChanges().Sibling(window).StackMode(XCB_STACK_MODE_ABOVE));
+    const Rect relative = ContentRectRelative();
+    // The size goes before the reparent, not after: see HideFurniture.
+    xlib::XResizeWindow(window, relative.area());
+    ExpectUnmap();
+    xlib::XReparentWindow(window, parent, relative.xMin, relative.yMin);
+    // Last, so that the frame's blank background doesn't flash up on its own
+    // before the client window is inside it.
+    xlib::XMapWindow(parent);
+    if (had_focus) {
+      LScr::I->GetFocuser()->ReassertFocus(this);
+    }
+  } else {
+    // The frame is already there, shrunk onto the client window by
+    // HideFurniture. Growing it back and putting the client window at its
+    // furniture offset is the whole job.
+    xlib::XConfigureWindow(
+        parent, xlib::WindowChanges().BorderWidth(kFrameBorderWidth));
+    xlib::XMoveResizeWindow(parent, FrameRect());
+    xlib::XMoveResizeWindow(window, ContentRectRelative());
+  }
   // A shaped client which the user has chosen to decorate anyway needs its
-  // shape applied to the new frame, or the frame draws a rectangle behind the
-  // parts of the window that aren't there.
+  // shape re-applied at the offset the furniture puts it at, or the frame
+  // draws a rectangle behind the parts of the window that aren't there.
   setShape(this);
-  // The frame is brand new, so whatever cursor the old one had means nothing.
   // EContents is EvEnterNotify's "not any of the edge cursors" value, which
   // is what makes the next motion over an edge switch to that edge's cursor.
   cursor = EContents;
   DrawBorder();
 }
 
-void Client::RemoveFrame(const Rect& new_content) {
-  const Window frame = parent;
-  content_rect_ = new_content;
-  framed = false;
-  ExpectUnmap();
-  xlib::XReparentWindow(window, LScr::I->Root(), content_rect_.xMin,
-                        content_rect_.yMin);
-  xlib::XResizeWindow(window, content_rect_.area());
-  // Reparenting puts a window on top of its new siblings, so put it back
-  // where its frame was: losing the furniture shouldn't raise the window
-  // either. This has to happen while the frame is still there to name.
-  xlib::XConfigureWindow(
-      window,
-      xlib::WindowChanges().Sibling(frame).StackMode(XCB_STACK_MODE_ABOVE));
-  // No frame, so no furniture cursor to keep track of.
-  cursor = ENone;
-  LScr::I->Unfurnish(this);
+// Turning the furniture off leaves the frame window where it is and shrinks
+// it onto the client window, which then fills it exactly and hides it: the
+// same shape a frame takes while its client is full screen, and the reason
+// FrameRect() has always had a case for returning the content rect unchanged.
+//
+// The obvious alternative - reparent the client back out to the root and
+// destroy the frame - is what this used to do, and it doesn't survive contact
+// with real clients. Reparenting a window to the root is the ICCCM's way of
+// saying "I have stopped managing this window", which is what a window
+// manager does on its way out, and toolkits know it. Java's XAWT logs "WM
+// exited", stops believing the geometry it is told, writes off the next batch
+// of ConfigureNotify events as reparenting debris - it decides which by
+// comparing X sequence numbers, so which ones it drops is not something lwm
+// can predict, let alone control - and then puts the window back to the last
+// size it is sure of. The result was a Java window that kept its old size and
+// slid up and to the left into the space the title bar had been in, sometimes.
+//
+// Not reparenting removes the whole question. A client that isn't reparented
+// sees a plain move and resize, which is the most ordinary thing a window
+// manager can do to it.
+void Client::HideFurniture() {
+  // The frame's X border lives outside its coordinate space, so it would show
+  // as a black line around a window that is supposed to have nothing round
+  // it. EnterFullScreen drops it for the same reason.
+  xlib::XConfigureWindow(parent, xlib::WindowChanges().BorderWidth(0));
+  xlib::XMoveResizeWindow(parent, FrameRect());
+  xlib::XMoveResizeWindow(window, ContentRectRelative());
+  // The frame is behind a client window that now covers it exactly, so a
+  // shaped client needs it re-shaped at the new offset or the bits the client
+  // isn't drawing show frame instead of desktop.
+  setShape(this);
 }
 
 void Client::ExitFullScreen() {
@@ -750,14 +792,17 @@ void Client::ExitFullScreen() {
                       ? MaximizedRect(pre_maximize_content_rect_)
                       : pre_full_screen_content_rect_;
   if (framed) {
-    xlib::XConfigureWindow(
-        parent, xlib::WindowChanges().BorderWidth(kFrameBorderWidth));
+    // The border comes back only if there's furniture to come back to: a
+    // window whose furniture the user turned off keeps a borderless frame,
+    // full screen or not.
+    xlib::XConfigureWindow(parent, xlib::WindowChanges().BorderWidth(
+                                       HasFurniture() ? kFrameBorderWidth : 0));
     xlib::XMoveResizeWindow(parent, FrameRect());
     // The client window is reparented, so its position is relative to the
     // *frame*, not to the root. If we move it to 'content_rect_', it ends up
     // offset within the frame window by the frame origin coordinates.
     xlib::XMoveResizeWindow(window, ContentRectRelative());
-    DrawBorder();  // The furniture is visible again.
+    DrawBorder();  // The furniture, if any, is visible again.
   } else {
     xlib::XMoveResizeWindow(window, content_rect_);
   }

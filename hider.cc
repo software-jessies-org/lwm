@@ -14,10 +14,10 @@
 namespace {
 
 // hiddenIDFor returns the Window ID which stands for a client in the hidden_
-// list and in the unhide menu. It's the client's own window: unlike the frame,
-// that lasts for as long as the client does, which matters now the user can
-// take a window's furniture away and give it back (see Client::SetFramed).
-// LScr::GetClient resolves it either way round.
+// list and in the unhide menu. It's the client's own window rather than the
+// frame, because a client lwm never framed hasn't got one, and because it's
+// the id every other part of lwm names a client by. LScr::GetClient resolves
+// it either way round.
 // We have a specially-named function for this so that we don't get confused
 // about which Window ID we're using, as it's used in Hide, Unhide and
 // OpenMenu.
@@ -26,11 +26,13 @@ Window hiddenIDFor(const Client* c) {
 }
 
 // hideTargetFor returns the window Hide unmaps and Unhide maps again: the
-// frame if there is one, and the client's own window if not. It is *not* the
-// same as hiddenIDFor - unmapping the frame implicitly takes the client
-// window inside it with it, which saves re-mapping and repositioning the
-// client afterwards, and an unframed client's 'parent' is the root, which the
-// server declines to unmap at all.
+// frame if there is one, and the client's own window if not. Note 'framed',
+// not HasFurniture(): a window whose furniture the user turned off still has
+// a frame, and hides by it like any other. It is *not* the same as
+// hiddenIDFor - unmapping the frame implicitly takes the client window inside
+// it with it, which saves re-mapping and repositioning the client afterwards,
+// and an unframed client's 'parent' is the root, which the server declines to
+// unmap at all.
 Window hideTargetFor(const Client* c) {
   return c->framed ? c->parent : c->window;
 }

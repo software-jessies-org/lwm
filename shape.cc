@@ -39,8 +39,12 @@ extern void setShape(Client* c) {
   }
   xlib::XShapeSelectInput(c->window);
   if (xlib::XShapeCountRectangles(c->window) > 1) {
-    int border = borderWidth();
-    xlib::XShapeCombineShape(c->parent, border - 1, border - 1, c->window);
+    // Where the client window sits inside its frame. With the furniture off
+    // the two coincide, so the shape goes on at the origin; the -1 on the
+    // furnished case is the frame's own X border, which is outside the
+    // frame's coordinate space but inside the shape's.
+    const int border = c->HasFurniture() ? borderWidth() - 1 : 0;
+    xlib::XShapeCombineShape(c->parent, border, border, c->window);
   }
 #else
   c = c;

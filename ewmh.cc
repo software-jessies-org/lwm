@@ -432,8 +432,7 @@ void ewmh_set_frame_extents(Client* c) {
   if (!c->IsWithdrawn()) {
     const Rect frame = c->FrameRect();
     const Rect content = c->ContentRect();
-    const int xborder =
-        (c->framed && !c->wstate.fullscreen) ? kFrameBorderWidth : 0;
+    const int xborder = c->HasFurniture() ? kFrameBorderWidth : 0;
     data[0] = content.xMin - frame.xMin + xborder;  // left
     data[1] = frame.xMax - content.xMax + xborder;  // right
     data[2] = content.yMin - frame.yMin + xborder;  // top

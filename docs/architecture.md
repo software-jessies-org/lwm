@@ -151,8 +151,8 @@ raises, and anything else has already moved the window.
 
 Holding Control as well takes an early exit from `getSuperDragHandler` into a
 second, one-gesture set: button 1 turns the furniture on or off
-(`WindowDecorationToggler` → `Client::SetFramed`, see [Turning the furniture on
-and off](concepts.md#turning-the-furniture-on-and-off)). The other buttons
+(`WindowDecorationToggler` → `Client::SetFurniture`, see [Turning the
+furniture on and off](concepts.md#turning-the-furniture-on-and-off)). The other buttons
 deliberately return nothing under that modifier rather than falling through to
 the move/resize/hide meanings above. `Client::GrabSuperButtons` asks for
 Super+Control on button 1 only, so those presses still reach the application.
@@ -179,9 +179,11 @@ Client lifecycle: `GetOrAddClient` → `AddClient` (takes an
 the normal hints become two `DimensionLimiter`s) → `manage()` does the real
 work → `Client::FurnishAt` → `LScr::Furnish` creates the frame window. Removal is
 `Client::Remove()` → `LScr::Remove()` which unfocuses, erases from both maps and
-deletes. A live client can also gain or lose its frame after all that, through
-`Client::SetFramed` → `LScr::Furnish`/`LScr::Unfurnish`; `parents_` is the map
-that changes underneath, so nothing may cache a frame id across it. On exit, `Client_FreeAll()` → `Client::Release()` reparents every
+deletes. A frame, once created, lasts as long as its client: turning the
+furniture off (`Client::SetFurniture`) shrinks the frame onto the client
+rather than disposing of it, and the only way a client gains one later is
+`SetFurniture` calling `LScr::Furnish` for a window `manage()` left
+undecorated. On exit, `Client_FreeAll()` → `Client::Release()` reparents every
 client back to the root and restores its original border width.
 
 ## Things to know before changing behaviour

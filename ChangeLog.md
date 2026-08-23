@@ -23,7 +23,17 @@ gains them shrinks to make room; nothing else on the desktop moves. This works
 in both directions on any ordinary window, including ones lwm chose not to
 decorate because the client said it draws its own title bar. Full-screen
 windows, and window types which never get furniture in the first place, are
-left alone.
+left alone. Turning the furniture off and on again puts the window back at
+exactly the size it started at, even for a client like xterm which only
+resizes in whole character cells.
+
+Taking a window's furniture away no longer moves the window out of its frame:
+the frame stays, shrunk to the size of the window inside it, so nothing of it
+shows. Moving a window out to the root is how a window manager announces that
+it has stopped managing that window, and clients which believe it stop
+trusting the geometry they're given afterwards. Java applications were the
+visible casualty: instead of growing into the space the title bar had been
+using, they kept their old size and slid up and to the left into it.
 
 Super+right click anywhere within the client window hides the window.
 

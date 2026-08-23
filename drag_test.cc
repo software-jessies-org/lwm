@@ -140,8 +140,8 @@ Point gridCell(const Client* c, int col, int row) {
 }
 
 // Maps a client which says through _MOTIF_WM_HINTS that it draws its own
-// decorations, so lwm frames it but leaves the furniture off - the Steam
-// launcher case. `type` is the _NET_WM_WINDOW_TYPE to advertise.
+// decorations, so lwm leaves it parented to the root with no frame at all -
+// the Steam launcher case. `type` is the _NET_WM_WINDOW_TYPE to advertise.
 Client* mapUndecorated(wmtest::World& world, const Rect& rect, Atom type) {
   const Window w = world.server().AddClientWindow(rect);
   world.server().SetProperty32(w, motif_wm_hints, motif_wm_hints,
@@ -162,6 +162,28 @@ Client* mapUndecorated(wmtest::World& world, const Rect& rect, Atom type) {
 
 Client* mapUndecorated(wmtest::World& world, const Rect& rect) {
   return mapUndecorated(world, rect, 0);
+}
+
+// Maps a client which resizes in whole cells, the way an xterm does. Both
+// halves of the decoration toggle put the size through LimitResize, so this
+// is the client that finds out whether the two halves agree.
+Client* mapWithResizeIncrement(wmtest::World& world,
+                               const Rect& rect,
+                               int width_inc,
+                               int height_inc) {
+  const Window w = world.server().AddClientWindow(rect);
+  xlib::FakeWindow* fw = world.server().Get(w);
+  fw->normal_hints.ok = true;
+  fw->normal_hints.has_resize_inc = true;
+  fw->normal_hints.width_inc = width_inc;
+  fw->normal_hints.height_inc = height_inc;
+  xcb_map_request_event_t e{};
+  e.response_type = XCB_MAP_REQUEST;
+  e.parent = world.server().Root();
+  e.window = w;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
 }
 
 // Super+Control+click, the decoration toggle, in the middle of the window.
@@ -806,26 +828,75 @@ TEST(Decorations, TheClickTogglesTheFurnitureAndKeepsTheOuterExtent) {
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);
   ASSERT_TRUE(c != nullptr);
-  ASSERT_TRUE(c->framed);
+  ASSERT_TRUE(c->HasFurniture());
   const Rect outer = c->FrameRect();
   const Rect inner = c->ContentRect();
   ASSERT_NE(outer, inner) << "the test needs a client with real furniture";
 
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 60 * kSlowly);
 
-  EXPECT_FALSE(c->framed);
+  EXPECT_FALSE(c->HasFurniture());
   EXPECT_EQ(c->ContentRect(), outer)
-      << "the client should have grown into the space the frame was using";
+      << "the client should have grown into the space the furniture was using";
   EXPECT_EQ(c->FrameRect(), outer) << "and the outer extent should not move";
 
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 61 * kSlowly);
 
-  EXPECT_TRUE(c->framed);
+  EXPECT_TRUE(c->HasFurniture());
   EXPECT_EQ(c->FrameRect(), outer);
   EXPECT_EQ(c->ContentRect(), inner) << "and back to exactly where it started";
 }
 
-TEST(Decorations, TheFrameWindowGoesAndANewOneComesBack) {
+TEST(Decorations, AClientWithSizeIncrementsGetsItsExactGeometryBack) {
+  // Both halves of the toggle put the size through LimitResize, and a client
+  // with increments rounds down each time, so doing the arithmetic in both
+  // directions used to cost an xterm a row and a column per round trip.
+  wmtest::World world;
+  Client* c = mapWithResizeIncrement(world, kClientRect, 7, 13);
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_TRUE(c->HasFurniture());
+  const Rect content = c->ContentRect();
+
+  for (int i = 0; i < 3; i++) {
+    superControlClick(world, c, SUPER_DECORATE_BUTTON, (110 + 2 * i) * kSlowly);
+    ASSERT_FALSE(c->HasFurniture());
+    superControlClick(world, c, SUPER_DECORATE_BUTTON,
+                      (111 + 2 * i) * kSlowly);
+    ASSERT_TRUE(c->HasFurniture());
+    EXPECT_EQ(c->ContentRect(), content)
+        << "the window shrank on round trip " << (i + 1);
+  }
+}
+
+TEST(Decorations, MovingAnUndecoratedWindowGivesUpTheRememberedGeometry) {
+  // The remembered geometry is only good while nothing has touched the
+  // window since. Once something has, the arithmetic is the only honest
+  // answer, even if it costs a client with increments a row.
+  wmtest::World world;
+  Client* c = mapWithResizeIncrement(world, kClientRect, 7, 13);
+  ASSERT_TRUE(c != nullptr);
+
+  const Rect before = c->ContentRect();
+
+  superControlClick(world, c, SUPER_DECORATE_BUTTON, 120 * kSlowly);
+  ASSERT_FALSE(c->HasFurniture());
+  const Rect moved = Rect::Translate(c->ContentRect(), Point{100, 40});
+  c->MoveTo(moved);
+
+  superControlClick(world, c, SUPER_DECORATE_BUTTON, 121 * kSlowly);
+
+  EXPECT_TRUE(c->HasFurniture());
+  EXPECT_NE(c->ContentRect(), before)
+      << "the toggle put the window back where it was before the move";
+  EXPECT_EQ(Rect::Intersect(c->FrameRect(), moved), c->FrameRect())
+      << "and it should be inside the outer extent it was actually given";
+}
+
+TEST(Decorations, TheFrameStaysAndShrinksOntoTheClientWindow) {
+  // Turning the furniture off used to reparent the client back out to the
+  // root and destroy the frame. It doesn't: the frame stays, shrunk to the
+  // size of the client window and stripped of its border, which is the same
+  // shape it takes while its client is full screen.
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);
   ASSERT_TRUE(c != nullptr);
@@ -834,73 +905,81 @@ TEST(Decorations, TheFrameWindowGoesAndANewOneComesBack) {
 
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 62 * kSlowly);
 
-  EXPECT_EQ(c->parent, LScr::I->Root());
-  EXPECT_TRUE(world.server().Get(frame) == nullptr)
-      << "the frame window should have been destroyed";
-  EXPECT_TRUE(LScr::I->GetClient(frame, false) == nullptr)
-      << "and forgotten, or a recycled window id would resolve to this client";
-  ASSERT_TRUE(world.server().Get(c->window) != nullptr);
-  EXPECT_EQ(world.server().Get(c->window)->parent, LScr::I->Root());
+  EXPECT_EQ(c->parent, frame) << "the frame should have survived the toggle";
+  EXPECT_TRUE(c->framed) << "still framed - it just has no furniture on it";
+  ASSERT_TRUE(world.server().Get(frame) != nullptr);
+  EXPECT_TRUE(world.server().Get(frame)->mapped);
+  EXPECT_EQ(LScr::I->GetClient(frame), c) << "and is still registered as ours";
+  // The client window fills the frame exactly, so nothing of the frame shows
+  // and every pointer event lands on the client.
+  EXPECT_EQ(world.server().Get(frame)->rect, c->ContentRect());
+  EXPECT_EQ(world.server().Get(frame)->border_width, 0)
+      << "the frame's X border would draw a line round an undecorated window";
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(0, 0, c->ContentRect().width(),
+                           c->ContentRect().height()));
+  EXPECT_EQ(world.server().Get(c->window)->parent, frame);
+  // Still fully managed, and still focused: nothing was unmapped.
   EXPECT_TRUE(world.server().Get(c->window)->mapped);
-  // Still fully managed: in both of LScr's registries, and still focused.
   EXPECT_EQ(LScr::I->GetClient(c->window, false), c);
   EXPECT_EQ(c->State(), NormalState);
   EXPECT_EQ(world.server().FocusedWindow(), c->window);
 
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 63 * kSlowly);
 
-  ASSERT_TRUE(c->parent != LScr::I->Root());
-  EXPECT_TRUE(c->parent != frame) << "a new frame, not the old id back again";
-  EXPECT_EQ(LScr::I->GetClient(c->parent), c)
-      << "the new frame must resolve to this client";
-  EXPECT_EQ(world.server().Get(c->window)->parent, c->parent);
-  EXPECT_TRUE(world.server().Get(c->parent)->mapped);
-  // The frame is where the outer extent says it is, and the client window is
-  // positioned inside it - in the frame's coordinates, not the root's.
-  EXPECT_EQ(world.server().Get(c->parent)->rect, c->FrameRect());
+  EXPECT_EQ(c->parent, frame) << "and the same frame comes back";
+  EXPECT_EQ(world.server().Get(frame)->rect, c->FrameRect());
+  EXPECT_EQ(world.server().Get(frame)->border_width, kFrameBorderWidth);
   EXPECT_EQ(world.server().Get(c->window)->rect, c->ContentRectRelative());
 }
 
-TEST(Decorations, LosingTheFrameDoesNotWithdrawTheWindow) {
-  // Reparenting a mapped window unmaps it on the way out of its old parent,
-  // and the UnmapNotify that arrives is indistinguishable from the client
-  // withdrawing its own window. Acting on it would stop lwm managing a window
-  // that's still very much on screen.
+TEST(Decorations, TheToggleNeitherUnmapsNorReparents) {
+  // This is the whole reason the frame stays. A reparent to the root is the
+  // ICCCM's "I have stopped managing this window", and clients that believe
+  // it - Java's XAWT is one - stop trusting the geometry they're given and
+  // put themselves back to the size they last knew. It also unmaps the client
+  // window on the way, which lwm then has to tell apart from a withdrawal.
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);
   ASSERT_TRUE(c != nullptr);
-  const Window frame = c->parent;
+  std::ostringstream reparent;
+  reparent << "ReparentWindow(0x" << std::hex << c->window << ")";
+  std::ostringstream unmap;
+  unmap << "UnmapWindow(0x" << std::hex << c->window << ")";
+  world.server().ClearCalls();
 
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 64 * kSlowly);
-  ASSERT_FALSE(c->framed);
-  sendUnmapNotify(world, frame, c->window);
-
-  EXPECT_EQ(c->State(), NormalState) << "the window was withdrawn by its own "
-                                        "reparent";
-  EXPECT_EQ(LScr::I->GetClient(c->window, false), c);
-
-  // And the same on the way back in, where the root reports the unmap.
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 65 * kSlowly);
+
+  EXPECT_TRUE(world.server().CallsMatching(reparent.str()).empty())
+      << "the toggle reparented the client window";
+  EXPECT_TRUE(world.server().CallsMatching(unmap.str()).empty())
+      << "the toggle unmapped the client window";
+  // So an UnmapNotify arriving now is the client's own doing, and nothing the
+  // toggle did should have left an expected unmap lying around to swallow it.
+  sendUnmapNotify(world, c->parent, c->window);
+  EXPECT_EQ(c->State(), WithdrawnState);
+}
+
+TEST(Decorations, TheFirstFrameIsStillCountedAsAnUnmapWeAskedFor) {
+  // The one reparent left in the toggle is the first frame for a window lwm
+  // chose not to decorate. That still unmaps the client window on its way,
+  // and that UnmapNotify still has to be told apart from a withdrawal.
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  superControlClick(world, c, SUPER_DECORATE_BUTTON, 66 * kSlowly);
   ASSERT_TRUE(c->framed);
   sendUnmapNotify(world, LScr::I->Root(), c->window);
 
-  EXPECT_EQ(c->State(), NormalState);
-}
+  EXPECT_EQ(c->State(), NormalState)
+      << "the window was withdrawn by its own reparent";
+  EXPECT_EQ(LScr::I->GetClient(c->window, false), c);
 
-TEST(Decorations, AnUnmapWeDidNotAskForStillWithdrawsTheWindow) {
-  // The counting must not swallow a real withdrawal: one expected unmap is
-  // consumed by the one the reparent causes, and the next event is the
-  // client's own doing.
-  wmtest::World world;
-  Client* c = world.MapClientWindow(kClientRect);
-  ASSERT_TRUE(c != nullptr);
-  const Window frame = c->parent;
-
-  superControlClick(world, c, SUPER_DECORATE_BUTTON, 66 * kSlowly);
-  sendUnmapNotify(world, frame, c->window);
-  ASSERT_EQ(c->State(), NormalState);
-
-  sendUnmapNotify(world, LScr::I->Root(), c->window);
+  // One expected unmap, no more: the next event is the client's own doing.
+  sendUnmapNotify(world, c->parent, c->window);
   EXPECT_EQ(c->State(), WithdrawnState);
 }
 
@@ -920,9 +999,9 @@ TEST(Decorations, TheToggleKeepsTheWindowsPlaceInTheStack) {
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 67 * kSlowly);
 
   EXPECT_TRUE(rootStackIndex(world, below->parent) <
-              rootStackIndex(world, c->window))
+              rootStackIndex(world, c->parent))
       << "losing the furniture lowered the window";
-  EXPECT_TRUE(rootStackIndex(world, c->window) <
+  EXPECT_TRUE(rootStackIndex(world, c->parent) <
               rootStackIndex(world, above->parent))
       << "losing the furniture raised the window";
 
@@ -943,7 +1022,8 @@ TEST(Decorations, TheOtherButtonsDoNothingWithControlHeld) {
 
   for (int button : {SUPER_RESIZE_BUTTON, SUPER_HIDE_BUTTON}) {
     superControlClick(world, c, button, (70 + button) * kSlowly);
-    EXPECT_TRUE(c->framed) << "button " << button << " toggled the furniture";
+    EXPECT_TRUE(c->HasFurniture())
+        << "button " << button << " toggled the furniture";
     EXPECT_FALSE(c->IsHidden()) << "button " << button << " hid the window";
     EXPECT_EQ(c->FrameRect(), before);
   }
@@ -951,19 +1031,39 @@ TEST(Decorations, TheOtherButtonsDoNothingWithControlHeld) {
 
 TEST(Decorations, AWindowLwmChoseNotToDecorateCanBeGivenFurniture) {
   // The Steam launcher case, in reverse: the client said it draws its own
-  // title bar, the user disagrees.
+  // title bar, the user disagrees. This is the one direction that still has
+  // to reparent, because there's no frame to grow.
   wmtest::World world;
   Client* c = mapUndecorated(world, kClientRect);
   ASSERT_TRUE(c != nullptr);
   ASSERT_FALSE(c->framed);
+  ASSERT_EQ(c->parent, LScr::I->Root());
   const Rect outer = c->FrameRect();
 
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 80 * kSlowly);
 
-  EXPECT_TRUE(c->framed);
+  EXPECT_TRUE(c->HasFurniture());
+  ASSERT_TRUE(c->parent != LScr::I->Root());
+  EXPECT_EQ(LScr::I->GetClient(c->parent), c)
+      << "the new frame must resolve to this client";
+  EXPECT_EQ(world.server().Get(c->window)->parent, c->parent);
+  EXPECT_TRUE(world.server().Get(c->parent)->mapped);
   EXPECT_EQ(c->FrameRect(), outer)
       << "the outer extent should be preserved in this direction too";
   EXPECT_EQ(c->ContentRect(), Client::ContentFromFrameRect(outer));
+  EXPECT_EQ(world.server().Get(c->parent)->rect, c->FrameRect());
+  EXPECT_EQ(world.server().Get(c->window)->rect, c->ContentRectRelative());
+  EXPECT_EQ(world.server().FocusedWindow(), c->window)
+      << "the reparent handed the focus back to PointerRoot";
+
+  // And off again, which from here on is the cheap version: the frame it just
+  // gained is the one it keeps.
+  const Window frame = c->parent;
+  superControlClick(world, c, SUPER_DECORATE_BUTTON, 81 * kSlowly);
+
+  EXPECT_FALSE(c->HasFurniture());
+  EXPECT_EQ(c->parent, frame);
+  EXPECT_EQ(c->ContentRect(), outer);
 }
 
 TEST(Decorations, FurnitureFreeWindowTypesAreLeftAlone) {
@@ -977,7 +1077,7 @@ TEST(Decorations, FurnitureFreeWindowTypesAreLeftAlone) {
   ASSERT_TRUE(c != nullptr);
   const Rect before = c->ContentRect();
 
-  c->SetFramed(true);
+  c->SetFurniture(true);
 
   EXPECT_FALSE(c->framed);
   EXPECT_EQ(c->parent, LScr::I->Root());
@@ -1005,7 +1105,32 @@ TEST(Decorations, AFullScreenWindowIsLeftAlone) {
   // And it comes back out of full screen with the furniture it went in with.
   c->wstate.fullscreen = false;
   c->ExitFullScreen();
+  EXPECT_TRUE(c->HasFurniture());
   EXPECT_EQ(c->ContentRect(), kClientRect);
+  EXPECT_EQ(world.server().Get(frame)->border_width, kFrameBorderWidth);
+}
+
+TEST(Decorations, FullScreenLeavesAnUndecoratedWindowUndecorated) {
+  // Full screen takes the furniture off and puts it back. It must not put
+  // back furniture the user had already turned off - including the frame's
+  // own X border, which is the only part of it ExitFullScreen touches
+  // directly.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  superControlClick(world, c, SUPER_DECORATE_BUTTON, 95 * kSlowly);
+  ASSERT_FALSE(c->HasFurniture());
+  const Rect undecorated = c->ContentRect();
+
+  c->wstate.fullscreen = true;
+  c->EnterFullScreen();
+  c->wstate.fullscreen = false;
+  c->ExitFullScreen();
+
+  EXPECT_FALSE(c->HasFurniture());
+  EXPECT_EQ(c->ContentRect(), undecorated);
+  EXPECT_EQ(world.server().Get(c->parent)->rect, undecorated);
+  EXPECT_EQ(world.server().Get(c->parent)->border_width, 0);
 }
 
 TEST(Decorations, AHiddenWindowIsLeftAlone) {
@@ -1019,21 +1144,40 @@ TEST(Decorations, AHiddenWindowIsLeftAlone) {
   c->Hide();
   ASSERT_TRUE(c->IsHidden());
 
-  c->SetFramed(false);
+  c->SetFurniture(false);
 
-  EXPECT_TRUE(c->framed);
+  EXPECT_TRUE(c->HasFurniture());
   EXPECT_EQ(c->parent, frame);
   EXPECT_FALSE(world.server().Get(frame)->mapped) << "still hidden";
 }
 
 TEST(Decorations, AnUndecoratedWindowStillHidesAndUnhides) {
-  // Hiding unmaps the frame, and a window that's just lost its frame hasn't
-  // got one to unmap: its own window goes instead. Getting that wrong left
-  // the window on screen, marked hidden, with no way back.
+  // A window with no furniture still has a frame, so hiding unmaps that, the
+  // same as any other window.
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);
   ASSERT_TRUE(c != nullptr);
   superControlClick(world, c, SUPER_DECORATE_BUTTON, 100 * kSlowly);
+  ASSERT_FALSE(c->HasFurniture());
+
+  c->Hide();
+  EXPECT_TRUE(c->IsHidden());
+  EXPECT_FALSE(world.server().Get(c->parent)->mapped);
+  EXPECT_EQ(c->State(), IconicState);
+
+  c->Unhide();
+  EXPECT_FALSE(c->IsHidden());
+  EXPECT_TRUE(world.server().Get(c->parent)->mapped);
+  EXPECT_EQ(c->State(), NormalState);
+}
+
+TEST(Decorations, AWindowThatNeverGetsAFrameStillHidesAndUnhides) {
+  // Hiding unmaps the frame, and a client lwm never framed hasn't got one:
+  // its own window goes instead. Getting that wrong left the window on
+  // screen, marked hidden, with no way back.
+  wmtest::World world;
+  Client* c = mapUndecorated(world, kClientRect);
+  ASSERT_TRUE(c != nullptr);
   ASSERT_FALSE(c->framed);
 
   c->Hide();

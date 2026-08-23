@@ -534,20 +534,23 @@ sleep 0.5
 # --- decorations ------------------------------------------------------------
 #
 # Super+Control+button 1 turns lwm's furniture on and off for the window under
-# the pointer, keeping its outer extent where it is. This needs a real server
-# more than most of the checks here: the client window is reparented out of
-# its frame and back in again, which is the sort of thing FakeServer models
-# only as far as lwm asked for it.
+# the pointer, keeping its outer extent where it is. The frame window itself
+# stays either way: with the furniture off it shrinks onto the client window,
+# which then covers it exactly, so what's on screen is only the client. That
+# is a thing only a real server can be asked about, since it comes down to
+# where two windows ended up rather than to what lwm asked for.
 
 place "${CLIENT}" 400 300 200 200
 read -r FX FY FW FH <<<"$(geom "${FRAME}")"
 read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
 super_ctrl_click 1 "${CX}" "${CY}"
 
-check_eq "Super+Control+button 1 removes the furniture" \
-  "$(frame_of "${CLIENT}")" ""
+check_eq "Super+Control+button 1 keeps the frame window" \
+  "$(frame_of "${CLIENT}")" "${FRAME}"
 check_eq "and the client grows to keep the outer extent" \
   "$(geom "${CLIENT}")" "${FX} ${FY} ${FW} ${FH}"
+check_eq "and the frame shrinks onto it, so no furniture shows" \
+  "$(geom "${FRAME}")" "${FX} ${FY} ${FW} ${FH}"
 check_eq "and the window is still on screen" \
   "$(map_state "${CLIENT}")" "IsViewable"
 
@@ -560,8 +563,8 @@ check_eq "an undecorated window still moves with Super+button 1" \
 read -r FX FY FW FH <<<"$(geom "${CLIENT}")"
 read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
 super_ctrl_click 1 "${CX}" "${CY}"
-FRAME=$(frame_of "${CLIENT}")
-check "the furniture comes back" test -n "${FRAME}"
+check_eq "the furniture comes back on the same frame" \
+  "$(frame_of "${CLIENT}")" "${FRAME}"
 check_eq "and the outer extent is still where it was" \
   "$(geom "${FRAME}")" "${FX} ${FY} ${FW} ${FH}"
 WANT="$((FX + FURNITURE_X)) $((FY + FURNITURE_Y))"

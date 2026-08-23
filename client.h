@@ -103,7 +103,16 @@ class Client {
   // ewmh_hasframe), a full-screen window, whose furniture is already off for
   // as long as that lasts, and a hidden one, which the Hider is holding by
   // whichever window this would change.
-  void SetFramed(bool want_framed);
+  void SetFurniture(bool want_furniture);
+
+  // True while lwm is drawing a title bar and borders around this client.
+  // That's less often than 'framed': a framed client has no furniture while
+  // it's full screen, or while the user has turned it off with the
+  // Super+Control click. In both of those the frame window is still there,
+  // sized exactly to the client window, and FrameRect() is the content rect.
+  bool HasFurniture() const {
+    return framed && furniture_ && !wstate.fullscreen;
+  }
 
   // Tells this Client that lwm has just asked the server to unmap the client
   // window itself. An unmap lwm asked for is not the client withdrawing its
@@ -111,8 +120,8 @@ class Client {
   // ones we cause have to be counted off as they arrive: see EvUnmapNotify.
   //
   // Reparenting counts. The server unmaps a mapped window on its way out of
-  // its old parent and maps it again afterwards, so SetFramed announces one
-  // of these in each direction.
+  // its old parent and maps it again afterwards, so the one reparent
+  // SetFurniture can still cause announces one of these.
   void ExpectUnmap() { expected_unmaps_++; }
 
   // Consumes one expected unmap, returning true if there was one to consume -
@@ -123,7 +132,10 @@ class Client {
   Window parent = 0;  // Window manager frame.
   Window trans = 0;   // Window that client is a transient for.
 
-  bool framed = false;  // true is lwm is maintaining a frame
+  // True if lwm is maintaining a frame window for this client - which is to
+  // say if 'parent' is that frame rather than the root. Whether the frame has
+  // any furniture on it is a separate question: see HasFurniture().
+  bool framed = false;
 
  public:
   int State() const { return state_; }
@@ -218,6 +230,18 @@ class Client {
   // screen. Only meaningful while IsMaximized().
   Rect pre_maximize_content_rect_ = {};
 
+  // Where the content rect was when the user last turned the furniture off,
+  // and the rect it got in exchange. Both empty while the furniture is on.
+  //
+  // Turning it back on could just do the arithmetic in reverse, and nearly
+  // always does. The exception is a client with size increments: it rounds
+  // down to a whole cell every time it's asked to fit a new space, so an
+  // xterm toggled back and forth would shed a row and a column on every
+  // trip. undecorated_content_rect_ is how SetFurniture knows nothing has
+  // moved the window since, and so that going straight back is safe.
+  Rect pre_undecorated_content_rect_ = {};
+  Rect undecorated_content_rect_ = {};
+
   // Where the window was before the Windows-key double click grew it. Empty
   // if it hasn't been grown, or if we've already put it back: Unexpand()
   // spends the record rather than keeping it, so a window which has been
@@ -235,11 +259,16 @@ class Client {
   // that's been unplugged.
   Rect MakeContentRectVisible(const Rect& content) const;
 
-  // The two halves of SetFramed, each taking the content rect the window is
-  // to end up with. Between them they're the only code outside manage() and
-  // Client::Release() that moves a client window from one parent to another.
-  void AddFrame(const Rect& new_content);
-  void RemoveFrame(const Rect& new_content);
+  // The two halves of SetFurniture. Both expect content_rect_ and furniture_
+  // to have been set already, so that FrameRect() and ContentRectRelative()
+  // describe where the two windows are going.
+  void ShowFurniture();
+  void HideFurniture();
+
+  // False once the user has turned the furniture off with the Super+Control
+  // click. Only meaningful while framed: an unframed client has nowhere to
+  // put furniture in the first place.
+  bool furniture_ = true;
 
   const DimensionLimiter x_limiter_;
   const DimensionLimiter y_limiter_;

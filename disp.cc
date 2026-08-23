@@ -161,8 +161,11 @@ void EvMapRequest(xcb_generic_event_t* ev) {
       }
       if (c->framed) {
         LOGD(c) << "(map) reparenting framed window " << WinID(c->parent);
-        xlib::XReparentWindow(c->window, c->parent, borderWidth(),
-                              borderWidth() + xfont::TextHeight());
+        // Not the furniture offset spelled out: a window whose furniture the
+        // user turned off is framed too, and its client window belongs at the
+        // frame's origin.
+        const Point p = c->ContentRectRelative().origin();
+        xlib::XReparentWindow(c->window, c->parent, p.x, p.y);
       } else {
         LOGD(c) << "(map) reparenting unframed window " << WinID(c->parent);
         const Point p = c->ContentRect().origin();

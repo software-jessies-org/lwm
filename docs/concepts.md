@@ -8,12 +8,13 @@ the client's own window (`Client::window`), reparented inside it.
 * `Client::ContentRect()` — the client window, in **root** coordinates. This is
   the stored state (`content_rect_`); everything else is derived.
 * `Client::FrameRect()` — the frame, root coordinates. Equals the content rect
-  when `!framed`, and **also when the client is full screen**: there's no
-  furniture to make room for, so the frame covers exactly the same pixels as
-  the client. `EnterFullScreen` also drops the frame's X border
-  (`kFrameBorderWidth`) to zero, because X puts a window's border outside its
-  coordinate space and a full-screen window has to line up with the monitor
-  exactly.
+  whenever `Client::HasFurniture()` is false: there's nothing to make room
+  for, so the frame covers exactly the same pixels as the client. That covers
+  three cases — no frame at all, full screen, and a window the user has
+  undecorated. In the last two the frame's X border (`kFrameBorderWidth`) is
+  dropped to zero as well, because X puts a window's border *outside* its
+  coordinate space, so leaving it on would draw a line round a window that is
+  supposed to have nothing round it.
 * `Client::ContentRectRelative()` — the content rect translated into
   **frame-window** coordinates. Needed whenever you call an X move/resize on
   `window` while it is reparented.
@@ -22,9 +23,10 @@ the client's own window (`Client::window`), reparented inside it.
   (`titleBarHeight() == textHeight() + borderWidth()`).
 
 Everything that places the two windows — `MoveTo`, `MoveResizeTo`,
-`EnterFullScreen`, `EvConfigureRequest` — goes through `FrameRect()` for the
-frame and `ContentRectRelative()` for the client, so the full-screen case falls
-out of those two rather than being special-cased at each site. Passing root
+`EnterFullScreen`, `HideFurniture`, `EvConfigureRequest` — goes through
+`FrameRect()` for the frame and `ContentRectRelative()` for the client, so the
+furniture-free cases fall out of those two rather than being special-cased at
+each site. Passing root
 coordinates for the client window is the mistake to watch for: it is
 indistinguishable from the right answer until the frame's origin isn't (0, 0),
 which on a multi-monitor layout means it only shows up when the screen being
@@ -35,12 +37,18 @@ filled isn't the leftmost one.
 where that pixel doesn't exist; the property is defined in terms of what's on
 the screen, and the frame's X border is a black pixel drawn all the way round.
 So the published extents are `FrameRect() - ContentRect()` plus one on each
-side — all four zero for an unframed, full-screen or withdrawn window. It's
-republished from `Client::SetState` (which covers being managed, hidden and
-withdrawn), from `EnterFullScreen`/`ExitFullScreen`, and from
-`Client::SetFramed`. Those are the only moments it can change: `manage()`
-makes the framing decision, and only the user's decoration toggle revisits
-it.
+side — all four zero whenever `HasFurniture()` is false, and for a withdrawn
+window. It's republished from `Client::SetState` (which covers being managed,
+hidden and withdrawn), from `EnterFullScreen`/`ExitFullScreen`, and from
+`Client::SetFurniture`. Those are the only moments it can change: `manage()`
+makes the framing decision, and only the user's decoration toggle revisits it.
+
+`SetFurniture` publishes it *before* it touches either window, which is the
+opposite of every other caller and deliberate. A client that reads the
+property in response to being resized asks the server after the event it is
+reacting to, so anything changed before that event is certain to be what it
+reads; changing it afterwards is a race between lwm's request and the
+client's. Java's XAWT is the client that noticed.
 
 Mutators: `MoveTo` (size must be unchanged — it `LOGF`s, i.e. exits, otherwise)
 and `MoveResizeTo`. Both update `content_rect_`, move the X windows and send a
@@ -123,7 +131,9 @@ Hiding = unmap the frame + `IconicState`. No icons are placed on the desktop.
 `hidden_` is a list of the window ids `hiddenIDFor` returns: the frame for a
 framed client, and the client's own window for one with no frame — which is
 also what gets unmapped, since the server ignores an `UnmapWindow` on the root
-and an unframed client's `parent` *is* the root. Unmapping the client window
+and an unframed client's `parent` *is* the root. Note that "no frame" here
+means `!framed`, not "no furniture": a window the user has undecorated still
+has a frame, and hides by it like any other. Unmapping the client window
 directly means telling the `Client` to expect the resulting `UnmapNotify`; see
 "Turning the furniture on and off" below.
 
@@ -269,8 +279,9 @@ scaled proportionally into the tallest screen at their new mid-x. Extend
 
 ## Undecorated windows
 
-`Client::framed` is false for two quite different kinds of window, and the
-difference matters every time you touch code that keys off it.
+A window can be undecorated for three quite different reasons, and the
+difference matters every time you touch code that keys off it. The first two
+leave `Client::framed` false; the third only clears `HasFurniture()`.
 
 * **Furniture-free by nature** — `_NET_WM_WINDOW_TYPE_DESKTOP`, `DOCK`, `MENU`
   and `SPLASH`, screened out by `ewmh_hasframe()`. Dragging one is
@@ -279,6 +290,8 @@ difference matters every time you touch code that keys off it.
   anything that draws its own title bar and says so through
   `_MOTIF_WM_HINTS` (the Steam launcher, GTK client-side decorations, Java's
   `setUndecorated(true)`). These are perfectly normal, movable windows.
+* **Windows the user undecorated** — the Super+Control click, described below.
+  These keep their frame; only the furniture goes.
 
 The second kind is the trap. They have no furniture to drag, so the only two
 ways left to move or resize them are the Windows-key gestures and the
@@ -288,7 +301,8 @@ screen for the rest of its life, with no way out — which is exactly what used
 to happen. So:
 
 * `Client::GrabSuperButtons()` keys off `ewmh_hasframe()`, **not** `framed`.
-* An unframed client is never reparented, so `c->parent` is still the root,
+* An unframed client — the first two kinds — is never reparented, so
+  `c->parent` is still the root,
   and `LScr::GetClient()` answers `nullptr` for the root on purpose. Anything
   that remembers a client across a drag must therefore hold `c->window`, not
   `c->parent`. Every `DragHandler` does.
@@ -311,42 +325,70 @@ end-to-end against a real server by the undecorated-window section of
 ### Turning the furniture on and off
 
 Super+Control+button 1 (`WindowDecorationToggler` in `drag.cc`) calls
-`Client::SetFramed`, which moves a live client between the two states above —
-though only the *second* kind of undecorated window, since it refuses when
+`Client::SetFurniture`, which moves a live client between the two states above
+— though only the *second* kind of undecorated window, since it refuses when
 `ewmh_hasframe()` says no. It also refuses while the window is full screen
 (the furniture is already off, and the geometry that means anything belongs to
 `ExitFullScreen`) and while it is hidden (the `Hider` is holding it by
-whichever window would be mapped or unmapped). What is
-preserved is `FrameRect()`, lwm's idea of the outer extent everywhere else
-(maximisation and expansion both work in those coordinates): the client window
-grows into the space the furniture was using, and shrinks back out of it.
-`LimitResize` still gets the last word, so an xterm rounds that to whole
-character cells. The frame's own 1px X border is not accounted for, because it
-isn't part of `FrameRect()` either.
+whichever window would be mapped or unmapped). What is preserved is
+`FrameRect()`, lwm's idea of the outer extent everywhere else (maximisation
+and expansion both work in those coordinates): the client window grows into
+the space the furniture was using, and shrinks back out of it. The frame's own
+1px X border is not accounted for, because it isn't part of `FrameRect()`
+either.
 
-`SetFramed`'s two halves — `AddFrame`/`RemoveFrame`, with `LScr::Furnish` and
-the new `LScr::Unfurnish` — are the only code outside `manage()` and
-`Client::Release()` that reparents a client window. Three things that costs:
+**The frame window stays.** `HideFurniture` shrinks it onto the client window
+and drops its X border, so the client covers it exactly and nothing of it
+shows; `ShowFurniture` grows it back. That is the same shape a frame takes
+while its client is full screen, and it's why `FrameRect()` has always had a
+case for returning the content rect unchanged. Hence the two predicates:
 
-* **The reparent unmaps the window.** X unmaps a mapped window on its way out
-  of its old parent and maps it again afterwards, and the `UnmapNotify` is
+* `Client::framed` — lwm maintains a frame window for this client, i.e.
+  `parent` is that frame rather than the root. Decided in `manage()`, and only
+  ever turned *on* afterwards.
+* `Client::HasFurniture()` — `framed && furniture_ && !wstate.fullscreen`.
+  This is the one the geometry asks: `FrameRect`, `MaximizedRect`,
+  `MakeContentRectVisible`, `DrawBorder`, `setShape` and
+  `ewmh_set_frame_extents`.
+
+The obvious alternative — reparent the client back out to the root and destroy
+the frame — is what this did at first, and it doesn't survive contact with
+real clients. **Reparenting a window to the root is the ICCCM's way of saying
+"I have stopped managing this window"**, which is what a window manager does
+on its way out, and toolkits know it. Java's XAWT logs "WM exited", stops
+trusting the geometry it's given, writes off the following `ConfigureNotify`
+events as reparenting debris — it decides which by comparing X sequence
+numbers, which lwm can neither predict nor control — and then puts the window
+back to the last size it was sure of. The visible result was a Java window
+that kept its old size and slid up and to the left into the space the title
+bar had been in, *sometimes*. GTK and Chromium windows were fine. Not
+reparenting removes the question: an unreparented client sees a move and a
+resize, the most ordinary thing a window manager can do to it.
+
+One reparent is left, in `ShowFurniture`: a client lwm chose not to decorate
+has no frame to grow, so the first time the user decorates it, it gets one.
+That path still pays the three costs a reparent has always had.
+
+* **It unmaps the window.** X unmaps a mapped window on its way out of its old
+  parent and maps it again afterwards, and the `UnmapNotify` is
   indistinguishable from the client withdrawing its own window — which lwm
   answers by dropping the window. So `Client::ExpectUnmap()` counts the unmaps
   lwm causes and `EvUnmapNotify` ticks them off. `Hider::Hide` uses the same
-  counter, because an unframed window has no frame to unmap in its place.
-* **The reparent restacks it.** A reparented window goes to the top of its new
-  siblings, so both halves put it back with an explicit `Above`/`Sibling`
-  configure: gaining or losing furniture must not raise or lower the window.
-* **The reparent drops the input focus.** The server hands it back to
-  `PointerRoot` when the window holding it stops being viewable, and nothing
-  in lwm's focus history changed, so `FocusClient()` sees a client which is
-  already focused and does nothing. `Focuser::ReassertFocus` is for exactly
-  that case.
+  counter, because a client with no frame has none to unmap in its place.
+* **It restacks the window.** A reparented window goes to the top of its new
+  siblings, so the frame is slotted in immediately above the client window
+  before the reparent: gaining furniture must not raise the window.
+* **It drops the input focus.** The server hands it back to `PointerRoot` when
+  the window holding it stops being viewable, and nothing in lwm's focus
+  history changed, so `FocusClient()` sees a client which is already focused
+  and does nothing. `Focuser::ReassertFocus` is for exactly that case.
 
-Order matters in `RemoveFrame`: the client window is reparented and restacked
-relative to the frame *before* `Unfurnish` destroys it, and `Unfurnish` erases
-the `parents_` entry before the `XDestroyWindow`, so the `DestroyNotify` that
-comes back doesn't find a client to remove.
+`LimitResize` gets the last word on the size, so an xterm rounds the space it
+gains or loses to whole character cells — which means the arithmetic isn't
+reversible, and doing it in both directions cost such a client a row and a
+column per round trip. `pre_undecorated_content_rect_` is the fix: the
+geometry the window had when the furniture came off, handed straight back if
+`undecorated_content_rect_` says nothing has moved the window since.
 
 Covered by the `Decorations` tests in `drag_test.cc` and the decorations
 section of `ui_test.sh`.

@@ -92,13 +92,10 @@ class LScr {
   // window should not be owned.
   Client* GetOrAddClient(Window w, bool is_startup_scan);
 
+  // Creates the frame window a client is reparented into, and registers it
+  // in parents_. Called once per client that gets one: a frame outlives the
+  // furniture on it, so turning the decorations off doesn't dispose of it.
   void Furnish(Client* c);
-
-  // The reverse: destroys the client's frame window and forgets it, leaving
-  // the client parented to the root. The caller is expected to have already
-  // reparented the client window out of the frame - this only disposes of the
-  // frame itself. See Client::SetFramed.
-  void Unfurnish(Client* c);
 
   void Remove(Client* client);
 

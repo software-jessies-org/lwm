@@ -87,13 +87,13 @@ I want a new hotkey: windows-ctrl-click on a client window will toggle whether i
 
 ---
 
-## Not yet started
-
-I want to add key handling for switching input focus between windows. When the Windows key is held down, the arrow keys should pick the next visible window in the indicated direction, and move input focus to that window. The 'next visible window' is determined according to the centre of the window in relation with the centre of the window that currently has focus. However, the choice of windows is restricted by direction - if, for example, we hit Windows+left, the middle-X of the target window must be smaller than the middle-X of the window currently with focus, but also the absolute delta-X must be equal or larger than the absolute delta-Y between the two windows. In this way, the possible windows have their centres in a cone whose point is the centre of the window currently with focus, and which opens towards the direction indicated by which arrow is pressed.
+When using the Windows-Ctrl-Click functionality to toggle window decorations, while some applications (eg grezvany, rhythmbox, chrome) react properly, keeping the external extent of the window the same as where the decorations where (effectively resizing the client window), some apps (eg Evergreen, which is a java app) retain their original client window size, effectively moving the client window up and to the left, to be rooted at the corner previously occupied by the top-left of the window decorations. Figure out how to solve this problem - it's a weird difference in behaviour between different X clients, and looks really weird.
 
 ---
 
-When using the Windows-Ctrl-Click functionality to toggle window decorations, while some applications (eg grezvany, rhythmbox, chrome) react properly, keeping the external extent of the window the same as where the decorations where (effectively resizing the client window), some apps (eg Evergreen, which is a java app) retain their original client window size, effectively moving the client window up and to the left, to be rooted at the corner previously occupied by the top-left of the window decorations. Figure out how to solve this problem - it's a weird difference in behaviour between different X clients, and looks really weird.
+## Not yet started
+
+I want to add key handling for switching input focus between windows. When the Windows key is held down, the arrow keys should pick the next visible window in the indicated direction, and move input focus to that window. The 'next visible window' is determined according to the centre of the window in relation with the centre of the window that currently has focus. However, the choice of windows is restricted by direction - if, for example, we hit Windows+left, the middle-X of the target window must be smaller than the middle-X of the window currently with focus, but also the absolute delta-X must be equal or larger than the absolute delta-Y between the two windows. In this way, the possible windows have their centres in a cone whose point is the centre of the window currently with focus, and which opens towards the direction indicated by which arrow is pressed.
 
 ---
 

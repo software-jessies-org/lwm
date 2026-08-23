@@ -35,11 +35,6 @@ class DebugCLI {
   // disabled for that client.
   static void NotifyFrameCreated(Client* c);
 
-  // Notification that a client's frame window is about to be destroyed while
-  // the client itself lives on (the user turned its decorations off). The
-  // window id can be handed out again, so the label has to go with it.
-  static void NotifyFrameRemoved(Client* c);
-
  private:
   void ProcessLine(std::string line);
   void CmdXRandr(std::string line);

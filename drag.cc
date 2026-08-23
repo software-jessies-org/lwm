@@ -373,7 +373,7 @@ class WindowDecorationToggler : public WindowClicker {
   WindowDecorationToggler(Client* c) : WindowClicker(c) {}
   virtual void act(Client* c) {
     LOGD(c) << "Toggling decorations (user action)";
-    c->SetFramed(!c->framed);
+    c->SetFurniture(!c->HasFurniture());
   }
 };
 
