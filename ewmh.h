@@ -99,6 +99,7 @@ enum EWMHAtom {
   _NET_WM_ALLOWED_ACTIONS,
   _NET_WM_STRUT,
   _NET_WM_ICON_GEOMETRY,
+  _NET_FRAME_EXTENTS,
   _NET_WM_ICON,
   _NET_WM_PID,
   _NET_WM_HANDLED_ICONS,
@@ -150,6 +151,13 @@ extern void ewmh_change_state(Client* c,
                               unsigned long action,
                               unsigned long atom);
 extern void ewmh_set_allowed(Client* c);
+
+// Publishes _NET_FRAME_EXTENTS on the client's window: how much room lwm's
+// furniture takes up on each side of it. Call whenever that could have
+// changed - which, since lwm decides once and for all whether a window is
+// framed, means when the client is first managed, when it's withdrawn, and
+// on the way into and out of full screen.
+extern void ewmh_set_frame_extents(Client* c);
 extern void ewmh_set_client_list();
 
 // Applies one _NET_WM_STATE action (0 = remove, 1 = add, 2 = toggle) to a

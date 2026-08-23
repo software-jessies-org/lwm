@@ -20,6 +20,13 @@ reappear.
 
 Fixed a pile of bugs related to steam games.
 
+lwm now publishes `_NET_FRAME_EXTENTS` on every window it manages, and
+advertises it in `_NET_SUPPORTED`. This is how a client finds out how much
+space the title bar and borders take up around it; Wine, GTK and Chromium all
+read it, and without it they have to assume zero and end up a title bar out
+when they position or size themselves. Undecorated and full-screen windows
+report zeroes, as they should.
+
 
 ## 2026-08-22 (pn, Basel)
 

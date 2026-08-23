@@ -386,6 +386,10 @@ void Client::SetState(int state) {
   state_ = state;
   xlib::XChangeProperty(window, wm_state, wm_state, 32, data, 2);
   ewmh_set_state(this);
+  // This is where a window first becomes framed (manage() calls us once the
+  // framing decision is made) and where it stops being managed at all, so it's
+  // where the frame extents are published and where they go back to zero.
+  ewmh_set_frame_extents(this);
 }
 
 extern void Client_ResetAllCursors() {
@@ -475,6 +479,8 @@ void Client::EnterFullScreen() {
     xlib::XMoveResizeWindow(window, content_rect_);
   }
   xlib::XRaiseWindow(framed ? parent : window);
+  // No furniture while full screen, so no frame extents either.
+  ewmh_set_frame_extents(this);
   SendConfigureNotify();
 }
 
@@ -565,6 +571,8 @@ void Client::ExitFullScreen() {
   } else {
     xlib::XMoveResizeWindow(window, content_rect_);
   }
+  // The furniture is back, so the client needs to hear about it again.
+  ewmh_set_frame_extents(this);
   SendConfigureNotify();
 }
 

@@ -30,6 +30,17 @@ indistinguishable from the right answer until the frame's origin isn't (0, 0),
 which on a multi-monitor layout means it only shows up when the screen being
 filled isn't the leftmost one.
 
+`_NET_FRAME_EXTENTS` (`ewmh_set_frame_extents`) is the one place that *adds*
+`kFrameBorderWidth` back on. The rest of lwm works in frame-window coordinates,
+where that pixel doesn't exist; the property is defined in terms of what's on
+the screen, and the frame's X border is a black pixel drawn all the way round.
+So the published extents are `FrameRect() - ContentRect()` plus one on each
+side — all four zero for an unframed, full-screen or withdrawn window. It's
+republished from `Client::SetState` (which covers being managed, hidden and
+withdrawn) and from `EnterFullScreen`/`ExitFullScreen`; those are the only
+moments it can change, because whether a window is framed is decided once in
+`manage()` and never revisited.
+
 Mutators: `MoveTo` (size must be unchanged — it `LOGF`s, i.e. exits, otherwise)
 and `MoveResizeTo`. Both update `content_rect_`, move the X windows and send a
 synthetic `ConfigureNotify`. Neither does visibility bounds checking; call

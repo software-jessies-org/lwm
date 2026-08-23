@@ -94,6 +94,7 @@ void ewmh_init() {
   SET_ATOM(_NET_WM_ALLOWED_ACTIONS);
   SET_ATOM(_NET_WM_STRUT);
   SET_ATOM(_NET_WM_ICON_GEOMETRY);
+  SET_ATOM(_NET_FRAME_EXTENTS);
   SET_ATOM(_NET_WM_ICON);
   SET_ATOM(_NET_WM_PID);
   SET_ATOM(_NET_WM_HANDLED_ICONS);
@@ -399,6 +400,47 @@ void ewmh_set_allowed(Client* c) {
   action[5] = ewmh_atom[_NET_WM_ACTION_MAXIMIZE_VERT];
   xlib::XChangeProperty(c->window, ewmh_atom[_NET_WM_ALLOWED_ACTIONS],
                         XCB_ATOM_ATOM, 32, action, 6);
+}
+
+// _NET_FRAME_EXTENTS is CARDINAL[4]/32: left, right, top, bottom. It tells a
+// client how much space lwm's furniture takes up around it, so that a client
+// which cares where its *frame* lands, or which wants to size itself to fit a
+// monitor with decorations included, can do the arithmetic itself instead of
+// guessing. Wine, GTK and Chromium all read it; without it they assume zero
+// and are a title bar out.
+//
+// The bulk of the numbers is the difference between the frame rect and the
+// content rect, which needs no special-casing for either kind of undecorated
+// window: Client::FrameRect returns the content rect itself when the client
+// isn't framed or is full screen, so every extent comes out zero.
+//
+// On top of that goes the frame window's own X border. That lives *outside*
+// the frame's coordinate space, so FrameRect() doesn't include it and neither
+// does any of lwm's internal geometry - but it's a black pixel drawn all the
+// way round the frame (see LScr::Furnish), so from the client's point of view
+// it is one more pixel of border on every side, and this property is defined
+// in terms of what's on the screen. Full screen drops it to zero for exactly
+// the same reason it drops the rest of the furniture: see
+// Client::EnterFullScreen.
+void ewmh_set_frame_extents(Client* c) {
+  if (c == nullptr) {
+    return;
+  }
+  // A withdrawn window has no frame, so it gets zeroes rather than a stale set
+  // of extents, in the same way ewmh_set_state publishes an empty state.
+  uint32_t data[4] = {};
+  if (!c->IsWithdrawn()) {
+    const Rect frame = c->FrameRect();
+    const Rect content = c->ContentRect();
+    const int xborder =
+        (c->framed && !c->wstate.fullscreen) ? kFrameBorderWidth : 0;
+    data[0] = content.xMin - frame.xMin + xborder;  // left
+    data[1] = frame.xMax - content.xMax + xborder;  // right
+    data[2] = content.yMin - frame.yMin + xborder;  // top
+    data[3] = frame.yMax - content.yMax + xborder;  // bottom
+  }
+  xlib::XChangeProperty(c->window, ewmh_atom[_NET_FRAME_EXTENTS],
+                        XCB_ATOM_CARDINAL, 32, data, 4);
 }
 
 void ewmh_set_strut() {

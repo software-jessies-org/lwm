@@ -75,11 +75,11 @@ In our last discussion, you uncovered a bug introduced during the xlib->xcb tran
 
 ---
 
-## Not yet started
-
 We identified that lwm doesn't publish _NET_FRAME_EXTENTS. We should do that.
 
 ---
+
+## Not yet started
 
 I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
 

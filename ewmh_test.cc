@@ -7,6 +7,7 @@
 #include "client.h"
 #include "disp.h"
 #include "ewmh.h"
+#include "manage.h"
 #include "screen.h"
 #include "test.h"
 #include "wmtest.h"
@@ -380,4 +381,97 @@ TEST(Maximize, FullScreenWinsWhileItLasts) {
   sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_VERT]);
   sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_MAXIMIZED_HORZ]);
   EXPECT_EQ(c->ContentRect(), before);
+}
+
+// --- _NET_FRAME_EXTENTS -----------------------------------------------------
+//
+// Clients that care where their *frame* lands (Wine and Chromium both do) read
+// this rather than guessing at the decoration sizes.
+
+namespace {
+
+// The four numbers of _NET_FRAME_EXTENTS - left, right, top, bottom - as the
+// client reads them back. Returns an empty vector if the property is missing.
+std::vector<uint32_t> frameExtents(Client* c) {
+  const xlib::WindowProperty prop = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_FRAME_EXTENTS], 4, XCB_ATOM_CARDINAL);
+  return prop.ok() ? prop.Data32() : std::vector<uint32_t>();
+}
+
+// What the extents ought to be, read off the client's own geometry. The
+// property is worth nothing to a client if it doesn't agree with where lwm
+// actually puts the two windows. The frame's X border is added on each side
+// because it's drawn outside FrameRect - see ewmh_set_frame_extents.
+std::vector<uint32_t> extentsFromGeometry(Client* c) {
+  const Rect f = c->FrameRect();
+  const Rect r = c->ContentRect();
+  const int b = c->framed && !c->wstate.fullscreen ? kFrameBorderWidth : 0;
+  return {uint32_t(r.xMin - f.xMin + b), uint32_t(f.xMax - r.xMax + b),
+          uint32_t(r.yMin - f.yMin + b), uint32_t(f.yMax - r.yMax + b)};
+}
+
+// A window lwm won't frame: _NET_WM_WINDOW_TYPE_DOCK, as a panel would set.
+Client* mapDockWindow(wmtest::World& world, const Rect& rect) {
+  const Window w = world.server().AddClientWindow(rect);
+  world.server().SetProperty32(w, ewmh_atom[_NET_WM_WINDOW_TYPE], XCB_ATOM_ATOM,
+                               {ewmh_atom[_NET_WM_WINDOW_TYPE_DOCK]});
+  xcb_map_request_event_t ev{};
+  ev.response_type = XCB_MAP_REQUEST;
+  ev.parent = world.server().Root();
+  ev.window = w;
+  world.server().PushEvent(ev);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
+}
+
+}  // namespace
+
+TEST(FrameExtents, PublishedForAFramedWindow) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+
+  // The default border resource is 6 and the fake font's text height is 16, so
+  // the title bar is 22 - and every side gains the frame's own 1px X border.
+  const std::vector<uint32_t> expected = {7, 7, 23, 7};
+  EXPECT_EQ(frameExtents(c), expected);
+  EXPECT_EQ(frameExtents(c), extentsFromGeometry(c))
+      << "the published extents have to match where lwm really puts things";
+}
+
+TEST(FrameExtents, ZeroForAnUndecoratedWindow) {
+  wmtest::World world;
+  Client* c = mapDockWindow(world, Rect::FromXYWH(0, 0, 1280, 30));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  const std::vector<uint32_t> expected = {0, 0, 0, 0};
+  EXPECT_EQ(frameExtents(c), expected);
+}
+
+TEST(FrameExtents, ZeroWhileFullScreenAndBackAgainAfter) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+  const std::vector<uint32_t> framed = frameExtents(c);
+
+  sendStateMessage(&world, c, kAdd, ewmh_atom[_NET_WM_STATE_FULLSCREEN]);
+  const std::vector<uint32_t> zeroes = {0, 0, 0, 0};
+  EXPECT_EQ(frameExtents(c), zeroes)
+      << "a full-screen window has no furniture to make room for";
+
+  sendStateMessage(&world, c, kRemove, ewmh_atom[_NET_WM_STATE_FULLSCREEN]);
+  EXPECT_EQ(frameExtents(c), framed) << "and gets it back on the way out";
+}
+
+TEST(FrameExtents, ClearedWhenTheWindowIsWithdrawn) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 400, 300));
+  ASSERT_TRUE(c != nullptr);
+
+  withdraw(c);
+  const std::vector<uint32_t> zeroes = {0, 0, 0, 0};
+  EXPECT_EQ(frameExtents(c), zeroes)
+      << "a withdrawn window is no longer framed, so it mustn't keep stale "
+         "extents";
 }
