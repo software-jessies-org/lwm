@@ -1,9 +1,13 @@
-// Tests for Windows-key focus navigation, from the KeyPress event down to the
-// focus actually moving. navigate_test.cc covers the geometry these rest on;
-// what's tested here is the wiring - that lwm asks for the right keys, and
-// that a press picks the window the geometry says it should and focuses it.
+// Tests for the Windows-key arrow gestures, from the KeyPress event down to
+// the focus (or the window) actually moving. navigate_test.cc covers the
+// geometry these rest on; what's tested here is the wiring - that lwm asks
+// for the right keys, and that a press does the thing the geometry says it
+// should to the window it says it should.
 
+#include <algorithm>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include "client.h"
 #include "disp.h"
@@ -43,6 +47,23 @@ xcb_key_press_event_t keyEvent(uint8_t type, uint8_t keycode, uint16_t state) {
 void pressArrow(uint8_t keycode) {
   xcb_key_press_event_t e = keyEvent(XCB_KEY_PRESS, keycode, SUPER_MASK);
   DispatchXEvent((xcb_generic_event_t*)&e);
+}
+
+// Sends a Super+Shift+<arrow> press: the same gesture, but moving the window
+// rather than the focus.
+void pressShiftArrow(uint8_t keycode) {
+  xcb_key_press_event_t e =
+      keyEvent(XCB_KEY_PRESS, keycode, SUPER_MASK | XCB_MOD_MASK_SHIFT);
+  DispatchXEvent((xcb_generic_event_t*)&e);
+}
+
+// Where c's frame is in the root's stacking order, counting from the bottom.
+// lwm's own popup and menu windows are in there too, so only the order of the
+// frames relative to each other means anything.
+int stackIndex(wmtest::World& world, const Client* c) {
+  const std::vector<Window> stack = world.server().ChildrenOf(LScr::I->Root());
+  const auto it = std::find(stack.begin(), stack.end(), c->parent);
+  return it == stack.end() ? -1 : int(it - stack.begin());
 }
 
 std::string grabCall(uint8_t keycode, unsigned int modifiers) {
@@ -215,4 +236,202 @@ TEST(HandleKeyPress, NothingFocusedIsNotACrash) {
   xcb_key_press_event_t e = keyEvent(XCB_KEY_PRESS, kLeftKey, SUPER_MASK);
   EXPECT_TRUE(HandleKeyPress(&e));
   EXPECT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), nullptr);
+}
+
+TEST(GrabNavigationKeys, AsksForTheShiftedArrowsToo) {
+  wmtest::World world;
+  world.server().ClearCalls();
+  GrabNavigationKeys();
+  for (uint8_t keycode : {kLeftKey, kRightKey, kUpKey, kDownKey}) {
+    testing::Context ctx(std::to_string(keycode));
+    EXPECT_TRUE(
+        sawCall(world, grabCall(keycode, SUPER_MASK | XCB_MOD_MASK_SHIFT)));
+  }
+}
+
+TEST(HandleKeyPress, ShiftMovesTheWindowToTheEdgeOfItsMonitor) {
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(400, 400, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  Focuser* focuser = LScr::I->GetFocuser();
+  focuser->FocusClient(c);
+  const Rect screen = LScr::I->GetPrimaryVisibleArea(true);
+  const Area size = c->FrameRect().area();
+  const int yMin = c->FrameRect().yMin;
+
+  pressShiftArrow(kLeftKey);
+  EXPECT_EQ(c->FrameRect().xMin, screen.xMin);
+  EXPECT_EQ(c->FrameRect().yMin, yMin) << "moving left mustn't move it up";
+  EXPECT_EQ(c->FrameRect().area(), size) << "a move is not a resize";
+  EXPECT_EQ(focuser->GetFocusedClient(), c)
+      << "moving a window mustn't move the focus off it";
+
+  pressShiftArrow(kDownKey);
+  EXPECT_EQ(c->FrameRect().yMax, screen.yMax);
+  EXPECT_EQ(c->FrameRect().xMin, screen.xMin);
+}
+
+TEST(HandleKeyPress, ShiftMovesTheWindowAndNotTheOtherOne) {
+  // The gesture acts on the focused window; nothing else on screen moves.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(400, 400, 200, 200));
+  Client* other = world.MapClientWindow(Rect::FromXYWH(700, 400, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_TRUE(other != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+  const Rect before = other->FrameRect();
+
+  pressShiftArrow(kLeftKey);
+  EXPECT_EQ(other->FrameRect(), before);
+}
+
+TEST(HandleKeyPress, ShiftAtTheEdgeHandsTheWindowToTheNextMonitor) {
+  wmtest::World world;
+  // Two monitors side by side, as xrandr would report them.
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 640, 1024),
+                            Rect::FromXYWH(640, 0, 640, 1024)});
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 300, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+
+  pressShiftArrow(kRightKey);
+  EXPECT_EQ(c->FrameRect().xMax, 640) << "first press stops at the monitor's "
+                                         "edge";
+  pressShiftArrow(kRightKey);
+  EXPECT_EQ(c->FrameRect().xMin, 640) << "second press crosses the join, and "
+                                         "stops the other side of it";
+  pressShiftArrow(kRightKey);
+  EXPECT_EQ(c->FrameRect().xMax, 1280) << "third press crosses the new "
+                                          "monitor";
+  pressShiftArrow(kRightKey);
+  EXPECT_EQ(c->FrameRect().xMax, 1280) << "and there it stays: no third "
+                                          "monitor to go to";
+}
+
+TEST(HandleKeyPress, ShiftOntoASmallerMonitorShrinksTheWindow) {
+  wmtest::World world;
+  // A big monitor with a small one beside it.
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 900, 1000),
+                            Rect::FromXYWH(900, 0, 300, 300)});
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(20, 20, 700, 600));
+  ASSERT_TRUE(c != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+
+  pressShiftArrow(kRightKey);  // To the big monitor's right edge.
+  ASSERT_EQ(c->FrameRect().xMax, 900);
+  pressShiftArrow(kRightKey);  // And across to the small one.
+
+  const Rect got = c->FrameRect();
+  EXPECT_TRUE(got.width() <= 300) << "too wide for the monitor: " << got;
+  EXPECT_TRUE(got.height() <= 300) << "too tall for the monitor: " << got;
+  EXPECT_EQ(got.xMax, 1200);
+  EXPECT_EQ(got.yMin, 0);
+}
+
+TEST(HandleKeyPress, ShiftWithNothingFocusedIsNotACrash) {
+  wmtest::World world;
+  GrabNavigationKeys();
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), nullptr);
+  xcb_key_press_event_t e = keyEvent(XCB_KEY_PRESS, kLeftKey,
+                                     SUPER_MASK | XCB_MOD_MASK_SHIFT);
+  EXPECT_TRUE(HandleKeyPress(&e));
+}
+
+TEST(HandleKeyPress, ThePointerGoesWithTheWindow) {
+  // Without this the window slides out from under the pointer, and the
+  // EnterNotify on whatever was behind it takes the focus with it.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(400, 400, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+
+  const Rect before = c->FrameRect();
+  const Point p{before.xMin + before.width() / 4,
+                before.yMin + before.height() / 2};
+  world.server().SetMousePosition(p.x, p.y, 0);
+
+  pressShiftArrow(kLeftKey);
+
+  const Rect after = c->FrameRect();
+  const MousePos mp = getMousePosition();
+  EXPECT_TRUE(after.contains(mp.x, mp.y)) << "pointer at " << mp.x << ","
+                                          << mp.y << " left " << after;
+  // A plain move, so the pointer keeps its exact place on the window.
+  EXPECT_EQ(mp.x - after.xMin, p.x - before.xMin);
+  EXPECT_EQ(mp.y - after.yMin, p.y - before.yMin);
+}
+
+TEST(HandleKeyPress, ThePointerKeepsItsProportionalPlaceOnAShrunkWindow) {
+  wmtest::World world;
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 900, 1000),
+                            Rect::FromXYWH(900, 0, 300, 300)});
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(20, 20, 700, 600));
+  ASSERT_TRUE(c != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+
+  const Rect before = c->FrameRect();
+  // Three quarters of the way across, one quarter of the way down.
+  const Point p{before.xMin + before.width() * 3 / 4,
+                before.yMin + before.height() / 4};
+  world.server().SetMousePosition(p.x, p.y, 0);
+
+  pressShiftArrow(kRightKey);  // To the big monitor's edge.
+  pressShiftArrow(kRightKey);  // Across to the small one, shrinking to fit.
+
+  const Rect after = c->FrameRect();
+  ASSERT_TRUE(after.width() < before.width());
+  const MousePos mp = getMousePosition();
+  EXPECT_TRUE(after.contains(mp.x, mp.y)) << "pointer at " << mp.x << ","
+                                          << mp.y << " left " << after;
+  // Percentages, because the pixel it lands on depends on the rounding.
+  EXPECT_NEAR((mp.x - after.xMin) * 100 / after.width(), 75, 2);
+  EXPECT_NEAR((mp.y - after.yMin) * 100 / after.height(), 25, 2);
+}
+
+TEST(HandleKeyPress, APointerElsewhereIsLeftAlone) {
+  // Nothing has moved out from under it, so there's nothing to fix - and
+  // dragging the pointer across the screen after a window the user isn't
+  // pointing at would be worse than leaving it.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(400, 400, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+  world.server().SetMousePosition(5, 5, 0);
+  world.server().ClearCalls();
+
+  pressShiftArrow(kLeftKey);
+
+  const MousePos mp = getMousePosition();
+  EXPECT_EQ(mp.x, 5);
+  EXPECT_EQ(mp.y, 5);
+  EXPECT_TRUE(world.server().CallsMatching("WarpPointer(").empty());
+}
+
+TEST(HandleKeyPress, TheMovedWindowComesToTheFront) {
+  // The pointer is about to be put down inside the window's new position, so
+  // anything in front of it there would take the crossing event, and the
+  // focus with it.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(400, 400, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  // Mapped second, so it starts above the first.
+  Client* above = world.MapClientWindow(Rect::FromXYWH(100, 400, 200, 200));
+  ASSERT_TRUE(above != nullptr);
+  ASSERT_TRUE(stackIndex(world, c) < stackIndex(world, above));
+
+  Focuser* focuser = LScr::I->GetFocuser();
+  focuser->FocusClient(c);
+  pressShiftArrow(kLeftKey);
+
+  EXPECT_TRUE(stackIndex(world, c) > stackIndex(world, above))
+      << "the window being moved should have been raised";
+  EXPECT_EQ(focuser->GetFocusedClient(), c);
 }

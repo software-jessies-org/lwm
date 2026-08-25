@@ -1313,3 +1313,98 @@ TEST(MoveResize, ARequestIsIgnoredWhileTheUserIsAlreadyDragging) {
 
   releaseAt(world, c, Point{450, 400}, SUPER_MOVE_BUTTON);
 }
+
+namespace {
+
+// A big monitor with a small one to the right of it, sharing a top edge.
+const std::vector<Rect> kBigAndSmall = {
+    Rect::FromXYWH(0, 0, 900, 1000),
+    Rect::FromXYWH(900, 0, 300, 300),
+};
+
+// One motion event of a drag which is still in progress, so that a test can
+// watch what happens part way through rather than only at the release.
+void motionTo(wmtest::World& world,
+              const Client* c,
+              int button,
+              uint16_t modifiers,
+              Point to) {
+  world.server().SetMousePosition(to.x, to.y, modifiers | heldMask(button));
+  xcb_motion_notify_event_t motion{};
+  motion.response_type = XCB_MOTION_NOTIFY;
+  motion.event = c->window;
+  motion.root_x = to.x;
+  motion.root_y = to.y;
+  world.server().PushEvent(motion);
+  ProcessPendingEvents();
+}
+
+}  // namespace
+
+TEST(SuperGestures, DraggingOntoASmallerMonitorShrinksTheWindow) {
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kBigAndSmall);
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 600, 500));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_TRUE(c->FrameRect().width() > 300);
+  ASSERT_TRUE(c->FrameRect().height() > 300);
+
+  // Far enough right that the window is mostly on the small monitor, which is
+  // the point at which it becomes that monitor's problem.
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 750, from.y}, 60 * kSlowly);
+
+  // Too big for the small monitor on both axes, so both are cut down to it -
+  // and a window exactly the size of the monitor has nowhere to sit but on it.
+  EXPECT_EQ(c->FrameRect(), Rect::FromXYWH(900, 0, 300, 300));
+}
+
+TEST(SuperGestures, DraggingBackToTheBigMonitorRestoresTheSize) {
+  // The shrink follows from where the window is, not from a decision taken
+  // once: carry on dragging back to the monitor it came from, and it's the
+  // size it started at again.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kBigAndSmall);
+  const Rect start = Rect::FromXYWH(100, 100, 600, 500);
+  Client* c = world.MapClientWindow(start);
+  ASSERT_TRUE(c != nullptr);
+
+  const Point from = gridCell(c, 1, 1);
+  const uint32_t time = 61 * kSlowly;
+  world.server().SetMousePosition(from.x, from.y, SUPER_MASK);
+  world.server().PushEvent(buttonEvent(XCB_BUTTON_PRESS, c, SUPER_MOVE_BUTTON,
+                                       SUPER_MASK, from, time));
+  ProcessPendingEvents();
+
+  motionTo(world, c, SUPER_MOVE_BUTTON, SUPER_MASK,
+           Point{from.x + 750, from.y});
+  ASSERT_EQ(c->FrameRect(), Rect::FromXYWH(900, 0, 300, 300));
+
+  motionTo(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from);
+  world.server().SetMousePosition(from.x, from.y, SUPER_MASK);
+  world.server().PushEvent(buttonEvent(XCB_BUTTON_RELEASE, c,
+                                       SUPER_MOVE_BUTTON, SUPER_MASK, from,
+                                       time + 100));
+  ProcessPendingEvents();
+
+  EXPECT_EQ(c->ContentRect(), start);
+}
+
+TEST(SuperGestures, AWindowBiggerThanItsOwnMonitorIsNotShrunkByADrag) {
+  // The client asked to be wider than the screen and got it. Dragging it is
+  // not the moment to overrule that, so the drag is a plain move.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 900, 1000)});
+  const Rect start = Rect::FromXYWH(-200, 100, 1400, 600);
+  Client* c = world.MapClientWindow(start);
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_EQ(c->ContentRect(), start) << "the window should have been left the "
+                                        "size it asked for";
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 40, from.y + 25}, 62 * kSlowly);
+
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(start, Point{40, 25}));
+}

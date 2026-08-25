@@ -715,6 +715,16 @@ MousePos FakeServer::QueryPointer() {
   return mouse_;
 }
 
+void FakeServer::WarpPointer(Point to) {
+  // A real warp moves the pointer, so the next QueryPointer must agree with
+  // it; the modifier mask is the state of the buttons and keys, which a warp
+  // doesn't touch.
+  mouse_.x = to.x;
+  mouse_.y = to.y;
+  Record("WarpPointer() x=" + std::to_string(to.x) +
+         " y=" + std::to_string(to.y));
+}
+
 // ---------------------------------------------------------------------------
 // Properties and ICCCM hints.
 // ---------------------------------------------------------------------------

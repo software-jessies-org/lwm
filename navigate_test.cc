@@ -1,7 +1,10 @@
-// Tests for the pure part of keyboard focus navigation: which window an arrow
-// key picks. The grabs and the focus change built on this are in disp.cc.
+// Tests for the pure part of the arrow-key gestures: which window an arrow
+// key picks the focus up from, and where Shift+arrow puts a window. The grabs
+// and the focus change built on these are in keyboard.cc.
 
 #include "navigate.h"
+
+#include <vector>
 
 #include "test.h"
 
@@ -129,4 +132,177 @@ TEST(PickWindowInDirection, WindowsOnOtherMonitorsAreJustMoreCandidates) {
   EXPECT_EQ(PickWindowInDirection(kFrom, candidates, Direction::kRight), 1);
   // With the near one gone, focus crosses to the other monitor.
   EXPECT_EQ(PickWindowInDirection(kFrom, {candidates[0]}, Direction::kRight), 0);
+}
+
+namespace {
+
+// Two monitors side by side: a big one on the left, a smaller one on the
+// right whose top is level with it. Matching the common laptop-plus-external
+// arrangement, the right hand one is both narrower and shorter.
+const std::vector<Rect> kTwoMonitors = {
+    Rect::FromXYWH(0, 0, 1000, 800),
+    Rect::FromXYWH(1000, 0, 600, 500),
+};
+
+}  // namespace
+
+TEST(MoveRectInDirection, GoesToTheInnerEdgeOfItsOwnMonitor) {
+  const std::vector<Rect> areas = {Rect::FromXYWH(0, 0, 1000, 800)};
+  const Rect win = Rect::FromXYWH(400, 300, 200, 100);
+  struct TestCase {
+    const char* name;
+    Direction dir;
+    Rect want;
+  };
+  const TestCase cases[] = {
+      {"left", Direction::kLeft, Rect::FromXYWH(0, 300, 200, 100)},
+      {"right", Direction::kRight, Rect::FromXYWH(800, 300, 200, 100)},
+      {"up", Direction::kUp, Rect::FromXYWH(400, 0, 200, 100)},
+      {"down", Direction::kDown, Rect::FromXYWH(400, 700, 200, 100)},
+  };
+  for (const TestCase& tc : cases) {
+    testing::Context ctx(tc.name);
+    EXPECT_EQ(MoveRectInDirection(win, tc.dir, areas), tc.want);
+  }
+}
+
+TEST(MoveRectInDirection, MonitorEdgesAreNotTheScreenOrigin) {
+  // The monitor a window is on decides where it stops, not the desktop as a
+  // whole: a window on the right hand monitor moved left stops at that
+  // monitor's left edge.
+  const Rect win = Rect::FromXYWH(1200, 100, 200, 100);
+  EXPECT_EQ(MoveRectInDirection(win, Direction::kLeft, kTwoMonitors),
+            Rect::FromXYWH(1000, 100, 200, 100));
+}
+
+TEST(MoveRectInDirection, AlreadyAtTheEdgeMovesToTheNextMonitor) {
+  // Flush against the left monitor's right edge, so the next press hands it
+  // over - and it arrives just the other side of the join, against the right
+  // monitor's left edge, rather than jumping that monitor's whole width.
+  const Rect win = Rect::FromXYWH(800, 100, 200, 100);
+  const Rect crossed =
+      MoveRectInDirection(win, Direction::kRight, kTwoMonitors);
+  EXPECT_EQ(crossed, Rect::FromXYWH(1000, 100, 200, 100));
+  // Only then does it carry on to the far side of its new monitor.
+  EXPECT_EQ(MoveRectInDirection(crossed, Direction::kRight, kTwoMonitors),
+            Rect::FromXYWH(1400, 100, 200, 100));
+}
+
+TEST(MoveRectInDirection, AndBackAgain) {
+  // Each press undoes one press the other way, so a window walks back along
+  // the same three positions it walked out on.
+  const Rect win = Rect::FromXYWH(1400, 100, 200, 100);
+  const Rect once = MoveRectInDirection(win, Direction::kLeft, kTwoMonitors);
+  EXPECT_EQ(once, Rect::FromXYWH(1000, 100, 200, 100));
+  const Rect twice = MoveRectInDirection(once, Direction::kLeft, kTwoMonitors);
+  EXPECT_EQ(twice, Rect::FromXYWH(800, 100, 200, 100));
+  EXPECT_EQ(MoveRectInDirection(twice, Direction::kLeft, kTwoMonitors),
+            Rect::FromXYWH(0, 100, 200, 100));
+}
+
+TEST(MoveRectInDirection, NowhereToGoLeavesTheWindowAlone) {
+  const Rect win = Rect::FromXYWH(1400, 100, 200, 100);
+  EXPECT_EQ(MoveRectInDirection(win, Direction::kRight, kTwoMonitors), win);
+  // Nor is the monitor next door reachable by moving up or down: it's beside
+  // this one, not above or below it.
+  EXPECT_EQ(MoveRectInDirection(Rect::FromXYWH(1400, 0, 200, 100),
+                                Direction::kUp, kTwoMonitors),
+            Rect::FromXYWH(1400, 0, 200, 100));
+}
+
+TEST(MoveRectInDirection, NoMonitorsAtAllIsNotACrash) {
+  const Rect win = Rect::FromXYWH(100, 100, 200, 100);
+  EXPECT_EQ(MoveRectInDirection(win, Direction::kLeft, {}), win);
+}
+
+TEST(MoveRectInDirection, TooBigForTheNewMonitorShrinksToFit) {
+  // 900x700 fits the left monitor and nothing like fits the right one, so
+  // moving it across shrinks it on both axes.
+  const Rect win = Rect::FromXYWH(100, 50, 900, 700);
+  const Rect moved = MoveRectInDirection(win, Direction::kRight, kTwoMonitors);
+  EXPECT_EQ(moved, Rect::FromXYWH(1000, 0, 600, 500))
+      << "the window should fill the small monitor rather than hang off it";
+}
+
+TEST(MoveRectInDirection, ShrinkingOneAxisLeavesTheOtherAlone) {
+  // Short enough for the small monitor, too wide for it.
+  const Rect win = Rect::FromXYWH(100, 100, 900, 200);
+  EXPECT_EQ(MoveRectInDirection(win, Direction::kRight, kTwoMonitors),
+            Rect::FromXYWH(1000, 100, 600, 200));
+}
+
+TEST(MoveRectInDirection, ArrivalIsPulledOntoTheNewMonitor) {
+  // The window fits the small monitor, but sits below its bottom edge. Moving
+  // it across has to pull it up, or it would vanish into the dead space under
+  // the shorter screen.
+  const Rect win = Rect::FromXYWH(800, 600, 200, 100);
+  EXPECT_EQ(MoveRectInDirection(win, Direction::kRight, kTwoMonitors),
+            Rect::FromXYWH(1000, 400, 200, 100));
+}
+
+TEST(MoveRectInDirection, PicksTheNeighbourItSharesAnEdgeWith) {
+  // Three monitors: two stacked on the left, one on the right level with the
+  // lower of them. From the lower left monitor, "right" must mean the one
+  // beside it, even though the other is nearer the origin.
+  const std::vector<Rect> areas = {
+      Rect::FromXYWH(0, 0, 800, 400),      // 0: top left
+      Rect::FromXYWH(0, 400, 800, 400),    // 1: bottom left
+      Rect::FromXYWH(800, 400, 800, 400),  // 2: bottom right
+  };
+  const Rect win = Rect::FromXYWH(600, 500, 200, 100);
+  EXPECT_EQ(MoveRectInDirection(win, Direction::kRight, areas),
+            Rect::FromXYWH(800, 500, 200, 100));
+}
+
+TEST(MoveRectInDirection, VerticallyStackedMonitors) {
+  const std::vector<Rect> areas = {
+      Rect::FromXYWH(0, 0, 800, 400),
+      Rect::FromXYWH(0, 400, 800, 400),
+  };
+  // Already at the top of the lower monitor, so up means the one above it -
+  // arriving against its bottom edge, the one it just crossed.
+  const Rect win = Rect::FromXYWH(100, 400, 200, 100);
+  const Rect crossed = MoveRectInDirection(win, Direction::kUp, areas);
+  EXPECT_EQ(crossed, Rect::FromXYWH(100, 300, 200, 100));
+  EXPECT_EQ(MoveRectInDirection(crossed, Direction::kUp, areas),
+            Rect::FromXYWH(100, 0, 200, 100));
+}
+
+TEST(MapPointToMovedRect, APureMoveCarriesThePointWithIt) {
+  const Rect from = Rect::FromXYWH(100, 100, 200, 100);
+  const Rect to = Rect::FromXYWH(500, 700, 200, 100);
+  // Every corner and the middle, so a sign error can't hide.
+  EXPECT_EQ(MapPointToMovedRect(Point{100, 100}, from, to), (Point{500, 700}));
+  EXPECT_EQ(MapPointToMovedRect(Point{150, 120}, from, to), (Point{550, 720}));
+  EXPECT_EQ(MapPointToMovedRect(Point{299, 199}, from, to), (Point{699, 799}));
+}
+
+TEST(MapPointToMovedRect, AResizeKeepsThePointInProportion) {
+  // Half the width and half the height: a point 3/4 of the way across stays
+  // 3/4 of the way across.
+  const Rect from = Rect::FromXYWH(0, 0, 400, 200);
+  const Rect to = Rect::FromXYWH(1000, 500, 200, 100);
+  EXPECT_EQ(MapPointToMovedRect(Point{300, 100}, from, to),
+            (Point{1150, 550}));
+  EXPECT_EQ(MapPointToMovedRect(Point{0, 0}, from, to), (Point{1000, 500}));
+}
+
+TEST(MapPointToMovedRect, TheResultStaysInsideTheNewRect) {
+  // Whatever the shape change, a point inside `from` has to come out inside
+  // `to`: the whole purpose is to leave the pointer on the window.
+  const Rect from = Rect::FromXYWH(0, 0, 1000, 1000);
+  const Rect to = Rect::FromXYWH(50, 60, 37, 11);
+  for (int x : {0, 1, 500, 998, 999}) {
+    for (int y : {0, 1, 500, 998, 999}) {
+      testing::Context ctx(std::to_string(x) + "," + std::to_string(y));
+      const Point got = MapPointToMovedRect(Point{x, y}, from, to);
+      EXPECT_TRUE(to.contains(got.x, got.y)) << "landed at " << got;
+    }
+  }
+}
+
+TEST(MapPointToMovedRect, AnEmptyRectHasNoProportionsToKeep) {
+  const Rect from = Rect::FromXYWH(100, 100, 0, 0);
+  const Rect to = Rect::FromXYWH(500, 500, 200, 100);
+  EXPECT_EQ(MapPointToMovedRect(Point{100, 100}, from, to), (Point{500, 500}));
 }

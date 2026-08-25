@@ -131,6 +131,35 @@ focus from one screen to another.  Hidden windows are not included.  If there
 is no window in the direction pressed, the focus does not move.  Only the
 input focus changes: the window is not raised, and the pointer is not moved.
 .PP
+Adding Shift moves the focused window itself rather than the focus.  The
+window travels one step per press: the first takes it to the inner edge of the
+monitor it is on, on the side the arrow names, keeping its position on the
+other axis; once it is there, the next press hands it to the next monitor in
+that direction, where it arrives against that monitor's near edge - the one it
+has just crossed - so that it ends up beside where it was rather than jumping
+the width of the new monitor.  The press after that carries it across to the
+far side of its new monitor, and so on, so repeated presses walk a window
+across the desk and each press undoes one press the other way.  When there is
+no monitor that way, the window stays where it is.  A window which is
+maximised stops being so, exactly as if it had been dragged with the mouse.
+.PP
+A window moved this way is raised, and if the pointer was on it, the pointer
+travels with it and keeps its position on the window - proportionally, so that
+a window which shrinks on the way still has the pointer over the same part of
+itself.  Both of those exist to keep the focus where the user put it: with
+sloppy focus, a window sliding out from under the pointer would hand the focus
+to whatever was behind it, and a window arriving underneath another one would
+hand it to that.  A pointer which was not on the window in the first place is
+left alone.
+.PP
+A window too big for the monitor it arrives on is shrunk to fit it, on either
+axis or both.  The same happens to a window dragged with the mouse onto a
+monitor too small to hold it.  Nothing grows the window again afterwards,
+except that a window which is dragged onto a small monitor and then, without
+the button being released, back to the one it came from, gets its old size
+back.  A window which was already too big for the monitor it was on - because
+the application asked to be that big - is left at the size it chose.
+.PP
 It is possible to run commands when alt-clicking on a window's title bar.
 The configured command is run with the window id (in hex with 0x prefix)
 appended to it (separated by a space), so that the command run can be a script

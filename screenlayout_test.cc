@@ -1,5 +1,7 @@
 #include "screenlayout.h"
 
+#include <string>
+
 #include "strings.h"
 #include "test.h"
 
@@ -227,4 +229,64 @@ TEST(SnapToMonitor, IdenticalMonitorsSnapToTheOneTheWindowIsOn) {
 TEST(SnapToMonitor, NoMonitorsIsNotACrash) {
   const Rect asked = Rect::FromXYWH(10, 10, 100, 100);
   EXPECT_EQ(SnapToMonitor(asked, {}), asked);
+}
+
+namespace {
+
+// A big monitor with a small one to the right of it.
+const std::vector<Rect> kBigAndSmall = {
+    Rect::FromXYWH(0, 0, 1000, 800),
+    Rect::FromXYWH(1000, 0, 400, 300),
+};
+
+}  // namespace
+
+TEST(ShrinkToFitMonitor, WindowThatFitsIsUntouched) {
+  const Rect win = Rect::FromXYWH(100, 100, 200, 150);
+  EXPECT_EQ(ShrinkToFitMonitor(win, kBigAndSmall), win);
+}
+
+TEST(ShrinkToFitMonitor, WindowHangingOffTheEdgeStaysWhereItIs) {
+  // Dragging a window half off the side of the screen is allowed, and this
+  // must not undo it: only a window which can't fit is moved.
+  const Rect win = Rect::FromXYWH(-50, 700, 200, 150);
+  EXPECT_EQ(ShrinkToFitMonitor(win, kBigAndSmall), win);
+}
+
+TEST(ShrinkToFitMonitor, TooBigShrinksAndLandsOnTheMonitor) {
+  // 600x500 is more than the small monitor holds either way. Mostly on it, so
+  // that's the monitor it has to fit.
+  const Rect win = Rect::FromXYWH(1050, 20, 600, 500);
+  const Rect got = ShrinkToFitMonitor(win, kBigAndSmall);
+  EXPECT_EQ(got.area(), (Area{400, 300}));
+  EXPECT_EQ(got, Rect::FromXYWH(1000, 0, 400, 300));
+}
+
+TEST(ShrinkToFitMonitor, OnlyTheAxisThatCannotFitIsTouched) {
+  // Too wide for the small monitor, but short enough for it, and deliberately
+  // hanging off the bottom: the height and the y position both stay as they
+  // are.
+  const Rect win = Rect::FromXYWH(1050, 200, 600, 200);
+  const Rect got = ShrinkToFitMonitor(win, kBigAndSmall);
+  EXPECT_EQ(got.height(), 200);
+  EXPECT_EQ(got.yMin, 200);
+  EXPECT_EQ(got.width(), 400);
+}
+
+TEST(ShrinkToFitMonitor, AShrunkAxisIsFlushWithTheMonitor) {
+  // Too wide either way round: whether the window overhangs the small
+  // monitor's left edge or its right, the axis it had to shrink on ends up
+  // filling the monitor exactly, because that's the only place it fits.
+  for (int x : {900, 1100}) {
+    testing::Context ctx(std::to_string(x));
+    const Rect got =
+        ShrinkToFitMonitor(Rect::FromXYWH(x, 50, 500, 200), kBigAndSmall);
+    EXPECT_EQ(got.xMin, 1000);
+    EXPECT_EQ(got.xMax, 1400);
+  }
+}
+
+TEST(ShrinkToFitMonitor, NoMonitorsAtAllIsNotACrash) {
+  const Rect win = Rect::FromXYWH(100, 100, 200, 150);
+  EXPECT_EQ(ShrinkToFitMonitor(win, {}), win);
 }

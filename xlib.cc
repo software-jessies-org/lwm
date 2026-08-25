@@ -684,6 +684,13 @@ void XUngrabPointer(Time time) {
   server->UngrabPointer(time);
 }
 
+void XWarpPointer(Point to) {
+  // No LOGD here: the debug log is keyed to a window, and a warp names none.
+  // The caller which moves a window and takes the pointer with it logs both
+  // halves together, where the client is in hand.
+  server->WarpPointer(to);
+}
+
 // ---------------------------------------------------------------------------
 // Properties and ICCCM hints.
 // ---------------------------------------------------------------------------

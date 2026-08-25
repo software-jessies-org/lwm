@@ -59,7 +59,7 @@ bumps into the nearest window, or the edge of the monitor - and from the middle
 square, it expands all four edges at once. The middle button does the same, but
 ignores the other windows, so it fills the monitor the window is on.
 
-### Moving the input focus from the keyboard
+### Moving the focus, and moving windows, from the keyboard
 
 Holding the `Windows` key and pressing an arrow key moves the input focus to
 the next window in that direction. Windows are compared by their centres: the
@@ -72,6 +72,26 @@ windows are not; unhide them from the desktop menu first.
 
 This moves the focus only. It does not raise the window, or move the mouse
 pointer.
+
+Add `Shift` and the same arrows move the focused window instead. The first
+press puts it against the inner edge of its monitor on that side, keeping its
+position on the other axis; once it is there, the next press hands it to the
+next monitor that way, where it lands against the edge it has just crossed -
+just the other side of the join, rather than a whole monitor away. The press
+after that takes it across to the far side of its new monitor. Keep pressing
+and the window walks across your monitors, edge by edge, and each press undoes
+one press the other way.
+
+The window is raised as it moves, and if the pointer was on it, the pointer
+goes along for the ride, keeping its place on the window. Both of those are
+there to stop the focus getting away from you: with focus-follows-mouse, a
+window sliding out from under the pointer would otherwise hand the focus to
+whatever was behind it.
+
+If the window is too big for the monitor it arrives on, it is shrunk to fit -
+and the same happens if you drag a window onto a monitor too small for it with
+the mouse. Drag it back before you let go of the button and it returns to the
+size it was.
 
 ### Changing window stacking order
 

@@ -203,6 +203,12 @@ class Server {
   // from the coordinates in the most recent event.
   virtual MousePos QueryPointer() = 0;
 
+  // Moves the pointer to a position in root coordinates. Only the
+  // destination-only form of XCB's WarpPointer is exposed: lwm has no use for
+  // the source rectangle the protocol allows, which makes the warp
+  // conditional on where the pointer already is.
+  virtual void WarpPointer(Point to) = 0;
+
   // -------------------------------------------------------------------------
   // Properties and ICCCM hints.
   // -------------------------------------------------------------------------

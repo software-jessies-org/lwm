@@ -29,8 +29,9 @@ Notes-to-self for working on this codebase efficiently. Written for an agent
   registry), `Resources::I` (Xresources config). Nearly everything reaches them
   directly.
 * No virtual desktops, no compositing, no colourmaps — see
-  `../README.md` for the philosophy behind those omissions. The one keyboard
-  binding is Super+arrow, which moves the input focus between windows
+  `../README.md` for the philosophy behind those omissions. The only keyboard
+  bindings are Super+arrow, which moves the input focus between windows, and
+  Super+Shift+arrow, which moves the focused window between monitor edges
   (`keyboard.{h,cc}`); there is no general hotkey mechanism.
 * Feature requests and known bugs live in `../BUGS` (it's a TODO list, not just
   bugs). `../ChangeLog` is history.

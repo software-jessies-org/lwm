@@ -8,6 +8,7 @@
 #include "lwm.h"
 #include "resource.h"
 #include "screen.h"
+#include "screenlayout.h"
 #include "xlib.h"
 
 namespace {
@@ -121,7 +122,8 @@ class WindowMover : public WindowDragger {
   WindowMover(Client* c, unsigned int button_mask)
       : WindowDragger(c, button_mask),
         start_frame_rect_(c->FrameRect()),
-        start_content_rect_(c->ContentRect()) {}
+        start_content_rect_(c->ContentRect()),
+        fit_to_monitor_(fitsOnItsMonitor(c->FrameRect())) {}
 
   virtual void moveImpl(Client* c, int dx, int dy) {
     Rect r = Rect::Translate(start_frame_rect_, Point{dx, dy});
@@ -152,10 +154,42 @@ class WindowMover : public WindowDragger {
         dx -= getResistanceOffset(r.xMax - vis.xMax);  // Right.
       }
     }
-    c->MoveTo(Rect::Translate(start_content_rect_, Point{dx, dy}));
+    Rect frame = Rect::Translate(start_frame_rect_, Point{dx, dy});
+    if (fit_to_monitor_) {
+      // The window has been dragged somewhere; if that somewhere is a monitor
+      // too small to hold it, it shrinks to fit.
+      frame = ShrinkToFitMonitor(frame, LScr::I->VisibleAreas(true));
+    }
+    // Everything is measured from where the drag started rather than from
+    // where the window has got to, which is what lets a window that shrank on
+    // its way to a small monitor have its size back if the user drags it home
+    // again before letting go.
+    const Rect content =
+        (frame.area() == start_frame_rect_.area())
+            ? Rect::Translate(start_content_rect_, Point{dx, dy})
+            : (c->HasFurniture() ? Client::ContentFromFrameRect(frame) : frame);
+    if (content.area() == c->ContentRect().area()) {
+      c->MoveTo(content);
+    } else {
+      // As ever, the client has the last word on its own size.
+      c->MoveResizeTo(c->LimitResize(content));
+    }
   }
 
  private:
+  // Whether the window fitted on the monitor it started the drag on. If it
+  // didn't - a client which asked to be bigger than the screen, and got it -
+  // then shrinking it to fit as it's dragged would be lwm second-guessing a
+  // size the user never chose, so a drag leaves such a window's size alone.
+  static bool fitsOnItsMonitor(const Rect& frame) {
+    const std::vector<Rect> areas = LScr::I->VisibleAreas(true);
+    if (areas.empty()) {
+      return false;
+    }
+    const Rect mon = findBestScreenFor(frame, areas);
+    return frame.width() <= mon.width() && frame.height() <= mon.height();
+  }
+
   // The diff is expected to be the difference between a window position and
   // some barrier (eg edge of a screen). If that difference is within
   // 0..EDGE_RESIST, we return it; otherwise we return 0. This makes the code to
@@ -170,6 +204,7 @@ class WindowMover : public WindowDragger {
 
   const Rect start_frame_rect_;
   const Rect start_content_rect_;
+  const bool fit_to_monitor_;
 };
 
 // The Windows-key move gesture doubles as a click: a press which goes nowhere

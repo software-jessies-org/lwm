@@ -99,6 +99,20 @@ The mouse pointer is too small on my main monitor when lwm decides how it should
 
 ---
 
+## 2026-08-24
+
+I want you to make several window-moving changes:
+* Windows-shift-arrow should move the current window in that direction, to the inner edge of the monitor it's on in the direction of the arrow. If the window is already at the inner edge, it should be moved to the monitor to the left (in multi-monitor displays.
+* Dragging (or moving with windows-shift-arrow) a window into a monitor that is too small to take it should resize the window so it fits.
+
+---
+
+## 2026-08-25
+
+Continued discussion on ctrl+shift+windows moving windows across different monitors, to make it work more naturally.
+
+---
+
 ## Not yet started
 
 I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
@@ -110,6 +124,10 @@ In a previous discussion, you reported this:
 One unrelated thing I tripped over: running lwm -debugcli=... < /dev/null spins the event loop on stdin-at-EOF — it wrote 3.4 GB to stdout in about a minute and filled /tmp. It's pre-existing (the unpatched binary does it too) and only affects that invocation, so I left it alone, but you may want it fixed.
 
 Fix this.
+
+---
+
+**TBD** - Particularly when in a full-screen game, I need to have some mechanism by which I can move a non-maximised window to my secondary screen. Maybe using the unhide menu with some modifier (eg shift)? Or hovering over an unhide menu item and then using an arrow key to move the window?
 
 ---
 

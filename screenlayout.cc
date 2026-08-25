@@ -405,3 +405,25 @@ Rect makeVisible(Rect r, const std::vector<Rect>& areas) {
   }
   return Rect::Translate(r, translation);
 }
+
+// One axis of ShrinkToFitMonitor: given the window's span lo..hi and the
+// monitor's mLo..mHi, writes back the span the window should have. Does
+// nothing at all if it already fits, which is what keeps a window that's
+// merely hanging off the edge of a screen where the user put it.
+void shrinkAxisToFit(int* lo, int* hi, int mLo, int mHi) {
+  if (*hi - *lo <= mHi - mLo) {
+    return;
+  }
+  *lo = mLo;
+  *hi = mHi;
+}
+
+Rect ShrinkToFitMonitor(Rect r, const std::vector<Rect>& areas) {
+  if (areas.empty()) {
+    return r;
+  }
+  const Rect mon = findBestScreenFor(r, areas);
+  shrinkAxisToFit(&r.xMin, &r.xMax, mon.xMin, mon.xMax);
+  shrinkAxisToFit(&r.yMin, &r.yMax, mon.yMin, mon.yMax);
+  return r;
+}

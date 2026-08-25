@@ -40,6 +40,25 @@ Rect makeVisible(Rect r, const std::vector<Rect>& areas);
 // covering a monitor covers the panels too.
 Rect SnapToMonitor(const Rect& r, const std::vector<Rect>& areas);
 
+// Shrinks r, if it's too big for the monitor it's on (the one
+// findBestScreenFor picks), until it fits, and slides it onto that monitor on
+// whichever axis it had to shrink on. An axis which already fitted is left
+// exactly where it was, so a window may still be dragged half off the side of
+// a screen; only one which cannot fit gets touched.
+//
+// An axis that does shrink ends up exactly the monitor's size on that axis,
+// so there is nowhere left for it to sit but flush against that edge: a
+// window dragged onto a monitor too small for it snaps to the corner it can
+// fit in. Nothing here can keep it under the mouse pointer, because nothing
+// here has any freedom left to place it with.
+//
+// This is what happens when a window is dragged onto a monitor smaller than
+// it is. Note that it only ever shrinks: dragging the window back to the big
+// monitor doesn't grow it again, so callers which want that (the mover does)
+// must work from the size the window started the drag at rather than from
+// where it has got to.
+Rect ShrinkToFitMonitor(Rect r, const std::vector<Rect>& areas);
+
 // Remaps rect, which lived within the monitor layout oldVis, to its
 // equivalent position in the new layout newVis: preserving edge-attachment
 // (flush against a screen edge stays flush), height-maximisation, and

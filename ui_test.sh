@@ -293,6 +293,20 @@ super_arrow() {
   sleep 0.4
 }
 
+# super_shift_arrow <left|right|up|down> - a Super+Shift+arrow press, which
+# moves the focused window rather than the focus. Like super_arrow it leaves
+# the pointer alone: the window travels, the pointer doesn't.
+super_shift_arrow() {
+  xdotool key "super+shift+$1"
+  sleep 0.4
+}
+
+# pointer_position -> "x y", the pointer's position in root coordinates.
+pointer_position() {
+  xdotool getmouselocation --shell 2>/dev/null |
+    awk -F= '/^X=/ { x = $2 } /^Y=/ { y = $2 } END { print x, y }'
+}
+
 # focused_window -> the window id with the input focus, in hex, or "" if the
 # server says there isn't one. lwm focuses the client window itself, not the
 # frame, so this is comparable with a client id from start_client.
@@ -694,6 +708,112 @@ else
 
   xdotool mousemove 5 5
   kill "${NAV_PID}" >/dev/null 2>&1
+  sleep 0.5
+fi
+
+place "${CLIENT}" 400 400 200 200
+
+# --- moving windows from the keyboard ---------------------------------------
+#
+# Super+Shift+arrow moves the focused window itself: to the inner edge of its
+# monitor, and then on to the next monitor that way. The multi-monitor half
+# needs a multi-monitor desktop, which the debug CLI's fake xrandr provides -
+# Xvfb has one screen and no RandR outputs to reconfigure.
+#
+# The pointer stays parked on the root for the same reason as the section
+# above: nothing here should be able to move the focus but the keyboard.
+#
+# navigate_test.cc covers the geometry and keyboard_test.cc the wiring; what
+# only a real server can show is that the grab matches Super+Shift at all.
+
+start_client lwmtest4 '200x200+400+400'
+MOVE="${NEW_CLIENT}"
+MOVE_PID="${NEW_CLIENT_PID}"
+if [ -z "${MOVE}" ]; then
+  fail "fourth xlogo mapped and framed"
+else
+  pass "fourth xlogo mapped and framed"
+  MOVE_FRAME=$(frame_of "${MOVE}")
+  xdotool mousemove 5 5
+  place "${MOVE}" 400 400 200 200
+  read -r _ MY MW MH <<<"$(geom "${MOVE_FRAME}")"
+
+  # As in the section above, the window just mapped is the one lwm focused.
+  WANT=$(printf '0x%x' "${MOVE}")
+  check_eq "the newly mapped window has the focus, so it's the one that moves" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+
+  super_shift_arrow Left
+  check_eq "Super+Shift+Left puts the window against the left edge" \
+    "$(geom "${MOVE_FRAME}")" "0 ${MY} ${MW} ${MH}"
+  check_eq "and moving the window doesn't move the focus" \
+    "$(focused_window)" "${WANT}"
+
+  super_shift_arrow Left
+  check_eq "a second press leaves it there: no monitor further left" \
+    "$(geom "${MOVE_FRAME}")" "0 ${MY} ${MW} ${MH}"
+
+  super_shift_arrow Down
+  check_eq "Super+Shift+Down puts it against the bottom edge" \
+    "$(geom "${MOVE_FRAME}")" "0 $((SCREEN_H - MH)) ${MW} ${MH}"
+
+  # With the pointer on the window, it goes along for the ride - otherwise the
+  # window slides out from under it, and the enter event on whatever was
+  # behind takes the focus with it. The other window is parked exactly where
+  # this one is going, so this also shows the moved window arriving in front
+  # of it rather than under it.
+  place "${CLIENT}" 0 400 200 200
+  place "${MOVE}" 400 400 200 200
+  xdotool mousemove 500 500
+  sleep 0.4
+  super_shift_arrow Left
+  check_eq "the pointer goes with the window it was on" \
+    "$(pointer_position)" "100 500"
+  check "and the moved window arrives in front of the one already there" \
+    in_front "$(frame_of "${MOVE}")" "$(frame_of "${CLIENT}")"
+  check_eq "so the focus stays on the window that moved" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+  xdotool mousemove 5 5
+  sleep 0.4
+
+  # Two monitors: a tall one on the left, a small one to the right of it.
+  cli "xrandr 800x1024+0+0 480x400+800+0"
+  sleep 0.5
+  place "${MOVE}" 100 100 200 200
+  read -r _ _ MW MH <<<"$(geom "${MOVE_FRAME}")"
+
+  super_shift_arrow Right
+  check_eq "Super+Shift+Right stops at the inner edge of the first monitor" \
+    "$(geom "${MOVE_FRAME}")" "$((800 - MW)) 100 ${MW} ${MH}"
+
+  super_shift_arrow Right
+  check_eq "and the next press hands it to the monitor beside it" \
+    "$(geom "${MOVE_FRAME}")" "800 100 ${MW} ${MH}"
+
+  super_shift_arrow Right
+  check_eq "and the one after that crosses to that monitor's far edge" \
+    "$(geom "${MOVE_FRAME}")" "$((SCREEN_W - MW)) 100 ${MW} ${MH}"
+
+  # A window too big for the monitor it arrives on is cut down to it, and a
+  # window exactly the size of a monitor has nowhere to sit but on it.
+  place "${MOVE}" 100 100 600 600
+  super_shift_arrow Right
+  super_shift_arrow Right
+  check_eq "a window too big for the monitor it lands on is shrunk to fit" \
+    "$(geom "${MOVE_FRAME}")" "800 0 480 400"
+
+  # The same thing happens to a window dragged there with the mouse, which is
+  # the other half of the feature and the half a user is more likely to meet.
+  place "${MOVE}" 100 100 600 600
+  read -r DX DY <<<"$(cell "${MOVE}" 1 1)"
+  super_drag 1 "${DX}" "${DY}" 1050 200
+  check_eq "and to one dragged onto a monitor too small to take it" \
+    "$(geom "${MOVE_FRAME}")" "800 0 480 400"
+
+  cli "xrandr"
+  sleep 0.5
+  xdotool mousemove 5 5
+  kill "${MOVE_PID}" >/dev/null 2>&1
   sleep 0.5
 fi
 

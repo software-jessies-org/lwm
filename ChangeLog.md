@@ -1,107 +1,38 @@
 # Change Log for "lwm"
 
-## 2026-08-23 (pn, Basel)
+## 2026-08-24 (pn, Basel)
 
-The mouse pointer now comes from the user's cursor theme instead of the core
-X11 "cursor" font. That font is a fixed-size bitmap font from the 1980s: it
-exists at exactly one size, around 16 pixels, and nothing scales it, so lwm
-drew a tiny pointer over its own frames and the root window while every window
-belonging to a GTK, Qt or Java application showed the large themed one the
-toolkits load through libXcursor. On a high resolution display the difference
-was hard to miss.
-
-`CursorMap` now asks `xcb-cursor` - the XCB reimplementation of libXcursor -
-for each cursor by name, so the theme comes from `XCURSOR_THEME` or the
-`Xcursor.theme` resource and the size from `XCURSOR_SIZE`, `Xcursor.size`, or
-failing both a size derived from the screen height. lwm therefore matches
-whatever the rest of the desktop is doing without needing any setting of its
-own. The names used are the traditional X ones ("left_ptr", "fleur",
-"top_left_corner" and so on) rather than the newer freedesktop spellings,
-because themes reliably ship those, and because `xcb_cursor_load_cursor` knows
-how to fall back to the corresponding core font glyph for any name the theme
-turns out not to have.
-
-The cursor foreground and background colours are gone with the font: theme
-cursors are full-colour images and there is nothing to recolour.
+Windows-Shift-arrow now moves the focused window: first to the near edge of
+its monitor, then edge by edge across the monitors beyond it. Windows which
+don't fit the monitor they land on (or are dragged to) are shrunk to fit. The
+moved window is raised, and the pointer warped with it if it was on it.
 
 
 ## 2026-08-23 (pn, Basel)
 
-Added keyboard navigation of the input focus: holding the 'Windows' key
-(Super/Mod4) and pressing an arrow key moves the focus to the next window in
-that direction. Windows are compared by the centres of their frames, and the
-one chosen is the nearest whose centre lies in the quarter-plane cone which
-starts at the centre of the focused window and opens towards the arrow
-pressed - so the delta along the arrow's own axis has to have the right sign,
-and be at least as large as the delta along the other one. A window which is
-mostly above or below the focused one is therefore not selected by Left or
-Right however far to the side it also is, and a window exactly on the diagonal
-belongs to both of the cones which meet there, so no window is unreachable.
+Mouse pointers now come from the user's cursor theme via xcb-cursor, instead
+of the tiny fixed-size core X11 cursor font.
 
-Windows on other monitors are candidates too, which makes this the way to move
-the focus between screens; hidden and withdrawn windows are not. If there is
-no window in the direction pressed, the focus stays where it is. Only the
-focus moves: the window is not raised, and the pointer is not warped.
+Added the first key binding: Windows-arrow moves the input focus to the
+nearest window in that direction, across monitors too.
 
-This is lwm's first key binding, and the first passive grab it places on the
-root window rather than on a client. The grab is repeated under both lock
-modifiers, as the mouse gestures are, and is re-taken on MappingNotify, since
-a change of keyboard layout can move the keycode an arrow sits on.
+Added mouse gestures on the Windows key, acting on a window's own background:
+left-drag moves, middle-drag resizes the nearest edge or corner, double click
+expands (and expands again to un-expand), right click hides, left click
+raises. Nothing expands across a monitor boundary.
 
+Windows-Control-left-click toggles a window's title bar and borders on and
+off, keeping its outer size. Removing the furniture no longer reparents the
+window to the root, which was upsetting Java clients.
 
-Added mouse gestures on the 'Windows' key (Super/Mod4), which act on a
-window's own background rather than on its frame: left-drag moves, middle-drag
-resizes the edge or corner picked out by a 3x3 grid over the window, and a
-double click expands that edge (all four, from the middle of the grid) up to
-the nearest window or the edge of the monitor - or, on the middle button,
-straight to the monitor, ignoring other windows. Multi-monitor xrandr layouts
-are respected: nothing expands across a monitor boundary.
+Hiding an undecorated window now works, and undecorated windows appear in the
+unhide menu.
 
-The double click in the middle of a window is a toggle: once the window has
-nowhere left to grow, the same gesture shrinks it back to the size it had
-before it was expanded, and a window which is maximised because it asked to be
-is un-maximised. A window with no earlier size on record is left where it is.
+lwm now publishes `_NET_FRAME_EXTENTS`, which Wine, GTK and Chromium read to
+find out how much space the furniture takes.
 
-Super+Control+left click on a client window turns lwm's window furniture on or
-off for it. The window's outer extent is preserved, so a window which loses
-its title bar and borders grows into the space they were using, and one which
-gains them shrinks to make room; nothing else on the desktop moves. This works
-in both directions on any ordinary window, including ones lwm chose not to
-decorate because the client said it draws its own title bar. Full-screen
-windows, and window types which never get furniture in the first place, are
-left alone. Turning the furniture off and on again puts the window back at
-exactly the size it started at, even for a client like xterm which only
-resizes in whole character cells.
-
-Taking a window's furniture away no longer moves the window out of its frame:
-the frame stays, shrunk to the size of the window inside it, so nothing of it
-shows. Moving a window out to the root is how a window manager announces that
-it has stopped managing that window, and clients which believe it stop
-trusting the geometry they're given afterwards. Java applications were the
-visible casualty: instead of growing into the space the title bar had been
-using, they kept their old size and slid up and to the left into it.
-
-Super+right click anywhere within the client window hides the window.
-
-Super+left click on the client window raises the window.
-
-Fixed a bug where a restart of lwm made gummiband's closed drop-down menu
-reappear.
-
-Fixed a pile of bugs related to steam games.
-
-Hiding an undecorated window now works. Hiding used to unmap the frame and let
-the client window inside it go too, which for a window with no frame meant
-asking the server to unmap the root - which it ignores, leaving the window on
-screen, marked hidden, and unreachable from the unhide menu. Undecorated
-windows also appear in the unhide menu now, alongside the decorated ones.
-
-lwm now publishes `_NET_FRAME_EXTENTS` on every window it manages, and
-advertises it in `_NET_SUPPORTED`. This is how a client finds out how much
-space the title bar and borders take up around it; Wine, GTK and Chromium all
-read it, and without it they have to assume zero and end up a title bar out
-when they position or size themselves. Undecorated and full-screen windows
-report zeroes, as they should.
+Fixed a pile of bugs related to steam games, and a bug where restarting lwm
+made gummiband's closed drop-down menu reappear.
 
 
 ## 2026-08-22 (pn, Basel)

@@ -264,6 +264,7 @@ class FakeServer : public Server {
                   Time time) override;
   void UngrabPointer(Time time) override;
   MousePos QueryPointer() override;
+  void WarpPointer(Point to) override;
 
   std::vector<Atom> InternAtoms(const std::vector<std::string>& names) override;
   void ChangeProperty(Window w,

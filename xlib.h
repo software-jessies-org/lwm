@@ -456,6 +456,11 @@ extern bool XGrabPointer(Window grab_window,
                          Time time);
 extern void XUngrabPointer(Time time);
 
+// Moves the pointer to the given position in root coordinates. The server
+// reports the move as if the user had made it: crossing events are generated
+// for the windows left and entered, and nothing marks them as lwm's doing.
+extern void XWarpPointer(Point to);
+
 // ---------------------------------------------------------------------------
 // Properties and ICCCM hints.
 // ---------------------------------------------------------------------------

@@ -38,4 +38,43 @@ int PickWindowInDirection(const Rect& from,
                           const std::vector<Rect>& candidates,
                           Direction dir);
 
+// Returns the rectangle a window occupying `frame` should be given when the
+// user asks for it to be moved in dir (Super+Shift+arrow). `areas` is the
+// monitor layout, with struts subtracted: a window moved to the inner edge of
+// its monitor should stop at a panel, not slide under one.
+//
+// The window travels one step at a time. The first step takes it to the inner
+// edge of the monitor it's on - flush against that monitor's edge on the side
+// dir names, keeping its position on the other axis. Once it's there, the
+// next step hands it to the next monitor that way, where it lands against
+// that monitor's *near* edge: the one it has just crossed, so that it ends up
+// beside where it was rather than jumping the width of the new monitor in one
+// go. The step after that takes it across to the far side of its new monitor,
+// and so on, so repeating the gesture walks a window across the desk edge by
+// edge rather than shuffling it about within one screen.
+//
+// A window too big for the monitor it lands on is shrunk to fit it, on either
+// axis or both. That only happens on arrival: nothing here grows a window
+// which has been shrunk, so a trip to a small monitor and back leaves the
+// window the size the small monitor allowed.
+//
+// Returns `frame` unchanged when there's nowhere to go: no monitors at all,
+// or the window is already at the edge of the last monitor in that direction.
+Rect MoveRectInDirection(const Rect& frame,
+                         Direction dir,
+                         const std::vector<Rect>& areas);
+
+// Where a point which was at p within the rectangle `from` should be once
+// that rectangle has become `to`. Used to carry the mouse pointer along with
+// a window moved by MoveRectInDirection: it keeps its place on the window,
+// proportionally, so that a window which shrank on its way to a smaller
+// monitor still has the pointer over the same part of itself.
+//
+// Rounding means "the same rough position", not the same pixel: a window
+// which is moved and moved back can leave the pointer a pixel from where it
+// started. An empty `from` (a zero-width or zero-height rectangle, which no
+// real window has) has no proportions to preserve, so the point comes back at
+// the corresponding corner of `to`.
+Point MapPointToMovedRect(Point p, const Rect& from, const Rect& to);
+
 #endif

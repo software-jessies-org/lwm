@@ -87,8 +87,9 @@ not a replacement for manual Xephyr testing of new behaviour.
 The mouse gestures, driven with `xdotool` under the same headless `Xvfb`
 arrangement as the smoke test: Windows-key drags to move and resize, double
 clicks to expand a window up to its neighbours or its monitor, clicks to raise
-or hide it, the Super+Control click that turns its furniture on and off, and
-Super+arrow to move the input focus between windows.
+or hide it, the Super+Control click that turns its furniture on and off,
+Super+arrow to move the input focus between windows, and Super+Shift+arrow to
+move a window between monitor edges.
 These need a real server - the passive grabs, the modifier bits in the
 `ButtonPress` and the pointer grab that keeps a drag alive are all things
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
@@ -102,6 +103,14 @@ which lands in the middle of whatever check is running. Keyboard-driven focus
 has no such delay, so with the pointer out of the way the section is
 deterministic. Don't reintroduce a pointer-based way of deciding which window
 starts with the focus: use the fact that lwm focuses a window as it maps it.
+
+The window-moving section is the exception to the pointer-parking rule above:
+one check deliberately puts the pointer on the window before moving it, since
+carrying the pointer along is half of what that gesture does. It fakes a
+two-monitor desktop through the debug CLI's `xrandr` command — Xvfb has one screen and no RandR outputs to reconfigure —
+and puts it back to one screen afterwards. That's also what makes it the only
+place the shrink-onto-a-smaller-monitor behaviour can be seen end to end, both
+from the keyboard and from a drag.
 
 The decorations section is the one that most needs a real server: the client
 window is reparented out of its frame and back in again, and what that costs

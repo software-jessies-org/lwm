@@ -105,7 +105,7 @@ The interesting handlers:
   is `Client::GrabSuperButtons` — see below.
 * `EvEnterNotify` → `Focuser::EnterWindow` (sloppy focus) plus cursor reset.
 * `EvKeyPress` → `HandleKeyPress` (in `keyboard.cc`). The only keys lwm grabs
-  are Super+arrow; see below.
+  are Super+arrow and Super+Shift+arrow; see below.
 * `EvMappingNotify` → `GrabNavigationKeys`, because a keymap change can move
   the keycode an arrow sits on out from under the grab.
 * `EvPropertyNotify` — name, visible name, transient-for, strut, `_NET_WM_STATE`
@@ -134,14 +134,19 @@ Three things about that grab are easy to get wrong:
 * Both grabs are asynchronous. lwm swallows these clicks and never replays
   them, so there's nothing to hold the pointer or keyboard frozen for.
 
-## Keyboard focus navigation
+## Keyboard focus navigation, and moving windows
 
 Super plus an arrow key moves the input focus to the next window in that
-direction. It is the only keyboard binding lwm has, and the only passive grab
-that isn't on a client window: `GrabNavigationKeys` (`keyboard.cc`) puts it on
-the **root**, so it works over the desktop and whatever holds the focus. As
-with the mouse gestures, X matches modifiers exactly, so each key is grabbed
-once per combination of the two lock modifiers.
+direction; adding Shift moves the focused window itself instead. They are the
+only keyboard bindings lwm has, and the only passive grabs that aren't on a
+client window: `GrabNavigationKeys` (`keyboard.cc`) puts them on the **root**,
+so they work over the desktop and whatever holds the focus. As with the mouse
+gestures, X matches modifiers exactly, so each key is grabbed once per
+combination of the two lock modifiers — and now once per modifier set as well,
+Super and Super+Shift, which is the eight grabs per arrow that follows from
+those two lists. Since a passive grab matches exactly, the Shift bit in the
+event state is all `HandleKeyPress` has to look at to tell the two gestures
+apart.
 
 Two things differ from the mouse side:
 
@@ -160,6 +165,53 @@ inside the quarter-plane cone opening from the focused window towards the
 arrow. `keyboard.cc` supplies the candidates - every client that isn't hidden
 or withdrawn, on every monitor - and hands the winner to `Focuser::FocusClient`.
 Nothing is raised and the pointer isn't moved.
+
+Where a *window* goes is the other pure function in the same file,
+`MoveRectInDirection`: to the inner edge of its own monitor first, and only
+once it's already there to the next monitor that way, arriving against that
+monitor's *near* edge - the one just crossed, which is `placeAgainstEdge` in
+the opposite direction - so that the window lands beside where it was and the
+gesture stays reversible press for press. The four directions share one implementation by
+packing a rect into the pair of coordinates along the direction's axis and the
+pair across it, in the same spirit as the cone test above. `keyboard.cc` turns
+the answer back into a content rect (`ContentFromFrameRect`, if the window has
+furniture), drops the maximisation the way a mouse drag does, and lets the
+client have the last word on its size through `LimitResize`.
+
+Two things go with the move, and both are about not losing the focus. The
+window is **raised**, and if the pointer was inside it the pointer is
+**warped** to the same place on the window afterwards (`MapPointToMovedRect`,
+proportional so that a window which shrank still has the pointer over the same
+part of itself; `xlib::XWarpPointer` is the request, added to the `Server`
+seam for this). Under the default sloppy focus a window sliding out from under
+the pointer would give the focus to whatever was behind it, and a window
+arriving *underneath* another one would give it to that — hence both. A
+pointer which wasn't on the window is left where it is: nothing has moved out
+from under it, and hauling it across the screen after a window the user isn't
+pointing at would be worse than doing nothing. The order matters: raise, move,
+then warp, so that the pointer is only ever put down on a window which is
+already in place and already in front.
+
+## Windows that don't fit the monitor they're moved to
+
+A window which arrives on a monitor too small to hold it is shrunk until it
+fits, whether it got there by Super+Shift+arrow or by being dragged. For the
+keyboard the shrink is part of `MoveRectInDirection`; for the mouse it's
+`ShrinkToFitMonitor` (`screenlayout.cc`), applied by `WindowMover` on every
+motion event. An axis which does shrink ends up exactly the monitor's size and
+so has nowhere to sit but flush against that edge; an axis which already
+fitted isn't touched, which is what still allows a window to be dragged half
+off the side of a screen.
+
+`WindowMover` decides once, at the start of the drag, whether to do this at
+all: a window which was *already* too big for the monitor it was on kept the
+size the application asked for, and a drag isn't the moment to overrule that.
+Everything else it computes is measured from the geometry the drag started
+with rather than from where the window has got to, which is what lets a window
+that shrank on its way to a small monitor get its old size back if it's
+dragged home before the button is released — and it's why the move sometimes
+has to go through `MoveResizeTo` rather than `MoveTo`, which insists the size
+is unchanged.
 
 The gestures themselves reuse the existing `WindowMover`/`WindowResizer` (the
 button held is now a constructor argument, rather than always being

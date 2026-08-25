@@ -424,6 +424,10 @@ class RealServer : public Server {
 
   void UngrabPointer(Time time) override { xcb_ungrab_pointer(conn, time); }
 
+  void WarpPointer(Point to) override {
+    xcb_warp_pointer(conn, XCB_NONE, Root(), 0, 0, 0, 0, to.x, to.y);
+  }
+
   MousePos QueryPointer() override {
     MousePos res;
     memset(&res, 0, sizeof(res));
