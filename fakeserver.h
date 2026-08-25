@@ -154,6 +154,21 @@ class FakeServer : public Server {
   Window FocusedWindow() const { return focused_; }
   std::vector<Window> ChildrenOf(Window w);
 
+  // ---------------------------------------------------------------------
+  // Pixmaps.
+  // ---------------------------------------------------------------------
+
+  // Creates a pixmap holding the given pixels, as an application does for the
+  // icon it hands us in WM_HINTS. Pass a non-zero id to make the pixmap take
+  // that particular ID: that's what a real server does once an ID has been
+  // freed and its range handed out again to a later client, and it's how the
+  // icon cache's key handling gets tested.
+  Pixmap CreatePixmapWithPixels(int width,
+                                int height,
+                                int depth,
+                                const std::vector<uint32_t>& pixels,
+                                Pixmap id = 0);
+
   // The atom an interned name was given, interning it if need be, and the
   // name an atom was interned under. Tests need both: the code under test
   // names properties by atom, and the log names them by number.
@@ -322,7 +337,16 @@ class FakeServer : public Server {
   void Restack(FakeWindow* win, uint32_t stack_mode, Window sibling);
   void Unlink(FakeWindow* win);
 
+  // A pixmap's contents, so that icon rendering can be driven from a test.
+  struct FakePixmap {
+    int width = 0;
+    int height = 0;
+    int depth = 0;
+    std::vector<uint32_t> pixels;
+  };
+
   std::map<Window, FakeWindow> windows_;
+  std::map<Pixmap, FakePixmap> pixmaps_;
   std::map<std::string, Atom> atoms_;
   std::map<Atom, std::string> atom_names_;
   std::deque<xcb_generic_event_t*> events_;

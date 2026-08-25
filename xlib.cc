@@ -902,12 +902,11 @@ static std::map<unsigned long, ImageIcon*>* image_icon_cache;
 // cause the refcount to be increased.
 // When an image is cloned, an internal variable is set (gc_hash_), which causes
 // the removeCacheRef function to be called when that ImageIcon is destroyed.
-// Note (particularly for testing) that windows which specify a pixmap directly
-// typically don't trigger the caching behaviour, as each window has its own
-// copy of the pixmap. To definitely test the reference counting, use Chrome
-// or Firefox, both of which have their icons as a bunch of pixels embedded in
-// the _NET_WM_ICON property. As we calculate the hash based on the pixel data,
-// this triggers reuse of scaled images.
+// Both kinds of icon are keyed on the pixels themselves, so two windows showing
+// the same picture share one entry whether they gave us a pixmap each or a copy
+// of the same _NET_WM_ICON. Nothing here may be keyed on a resource ID: X11
+// hands the IDs of a departed client out again to a later one, and an entry
+// left behind under such an ID gives the newcomer somebody else's icon.
 static std::map<unsigned long, int>* image_cache_refcounts;
 
 static ImageIcon* fromCache(unsigned long hash) {
@@ -921,9 +920,22 @@ static ImageIcon* fromCache(unsigned long hash) {
   return it->second;
 }
 
+static void addCacheRef(unsigned long hash) {
+  if (image_cache_refcounts) {
+    (*image_cache_refcounts)[hash]++;
+  }
+}
+
 static void removeCacheRef(unsigned long hash) {
-  const int remainingRefs = --((*image_cache_refcounts)[hash]);
-  if (remainingRefs == 0) {
+  if (!image_cache_refcounts) {
+    return;
+  }
+  auto it = image_cache_refcounts->find(hash);
+  if (it == image_cache_refcounts->end()) {
+    return;
+  }
+  const int remainingRefs = --(it->second);
+  if (remainingRefs <= 0) {
     ImageIcon* icon = (*image_icon_cache)[hash];
     image_icon_cache->erase(hash);
     image_cache_refcounts->erase(hash);
@@ -941,18 +953,21 @@ static void toCache(unsigned long hash, ImageIcon* icon) {
   // Don't add a refcount here; instead we increment refcounts only on clone.
 }
 
-static unsigned long hashData(const uint32_t* data, size_t len) {
+// Both icon sources share one cache, so each salts its hash to keep the two
+// key spaces apart: the same bytes mean different things to each of them.
+static const unsigned long kPixelIconSalt = 0x9e3779b97f4a7c15UL;
+static const unsigned long kPixmapIconSalt = 0xc2b2ae3d27d4eb4fUL;
+
+static unsigned long hashBytes(const void* data, size_t len,
+                               unsigned long salt) {
   // For simplicity, coerce the data into a string, and then hash it.
-  std::string s((const char*)data, len * sizeof(uint32_t));
+  std::string s((const char*)data, len);
   std::hash<std::string> h;
-  return h(s);
+  return h(s) ^ salt;
 }
 
-static unsigned long hashPixmaps(Pixmap img, Pixmap mask) {
-  // Assuming the same image and mask are used together (which is probably a
-  // safe assumption), we can just use the img as the hash.
-  mask = mask;
-  return (unsigned long)img;
+static unsigned long hashData(const uint32_t* data, size_t len) {
+  return hashBytes(data, len * sizeof(uint32_t), kPixelIconSalt);
 }
 
 // Image is a plain 32-bit-per-pixel buffer, which is all lwm's icon handling
@@ -990,6 +1005,25 @@ static Image getImage(Pixmap src, int width, int height, int depth) {
   }
   return img;
 }
+
+// hashImage hashes the *contents* of an icon pixmap (and of its mask, if it
+// has one).
+// It's tempting to use the pixmap's ID as the key instead, and that's what we
+// used to do, but X11 recycles resource IDs: once an application exits, the
+// IDs it owned can be handed out again to a later one. The cache would then
+// answer with the previous owner's icon, and you'd see one application wearing
+// another's icon in its title bar.
+static unsigned long hashImage(const Image& img, const Image* mask) {
+  std::string s;
+  const int dimensions[2] = {img.width(), img.height()};
+  s.append((const char*)dimensions, sizeof(dimensions));
+  s.append((const char*)img.data(), img.byte_size());
+  if (mask) {
+    s.append((const char*)mask->data(), mask->byte_size());
+  }
+  return hashBytes(s.data(), s.size(), kPixmapIconSalt);
+}
+
 // copyWithScaling scales down the contents of src into dest.
 // The src image *must* be at least as large as the dest image.
 // This function applies some very simple anti-aliasing. It could be improved
@@ -1119,6 +1153,7 @@ ImageIcon* ImageIcon::clone(unsigned long hash) {
   ImageIcon* res = new ImageIcon(active_img_, inactive_img_, menu_img_, img_w_,
                                  img_h_, depth_);
   res->gc_hash_ = hash;
+  addCacheRef(hash);
   return res;
 }
 
@@ -1133,12 +1168,6 @@ ImageIcon* ImageIcon::Create(Pixmap img, Pixmap mask) {
   if (!img) {
     return nullptr;
   }
-  const unsigned long pm_hash = hashPixmaps(img, mask);
-  ImageIcon* result = fromCache(pm_hash);
-  if (result) {
-    return result->clone(pm_hash);
-  }
-
   const WindowGeometry geom = XGetGeometry(img);
   // Not going to bother trying to paint stuff that's not colourful enough.
   if (!geom.ok || geom.bpp != 24) {
@@ -1157,6 +1186,15 @@ ImageIcon* ImageIcon::Create(Pixmap img, Pixmap mask) {
   Image mask_img(1, 1);
   if (mask) {
     mask_img = getImage(mask, geom.rect.width(), geom.rect.height(), 1);
+  }
+
+  // The pixels have to be fetched before we can look in the cache, because the
+  // pixels are what the cache is keyed on. That leaves the cache saving us the
+  // scaling and the three server-side pixmaps, but not the round trip.
+  const unsigned long pm_hash = hashImage(orig_img, mask ? &mask_img : nullptr);
+  ImageIcon* result = fromCache(pm_hash);
+  if (result) {
+    return result->clone(pm_hash);
   }
 
   // src_img will be filled in with the data from orig_img, but with the mask

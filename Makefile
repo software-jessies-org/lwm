@@ -64,6 +64,7 @@ SRCS = \
 	gesture.cc \
 	gesture_test.cc \
 	hider.cc \
+	icon_test.cc \
 	keyboard.cc \
 	keyboard_test.cc \
 	log.cc \

@@ -113,11 +113,11 @@ Continued discussion on ctrl+shift+windows moving windows across different monit
 
 ---
 
-## Not yet started
-
-I spotted a bug whereby one application can end up with the application icon of another. Figure out how this might happen, and fix it.
+I spotted a bug whereby one application can end up with the application icon of another in its title bar display. Figure out how this might happen, and fix it. I don't know what exact steps are needed to reproduce it.
 
 ---
+
+## Not yet started
 
 In a previous discussion, you reported this:
 
@@ -127,7 +127,7 @@ Fix this.
 
 ---
 
-**TBD** - Particularly when in a full-screen game, I need to have some mechanism by which I can move a non-maximised window to my secondary screen. Maybe using the unhide menu with some modifier (eg shift)? Or hovering over an unhide menu item and then using an arrow key to move the window?
+Change the way Windows-arrow works such that the mouse pointer also warps to the window that receives input focus. Place the mouse pointer in the middle of the largest contiguous visible rectangle, taking into account occlusion by other windows.
 
 ---
 

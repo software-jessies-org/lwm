@@ -1,5 +1,10 @@
 # Change Log for "lwm"
 
+## 2026-08-25 (pn, Basel)
+
+Fixed windows showing another application's icon in their title bar.
+
+
 ## 2026-08-24 (pn, Basel)
 
 Windows-Shift-arrow now moves the focused window: first to the near edge of

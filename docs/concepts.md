@@ -401,7 +401,14 @@ compositing against the final background at creation time avoids per-paint alpha
 work. Scaled down only, with simple box-filter anti-aliasing
 (`copyWithScaling`); channels are averaged separately to avoid colour bleed.
 Cached by content hash with refcounts — `ImageIcon::Create*` returns a `clone()`,
-and the last clone destroyed frees the pixmaps. 24bpp only.
+and the last clone destroyed frees the pixmaps. The hash is over the pixels (for
+`WM_HINTS` icons, that means reading the pixmap back off the server before the
+cache can be consulted) and never over the pixmap ID: X11 recycles resource IDs
+once their client has gone, so an ID-keyed entry eventually hands the next
+application to be given that ID the previous owner's icon. `Client::SetIcon`
+releases the icon it replaces, which matters because `manage()` sets both the
+`WM_HINTS` and the `_NET_WM_ICON` one for a window carrying both. 24bpp only.
+Tested in `icon_test.cc`, against a `FakeServer` that stores pixmap contents.
 
 ## Naming
 

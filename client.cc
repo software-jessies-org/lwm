@@ -138,9 +138,15 @@ Edge Client::EdgeAt(Window w, int x, int y) const {
 }
 
 void Client::SetIcon(xlib::ImageIcon* icon) {
-  if (icon) {
-    icon_ = icon;
+  if (!icon || icon == icon_) {
+    return;
   }
+  // Each ImageIcon we're handed is a reference into the shared icon cache, so
+  // the one we're replacing has to be released. manage() sets the icon twice
+  // for any window carrying both a WM_HINTS icon and a _NET_WM_ICON, and
+  // dropping the first on the floor used to pin its cache entry forever.
+  delete icon_;
+  icon_ = icon;
 }
 
 // The lock modifiers a passive grab has to be repeated under. X matches a

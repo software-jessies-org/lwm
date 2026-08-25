@@ -298,6 +298,7 @@ class Client {
 
   // SetIcon sets the window's title bar icon. If called with null, it will do
   // nothing (and leave any previously-set icon in place).
+  // Takes ownership of the icon, and releases any icon it replaces.
   void SetIcon(xlib::ImageIcon* icon);
   xlib::ImageIcon* Icon() { return icon_; }
 

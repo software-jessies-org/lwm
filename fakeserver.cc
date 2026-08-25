@@ -508,6 +508,15 @@ WindowGeometry FakeServer::GetGeometry(Window w) {
   WindowGeometry res{};
   FakeWindow* win = Get(w);
   if (!win) {
+    // Pixmaps have a geometry too, and the icon code asks for it.
+    auto it = pixmaps_.find(w);
+    if (it == pixmaps_.end()) {
+      return res;
+    }
+    res.ok = true;
+    res.root = root_;
+    res.rect = Rect::FromXYWH(0, 0, it->second.width, it->second.height);
+    res.bpp = it->second.depth;
     return res;
   }
   res.ok = true;
@@ -915,22 +924,48 @@ std::vector<uint32_t> FakeServer::GetImagePixels(Pixmap src,
                                                  int width,
                                                  int height,
                                                  int depth) {
-  (void)src;
   (void)depth;
-  return std::vector<uint32_t>(size_t(width) * height, 0);
+  std::vector<uint32_t> res(size_t(width) * height, 0);
+  auto it = pixmaps_.find(src);
+  if (it != pixmaps_.end()) {
+    const std::vector<uint32_t>& pixels = it->second.pixels;
+    for (size_t i = 0; i < res.size() && i < pixels.size(); i++) {
+      res[i] = pixels[i];
+    }
+  }
+  return res;
 }
 
 Pixmap FakeServer::CreatePixmapFromPixels(int width,
                                           int height,
                                           const uint32_t* data) {
-  (void)width;
-  (void)height;
-  (void)data;
-  return next_id_++;
+  const Pixmap p = next_id_++;
+  Record("CreatePixmapFromPixels(" + hex(p) + ")");
+  FakePixmap& pm = pixmaps_[p];
+  pm.width = width;
+  pm.height = height;
+  pm.depth = 24;
+  pm.pixels.assign(data, data + size_t(width) * height);
+  return p;
+}
+
+Pixmap FakeServer::CreatePixmapWithPixels(int width,
+                                          int height,
+                                          int depth,
+                                          const std::vector<uint32_t>& pixels,
+                                          Pixmap id) {
+  const Pixmap p = id ? id : next_id_++;
+  FakePixmap& pm = pixmaps_[p];
+  pm.width = width;
+  pm.height = height;
+  pm.depth = depth;
+  pm.pixels = pixels;
+  return p;
 }
 
 void FakeServer::FreePixmap(Pixmap p) {
   Record("FreePixmap(" + hex(p) + ")");
+  pixmaps_.erase(p);
 }
 
 // ---------------------------------------------------------------------------
