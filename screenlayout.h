@@ -40,6 +40,26 @@ Rect makeVisible(Rect r, const std::vector<Rect>& areas);
 // covering a monitor covers the panels too.
 Rect SnapToMonitor(const Rect& r, const std::vector<Rect>& areas);
 
+// The monitor a drag is over. That's the one the *pointer* is in, not the one
+// the window overlaps most: the window can be far bigger than the pointer's
+// travel and is dragged from wherever the user grabbed it, so a wide window
+// grabbed near one edge stays majority-over the monitor it came from long
+// after the user has dragged it onto the next one. Asking where the pointer
+// is makes "drag it onto that monitor" mean what it says, whatever the size of
+// the window or where it was picked up.
+//
+// If the pointer is over no monitor at all - the dead space beside a monitor
+// shorter than its neighbour, which the pointer can cross - the window's own
+// monitor (findBestScreenFor) is the answer, so that passing through a gap
+// changes nothing.
+Rect findDragScreen(Point pointer,
+                    const Rect& r,
+                    const std::vector<Rect>& areas);
+
+// As ShrinkToFitMonitor below, but against a monitor the caller has already
+// picked (a drag picks it with findDragScreen).
+Rect ShrinkToFitGivenMonitor(Rect r, const Rect& mon);
+
 // Shrinks r, if it's too big for the monitor it's on (the one
 // findBestScreenFor picks), until it fits, and slides it onto that monitor on
 // whichever axis it had to shrink on. An axis which already fitted is left

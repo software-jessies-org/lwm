@@ -80,15 +80,20 @@ class WindowDragger : public DragHandler {
       End(ev);
       return false;
     }
-    // The user is placing this window by hand, so it isn't maximised any more
-    // however it got that way. Idempotent, so calling it per motion event is
+    // The user is placing this window by hand, so whatever maximisation it had
+    // is now theirs to overrule. Idempotent, so calling it per motion event is
     // no worse than tracking whether we've done it.
-    c->DropMaximization();
+    dropMaximization(c);
     moveImpl(c, mp.x - start_pos_.x, mp.y - start_pos_.y);
     return true;
   }
 
   virtual void moveImpl(Client* c, int dx, int dy) = 0;
+
+  // What a drag does to the window's maximisation. Resizing always ends it -
+  // there's nothing left of a maximisation the user has resized past - but a
+  // move can keep half of one; see WindowMover.
+  virtual void dropMaximization(Client* c) { c->DropMaximization(); }
 
   virtual void End(xcb_generic_event_t*) {
     MousePos mp = getMousePosition();
@@ -117,15 +122,61 @@ class WindowDragger : public DragHandler {
   MousePos start_pos_;
 };
 
+// Which axes a drag keeps a window filling its monitor on. See axesToKeep.
+struct FilledAxes {
+  bool vert = false;
+  bool horz = false;
+  bool any() const { return vert || horz; }
+};
+
 class WindowMover : public WindowDragger {
  public:
   WindowMover(Client* c, unsigned int button_mask)
       : WindowDragger(c, button_mask),
         start_frame_rect_(c->FrameRect()),
         start_content_rect_(c->ContentRect()),
-        fit_to_monitor_(fitsOnItsMonitor(c->FrameRect())) {}
+        fit_to_monitor_(fitsOnItsMonitor(c->FrameRect())),
+        kept_(axesToKeep(c)) {}
+
+  // A window filling its monitor on one axis only goes on filling whichever
+  // monitor it's dragged onto, on that axis: that's what makes a vertically
+  // maximised window dragged onto a taller monitor grow to the new monitor's
+  // height instead of arriving as a short window in the middle of it, and one
+  // dragged onto a shorter monitor and back again come home its old size. The
+  // drag still means something, because the other axis is free.
+  //
+  // A window filling its monitor on *both* axes has no free axis, so keeping
+  // it that way would leave the user unable to drag it anywhere but from
+  // monitor to monitor. There, a drag can only mean "let this thing go", and
+  // it does: whatever maximisation it had is dropped.
+  virtual void dropMaximization(Client* c) {
+    if (!kept_.any()) {
+      c->DropMaximization();
+    }
+  }
+
+  virtual void End(xcb_generic_event_t* ev) {
+    WindowDragger::End(ev);
+    if (!kept_.any()) {
+      return;
+    }
+    Client* c = LScr::I->GetClient(window());
+    if (!c) {
+      return;
+    }
+    // The window is still maximised, and may be on a different monitor from
+    // the one it was maximised on. Take the size it un-maximises to with it.
+    const Rect frame = c->FrameRect();
+    c->TranslatePreMaximizeRect(Point{frame.xMin - start_frame_rect_.xMin,
+                                      frame.yMin - start_frame_rect_.yMin});
+  }
 
   virtual void moveImpl(Client* c, int dx, int dy) {
+    // Where the pointer is now: dx/dy are its offset from the press, and the
+    // edge resistance below is about to adjust them. Which monitor the user is
+    // dragging onto is a question about the pointer, not about the window (see
+    // findDragScreen), so it has to be asked before that happens.
+    const Point pointer{startPos().x + dx, startPos().y + dy};
     Rect r = Rect::Translate(start_frame_rect_, Point{dx, dy});
     // Implement edge resistance for all of the visible areas. There can be
     // several if we're using multiple monitors with xrandr, and they can be
@@ -155,18 +206,29 @@ class WindowMover : public WindowDragger {
       }
     }
     Rect frame = Rect::Translate(start_frame_rect_, Point{dx, dy});
-    if (fit_to_monitor_) {
-      // The window has been dragged somewhere; if that somewhere is a monitor
-      // too small to hold it, it shrinks to fit.
-      frame = ShrinkToFitMonitor(frame, LScr::I->VisibleAreas(true));
+    const std::vector<Rect> areas = LScr::I->VisibleAreas(true);
+    if (!areas.empty()) {
+      const Rect mon = findDragScreen(pointer, frame, areas);
+      if (fit_to_monitor_) {
+        // The window has been dragged somewhere; if that somewhere is a
+        // monitor too small to hold it, it shrinks to fit.
+        frame = ShrinkToFitGivenMonitor(frame, mon);
+      }
+      frame = fillMonitor(frame, mon);
     }
     // Everything is measured from where the drag started rather than from
     // where the window has got to, which is what lets a window that shrank on
     // its way to a small monitor have its size back if the user drags it home
     // again before letting go.
+    //
+    // The offset the content moves by comes from the frame rather than from
+    // dx/dy, because a maximised axis doesn't follow the pointer: the frame is
+    // where the window has actually ended up.
     const Rect content =
         (frame.area() == start_frame_rect_.area())
-            ? Rect::Translate(start_content_rect_, Point{dx, dy})
+            ? Rect::Translate(start_content_rect_,
+                              Point{frame.xMin - start_frame_rect_.xMin,
+                                    frame.yMin - start_frame_rect_.yMin})
             : (c->HasFurniture() ? Client::ContentFromFrameRect(frame) : frame);
     if (content.area() == c->ContentRect().area()) {
       c->MoveTo(content);
@@ -177,6 +239,67 @@ class WindowMover : public WindowDragger {
   }
 
  private:
+  // Stretches the frame over `mon`, the monitor the pointer is on, on
+  // whichever axes the window is staying maximised on. This is the whole of
+  // "still maximised": the monitor is asked for afresh on every motion event,
+  // so crossing onto a bigger one grows the window as it arrives, and coming
+  // back to a smaller one shrinks it again.
+  Rect fillMonitor(Rect frame, const Rect& mon) const {
+    if (kept_.vert) {
+      frame.yMin = mon.yMin;
+      frame.yMax = mon.yMax;
+    }
+    if (kept_.horz) {
+      frame.xMin = mon.xMin;
+      frame.xMax = mon.xMax;
+    }
+    return frame;
+  }
+
+  // The axes on which the window is filling the monitor it's on as it stands,
+  // and so the ones the drag keeps it filling.
+  //
+  // This deliberately does not ask whether the client set
+  // _NET_WM_STATE_MAXIMIZED_VERT. That flag is how a *client* says it is
+  // maximised, and it's far from the only way a window gets that way: lwm's
+  // own expand gesture fills a monitor without setting it, and so does a user
+  // dragging an edge to the top and bottom of the screen. What matters to a
+  // drag is what the window looks like, so that's what's measured - with the
+  // flags folded in, because a client which says it is maximised is, even if
+  // its own size rules leave it a pixel short.
+  //
+  // "Filling" means as big as the monitor lets this particular client be: an
+  // xterm maximises to a whole number of character cells, which is a few
+  // pixels short of the screen, and it would be a strange rule that treated
+  // that as not maximised. LimitResize is what knows the difference.
+  static FilledAxes axesToKeep(Client* c) {
+    FilledAxes res;
+    const std::vector<Rect> areas = LScr::I->VisibleAreas(true);
+    if (areas.empty()) {
+      return res;
+    }
+    const Rect frame = c->FrameRect();
+    const Rect mon = findBestScreenFor(frame, areas);
+    const Area full = maximizedFrameArea(c, mon);
+    res.vert = c->wstate.maximized_vert || frame.height() == full.height;
+    res.horz = c->wstate.maximized_horz || frame.width() == full.width;
+    if (res.vert && res.horz) {
+      // Nothing left to drag it by; see dropMaximization.
+      return FilledAxes{};
+    }
+    return res;
+  }
+
+  // The size the window would be if it were maximised on `mon`: the monitor,
+  // less whatever the client's own size rules refuse.
+  static Area maximizedFrameArea(Client* c, const Rect& mon) {
+    const Rect content =
+        c->HasFurniture() ? Client::ContentFromFrameRect(mon) : mon;
+    const Rect limited = c->LimitResize(content);
+    return (c->HasFurniture() ? Client::FrameFromContentRect(limited) : limited)
+        .area();
+  }
+
   // Whether the window fitted on the monitor it started the drag on. If it
   // didn't - a client which asked to be bigger than the screen, and got it -
   // then shrinking it to fit as it's dragged would be lwm second-guessing a
@@ -205,6 +328,9 @@ class WindowMover : public WindowDragger {
   const Rect start_frame_rect_;
   const Rect start_content_rect_;
   const bool fit_to_monitor_;
+  // The axes this drag keeps the window filling its monitor on. At most one of
+  // them is ever set; see axesToKeep and dropMaximization.
+  const FilledAxes kept_;
 };
 
 // The Windows-key move gesture doubles as a click: a press which goes nowhere

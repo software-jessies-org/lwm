@@ -1408,3 +1408,209 @@ TEST(SuperGestures, AWindowBiggerThanItsOwnMonitorIsNotShrunkByADrag) {
 
   EXPECT_EQ(c->ContentRect(), Rect::Translate(start, Point{40, 25}));
 }
+
+namespace {
+
+// A short monitor with a taller one to the right of it, sharing a top edge.
+const std::vector<Rect> kShortAndTall = {
+    Rect::FromXYWH(0, 0, 600, 500),
+    Rect::FromXYWH(600, 0, 600, 900),
+};
+
+}  // namespace
+
+TEST(SuperGestures, DraggingAVerticallyMaximizedWindowToATallerMonitorGrowsIt) {
+  // Half a maximisation survives a drag: the window can still be placed along
+  // the axis it isn't maximised on, so the drag means what it says, and on the
+  // other axis it goes on filling the monitor it's over - which is a different
+  // monitor, and a taller one, by the time the user lets go.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kShortAndTall);
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 300, 200));
+  ASSERT_TRUE(c != nullptr);
+  c->SetMaximized(true, false);
+  const Rect before = c->FrameRect();
+  ASSERT_EQ(before.yMin, 0);
+  ASSERT_EQ(before.yMax, 500) << "should be filling the short monitor";
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 700, from.y + 60}, 63 * kSlowly);
+
+  EXPECT_TRUE(c->wstate.maximized_vert)
+      << "the window is still maximised, just on another monitor";
+  EXPECT_FALSE(c->wstate.maximized_horz);
+  // The vertical drag is ignored, as it is for any maximised window: the
+  // window's height is the monitor's business, not the pointer's.
+  const Rect want{before.xMin + 700, 0, before.xMax + 700, 900};
+  EXPECT_EQ(c->FrameRect(), want);
+}
+
+TEST(SuperGestures, AVerticallyMaximizedWindowTakesItsRestoreSizeWithIt) {
+  // Having been dragged to another monitor, the window has to un-maximise
+  // there rather than jumping back to the monitor it was maximised on.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kShortAndTall);
+  const Rect start = Rect::FromXYWH(100, 100, 300, 200);
+  Client* c = world.MapClientWindow(start);
+  ASSERT_TRUE(c != nullptr);
+  c->SetMaximized(true, false);
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 700, from.y}, 64 * kSlowly);
+  ASSERT_TRUE(c->wstate.maximized_vert);
+
+  c->SetMaximized(false, false);
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(start, Point{700, 0}));
+}
+
+TEST(SuperGestures, DraggingAHorizontallyMaximizedWindowToAWiderMonitor) {
+  // The same thing the other way up, since the two axes are the same code.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas({Rect::FromXYWH(0, 0, 500, 600),
+                            Rect::FromXYWH(0, 600, 900, 600)});
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 300, 200));
+  ASSERT_TRUE(c != nullptr);
+  c->SetMaximized(false, true);
+  const Rect before = c->FrameRect();
+  ASSERT_EQ(before.xMin, 0);
+  ASSERT_EQ(before.xMax, 500) << "should be filling the narrow monitor";
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x, from.y + 700}, 65 * kSlowly);
+
+  EXPECT_TRUE(c->wstate.maximized_horz);
+  const Rect want{0, before.yMin + 700, 900, before.yMax + 700};
+  EXPECT_EQ(c->FrameRect(), want);
+}
+
+TEST(SuperGestures, TheMonitorTheWindowGrowsToIsTheOneUnderThePointer) {
+  // The window is wide and was grabbed near its right-hand edge, so it trails
+  // a long way behind the pointer: by the time the pointer is on the taller
+  // monitor, most of the window is still on the short one. The pointer is what
+  // the user is steering, so the taller monitor is the one it fills.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kShortAndTall);
+  Client* c = world.MapClientWindow(Rect::FromXYWH(20, 100, 500, 200));
+  ASSERT_TRUE(c != nullptr);
+  c->SetMaximized(true, false);
+  const Rect before = c->FrameRect();
+  ASSERT_EQ(before.yMax, 500) << "should be filling the short monitor";
+
+  // Grab the right-hand column and drag just far enough that the pointer, but
+  // not most of the window, is over the taller monitor.
+  const Point from = gridCell(c, 2, 1);
+  const int dx = 700 - from.x;
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from, Point{700, from.y},
+       66 * kSlowly);
+
+  // Most of the window's width is still left of the boundary between the two
+  // monitors, which under the old "whichever monitor it overlaps most" rule
+  // was what decided this.
+  const Rect got = c->FrameRect();
+  const int boundary = kShortAndTall[1].xMin;
+  EXPECT_TRUE(got.xMin < boundary &&
+              (boundary - got.xMin) > (got.xMax - boundary))
+      << "the window should still be mostly on the monitor it came from: "
+      << got;
+  const Rect want{before.xMin + dx, 0, before.xMax + dx, 900};
+  EXPECT_EQ(got, want) << "should be filling the monitor the pointer is on";
+}
+
+TEST(SuperGestures, AWindowFillingItsMonitorKeepsFillingWithoutTheEwmhFlag) {
+  // Nothing here has said _NET_WM_STATE_MAXIMIZED_VERT: the window simply
+  // fills the monitor's height, which is what lwm's own expand gesture leaves
+  // behind, and what a user gets by dragging an edge to the top of the screen.
+  // It's maximised as far as anyone looking at the screen is concerned, so it
+  // behaves like it.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kShortAndTall);
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 300, 200));
+  ASSERT_TRUE(c != nullptr);
+  const Rect filled{100, kShortAndTall[0].yMin, 400, kShortAndTall[0].yMax};
+  c->MoveResizeTo(Client::ContentFromFrameRect(filled));
+  ASSERT_EQ(c->FrameRect(), filled);
+  ASSERT_FALSE(c->IsMaximized()) << "no client has claimed to be maximised";
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 700, from.y}, 67 * kSlowly);
+
+  const Rect want{filled.xMin + 700, 0, filled.xMax + 700, 900};
+  EXPECT_EQ(c->FrameRect(), want)
+      << "should have grown to fill the taller monitor";
+}
+
+namespace {
+
+// A client with a height increment, the way an xterm has one: it can only be a
+// whole number of character cells tall, so it maximises to a few pixels short
+// of the monitor.
+Client* mapWithHeightIncrement(wmtest::World& world,
+                               const Rect& rect,
+                               int inc) {
+  const Window w = world.server().AddClientWindow(rect);
+  xlib::NormalHints* hints = &world.server().Get(w)->normal_hints;
+  hints->ok = true;
+  hints->has_resize_inc = true;
+  hints->height_inc = inc;
+  xcb_map_request_event_t e{};
+  e.response_type = XCB_MAP_REQUEST;
+  e.parent = world.server().Root();
+  e.window = w;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+  return LScr::I->GetClient(w, false);
+}
+
+}  // namespace
+
+TEST(SuperGestures, AClientWithSizeIncrementsStillCountsAsFilling) {
+  // An xterm maximises to a whole number of character cells, which leaves it a
+  // few pixels short of the monitor. Anyone looking at the screen calls that
+  // maximised, so a drag has to as well: "filling" is measured against what
+  // the monitor lets this client be, not against the monitor.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kShortAndTall);
+  const int inc = 13;
+  Client* c =
+      mapWithHeightIncrement(world, Rect::FromXYWH(100, 100, 300, 200), inc);
+  ASSERT_TRUE(c != nullptr);
+  const Rect area = kShortAndTall[0];
+  const Rect want{100, area.yMin, 400, area.yMax};
+  c->MoveResizeTo(c->LimitResize(Client::ContentFromFrameRect(want)));
+  const Rect before = c->FrameRect();
+  ASSERT_TRUE(before.height() < area.height() &&
+              before.height() > area.height() - inc)
+      << "should be as tall as its cells allow, and no taller: " << before;
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 700, from.y}, 69 * kSlowly);
+
+  const Rect got = c->FrameRect();
+  EXPECT_TRUE(got.height() <= 900 && got.height() > 900 - inc)
+      << "should have grown to fill the taller monitor: " << got;
+}
+
+TEST(SuperGestures, AWindowFillingBothAxesIsStillDraggedFree) {
+  // The other half of that rule: a window with no free axis has to come loose,
+  // or it could only ever be dragged from monitor to monitor.
+  wmtest::World world;
+  LScr::I->SetVisibleAreas(kShortAndTall);
+  Client* c = world.MapClientWindow(Rect::FromXYWH(100, 100, 300, 200));
+  ASSERT_TRUE(c != nullptr);
+  const Rect mon = kShortAndTall[0];
+  c->MoveResizeTo(Client::ContentFromFrameRect(mon));
+  ASSERT_EQ(c->FrameRect(), mon);
+
+  // Far enough that the mover's edge resistance, which such a window is flush
+  // against on every side, doesn't hold it back.
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 50, from.y + 40}, 68 * kSlowly);
+
+  EXPECT_EQ(c->FrameRect(), Rect::Translate(mon, Point{50, 40}));
+}

@@ -2,6 +2,10 @@
 
 ## 2026-08-25 (pn, Basel)
 
+A window filling its monitor on one axis keeps filling whichever monitor it's
+dragged onto: drag a vertically maximised window to a taller one and it grows.
+Which monitor a drag is over now goes by the pointer, not by the window.
+
 Windows-arrow now raises the window it focuses, and takes the mouse pointer
 with it, putting it in the middle of the largest visible part of that window.
 

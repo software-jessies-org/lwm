@@ -121,6 +121,10 @@ Change the way Windows-arrow works such that the mouse pointer also warps to the
 
 ---
 
+Another drag fix. When dragging a window from a monitor in which it is vertically maximised, onto a larger monitor, it should remain vertically maximised (and thus grow in the Y direction).
+
+---
+
 ## Not yet started
 
 In a previous discussion, you reported this:

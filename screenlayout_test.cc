@@ -290,3 +290,30 @@ TEST(ShrinkToFitMonitor, NoMonitorsAtAllIsNotACrash) {
   const Rect win = Rect::FromXYWH(100, 100, 200, 150);
   EXPECT_EQ(ShrinkToFitMonitor(win, {}), win);
 }
+
+TEST(findDragScreen, ThePointerDecides) {
+  // The window is mostly on the big monitor, but the pointer is over the small
+  // one: the small one is the answer, because it's the pointer the user is
+  // steering. A big window grabbed near one edge trails a long way behind the
+  // pointer, and waiting for its bulk to cross would mean dragging it half a
+  // monitor further than the user thinks they need to.
+  const Rect win = Rect::FromXYWH(700, 50, 500, 200);
+  EXPECT_EQ(findDragScreen(Point{1100, 100}, win, kBigAndSmall),
+            kBigAndSmall[1]);
+  EXPECT_EQ(findDragScreen(Point{900, 100}, win, kBigAndSmall),
+            kBigAndSmall[0]);
+}
+
+TEST(findDragScreen, APointerOffEveryMonitorFallsBackToTheWindow) {
+  // The small monitor is 300 tall against the big one's 800, so there's dead
+  // space beside it that the pointer can be dragged through. Crossing it must
+  // not change which monitor the window is being dragged onto.
+  const Rect win = Rect::FromXYWH(1050, 20, 300, 200);
+  EXPECT_EQ(findDragScreen(Point{1100, 500}, win, kBigAndSmall),
+            kBigAndSmall[1]);
+}
+
+TEST(findDragScreen, NoMonitorsAtAllIsNotACrash) {
+  EXPECT_EQ(findDragScreen(Point{10, 10}, Rect::FromXYWH(0, 0, 10, 10), {}),
+            Rect{});
+}

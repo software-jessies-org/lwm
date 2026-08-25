@@ -418,12 +418,26 @@ void shrinkAxisToFit(int* lo, int* hi, int mLo, int mHi) {
   *hi = mHi;
 }
 
+Rect ShrinkToFitGivenMonitor(Rect r, const Rect& mon) {
+  shrinkAxisToFit(&r.xMin, &r.xMax, mon.xMin, mon.xMax);
+  shrinkAxisToFit(&r.yMin, &r.yMax, mon.yMin, mon.yMax);
+  return r;
+}
+
 Rect ShrinkToFitMonitor(Rect r, const std::vector<Rect>& areas) {
   if (areas.empty()) {
     return r;
   }
-  const Rect mon = findBestScreenFor(r, areas);
-  shrinkAxisToFit(&r.xMin, &r.xMax, mon.xMin, mon.xMax);
-  shrinkAxisToFit(&r.yMin, &r.yMax, mon.yMin, mon.yMax);
-  return r;
+  return ShrinkToFitGivenMonitor(r, findBestScreenFor(r, areas));
+}
+
+Rect findDragScreen(Point pointer,
+                    const Rect& r,
+                    const std::vector<Rect>& areas) {
+  for (const Rect& v : areas) {
+    if (v.contains(pointer.x, pointer.y)) {
+      return v;
+    }
+  }
+  return findBestScreenFor(r, areas);
 }

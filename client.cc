@@ -574,6 +574,15 @@ void Client::DropMaximization() {
   ewmh_set_state(this);
 }
 
+void Client::TranslatePreMaximizeRect(Point offset) {
+  if (pre_maximize_content_rect_.empty()) {
+    return;
+  }
+  pre_maximize_content_rect_ =
+      Rect::Translate(pre_maximize_content_rect_, offset);
+  LOGD(this) << "Pre-maximise geometry moved to " << pre_maximize_content_rect_;
+}
+
 Rect Client::MakeContentRectVisible(const Rect& content) const {
   const std::vector<Rect> areas = LScr::I->VisibleAreas(true);
   if (!HasFurniture()) {

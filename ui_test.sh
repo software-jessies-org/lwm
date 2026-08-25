@@ -909,6 +909,35 @@ else
   check_eq "and to one dragged onto a monitor too small to take it" \
     "$(geom "${MOVE_FRAME}")" "800 0 480 400"
 
+  # A window filling its monitor's height goes on filling whichever monitor it
+  # is dragged onto, and the monitor it's being dragged onto is the one the
+  # *pointer* is over. This window is wide and is picked up by its right-hand
+  # edge, so it trails a long way behind the pointer: with the monitor decided
+  # by which one the window overlapped most, the drag had to go half a monitor
+  # further than the user thinks before anything happened, and dragging back
+  # left the window stuck at the height of the monitor it was leaving.
+  place "${MOVE}" 40 0 700 $((1024 - FURNITURE_H))
+  check_eq "a window can be made to fill its monitor's height" \
+    "$(geom "${MOVE_FRAME}")" "40 0 $((700 + FURNITURE_W)) 1024"
+  read -r DX DY <<<"$(cell "${MOVE}" 2 1)"
+  xdotool keydown super
+  xdotool mousemove "${DX}" "${DY}"
+  xdotool mousedown 1
+  sleep 0.2
+  xdotool mousemove 900 200
+  sleep 0.3
+  read -r _ _ _ DRAGGED_H <<<"$(geom "${MOVE_FRAME}")"
+  check_eq "a window filling its monitor re-fits as the pointer crosses over" \
+    "${DRAGGED_H}" "400"
+  xdotool mousemove "${DX}" "${DY}"
+  sleep 0.3
+  read -r _ _ _ DRAGGED_H <<<"$(geom "${MOVE_FRAME}")"
+  check_eq "and is its old height again when the pointer comes back" \
+    "${DRAGGED_H}" "1024"
+  xdotool mouseup 1
+  xdotool keyup super
+  sleep 0.3
+
   cli "xrandr"
   sleep 0.5
   xdotool mousemove 5 5

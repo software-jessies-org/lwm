@@ -72,6 +72,14 @@ class Client {
   // resized isn't maximised any more, whatever the flags used to say.
   void DropMaximization();
 
+  // Slides the geometry recorded for un-maximising by the given offset,
+  // without touching the window. A window maximised on one axis only keeps
+  // that maximisation while it's dragged (see WindowMover), so it can end up
+  // on a different monitor from the one it was maximised on; un-maximising it
+  // there must give it back on the monitor it's on now, rather than sending it
+  // back where it came from. Does nothing if there's nothing recorded.
+  void TranslatePreMaximizeRect(Point offset);
+
   // The Windows-key double click grows a window in one shot, and from the
   // middle of the window it grows every edge, which on an otherwise empty
   // screen means "maximise". Doing it again in the middle puts the window

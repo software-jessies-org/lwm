@@ -228,9 +228,50 @@ rect at the origin — every route in records one, so this shouldn't happen, but
 
 lwm has no maximise gesture of its own — this exists for clients that ask, and
 `_NET_WM_ALLOWED_ACTIONS` now says they may. When the user takes the geometry
-into their own hands with a Super-drag or an expand, `DropMaximization` clears
-the flags without moving the window: whatever it is at that point, it isn't
-maximised.
+into their own hands with a resize, a keyboard move or an expand,
+`DropMaximization` clears the flags without moving the window: whatever it is
+at that point, it isn't maximised.
+
+A *drag* is the exception, and only half of one (`WindowMover` in `drag.cc`).
+What it goes by is not the flags but the window's own geometry, per axis:
+whether the window is currently as big as its monitor lets it be, which
+`WindowMover::axesToKeep` works out by asking `Client::LimitResize` what
+maximising on that axis would actually give this client (an xterm maximises to
+a whole number of character cells, a few pixels short of the screen, and it
+would be a strange rule that called that not maximised). The EWMH flags are
+folded in, but they are not the question: lwm's own expand gesture fills a
+monitor without setting them, and so does a user dragging an edge to the top of
+the screen, and to the user those are all "maximised".
+
+* Filling the monitor on **one** axis: it goes on filling whichever monitor it
+  is dragged onto, on that axis. That's what makes a vertically maximised
+  window dragged onto a taller monitor grow to the new monitor's height instead
+  of arriving short, and one dragged onto a shorter monitor and back again come
+  home its old size. The drag still means something, because the other axis is
+  free. The offset the content rect moves by therefore comes from the frame
+  rather than from the pointer's dx/dy: on a filled axis the window doesn't
+  follow the pointer at all. At the end of the drag
+  `Client::TranslatePreMaximizeRect` slides `pre_maximize_content_rect_` along
+  with the window, so un-maximising later gives it back on the monitor it's on
+  now rather than the one it left.
+* Filling it on **both**: whatever maximisation there was is dropped. There's
+  no free axis, so keeping it would leave the user unable to drag the window
+  anywhere but from monitor to monitor; a drag there can only mean "let this
+  go".
+
+**Which monitor** a drag is over is `findDragScreen`, and it is the monitor the
+*pointer* is in — not `findBestScreenFor`'s "the one the window overlaps most",
+which is what everything outside a drag uses. The window can be far bigger than
+the pointer's travel and is dragged from wherever the user grabbed it, so a
+wide window picked up near one edge stays majority-over the monitor it came
+from long after the pointer has crossed. Going by overlap, such a window had to
+be dragged half a monitor further than the user thought before it noticed the
+new monitor, and dragging it back left it stuck at the height of the monitor it
+had been on. The same monitor answers for the shrink-to-fit
+(`ShrinkToFitGivenMonitor`), so the two can't disagree part way through a drag.
+A pointer over no monitor at all - the dead space beside a monitor shorter than
+its neighbour - falls back to the window's own monitor, so crossing a gap
+changes nothing.
 
 ### Un-expanding
 
