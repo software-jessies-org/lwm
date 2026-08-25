@@ -30,7 +30,8 @@ Notes-to-self for working on this codebase efficiently. Written for an agent
   directly.
 * No virtual desktops, no compositing, no colourmaps — see
   `../README.md` for the philosophy behind those omissions. The only keyboard
-  bindings are Super+arrow, which moves the input focus between windows, and
+  bindings are Super+arrow, which moves the input focus (and the pointer)
+  between windows, raising the window it lands on, and
   Super+Shift+arrow, which moves the focused window between monitor edges
   (`keyboard.{h,cc}`); there is no general hotkey mechanism.
 * Feature requests and known bugs live in `../BUGS` (it's a TODO list, not just

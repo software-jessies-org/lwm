@@ -77,4 +77,32 @@ Rect MoveRectInDirection(const Rect& frame,
 // the corresponding corner of `to`.
 Point MapPointToMovedRect(Point p, const Rect& from, const Rect& to);
 
+// Returns the largest rectangle within `r` that none of `occluders` covers any
+// part of: the biggest unbroken piece of a window the user can actually see,
+// which is where the pointer should be put when the focus moves to it. The
+// occluders are the frames of the windows in front of `r` in the stacking
+// order; ones which don't touch `r` at all cost nothing but a test.
+//
+// Every edge of the answer is an edge of `r` or of an occluder, which is what
+// makes this a search of a grid rather than of the plane: the coordinates the
+// occluders' edges cut `r` into are the only ones worth considering, since a
+// rectangle whose edge lies anywhere else could be grown until it reached one.
+// "Largest" is by area, and an area is compared, not a width or a height, so a
+// tall narrow strip beats a wide flat one only if it really has more pixels
+// in it.
+//
+// Ties are broken by the order of the search, which runs the rows of that grid
+// from the top down and each row from the left: of two candidates of exactly
+// equal area, the one whose bottom edge is higher wins, and then the one whose
+// right edge is further left. It's arbitrary, but it's the same every time,
+// which is what stops the pointer landing somewhere different on two windows
+// which are occluded alike.
+//
+// Returns the canonical empty rectangle (0,0,0,0), as Rect::Intersect does, if
+// nothing of `r` is left visible at all. Callers should treat that as "don't
+// move the pointer": there is nowhere on this window to put it, and the middle
+// of a window buried under another one is a place the pointer would land on
+// that other window, taking sloppy focus with it.
+Rect LargestVisibleRect(const Rect& r, const std::vector<Rect>& occluders);
+
 #endif

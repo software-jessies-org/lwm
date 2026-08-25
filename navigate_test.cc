@@ -306,3 +306,90 @@ TEST(MapPointToMovedRect, AnEmptyRectHasNoProportionsToKeep) {
   const Rect to = Rect::FromXYWH(500, 500, 200, 100);
   EXPECT_EQ(MapPointToMovedRect(Point{100, 100}, from, to), (Point{500, 500}));
 }
+
+TEST(LargestVisibleRect, NothingInTheWayLeavesTheWholeWindow) {
+  const Rect win = Rect::FromXYWH(100, 100, 400, 300);
+  EXPECT_EQ(LargestVisibleRect(win, {}), win);
+  // A window which misses it entirely is no more in the way than none at all.
+  EXPECT_EQ(LargestVisibleRect(win, {Rect::FromXYWH(600, 600, 100, 100)}), win);
+}
+
+TEST(LargestVisibleRect, AWindowOverTheRightHandSideLeavesTheLeft) {
+  const Rect win = Rect::FromXYWH(0, 0, 400, 300);
+  // Covers the right third, top to bottom and beyond, so the answer is the
+  // rest: the occluder is clipped to the window before anything else happens.
+  const Rect over = Rect::FromXYWH(300, -50, 200, 500);
+  EXPECT_EQ(LargestVisibleRect(win, {over}), Rect::FromXYWH(0, 0, 300, 300));
+}
+
+TEST(LargestVisibleRect, PicksTheBiggerOfThePiecesAWindowIsCutInto) {
+  const Rect win = Rect::FromXYWH(0, 0, 400, 300);
+  // A band across the middle, leaving 100 pixels above it and 150 below. Both
+  // are the full width, so the taller one wins.
+  const Rect band = Rect::FromXYWH(0, 100, 400, 50);
+  EXPECT_EQ(LargestVisibleRect(win, {band}), Rect::FromXYWH(0, 150, 400, 150));
+}
+
+TEST(LargestVisibleRect, ComparesAreasAndNotJustWidthsOrHeights) {
+  const Rect win = Rect::FromXYWH(0, 0, 400, 300);
+  // The occluder leaves a strip 40 wide down the whole 300 of the left side
+  // (12000 pixels), and one 400 wide but only 20 deep along the bottom (8000).
+  // The wider piece is the smaller one.
+  const Rect over = Rect::FromXYWH(40, 0, 360, 280);
+  EXPECT_EQ(LargestVisibleRect(win, {over}), Rect::FromXYWH(0, 0, 40, 300));
+}
+
+TEST(LargestVisibleRect, FindsAPieceNoSingleOccluderDefines) {
+  // Two occluders, in opposite corners, with the free space between them
+  // bounded by an edge of each: the answer's edges come from two different
+  // windows, which is why this can't be done one occluder at a time.
+  const Rect win = Rect::FromXYWH(0, 0, 300, 300);
+  const Rect topLeft = Rect::FromXYWH(0, 0, 100, 100);
+  const Rect bottomRight = Rect::FromXYWH(200, 200, 100, 100);
+  // The answer is the 200x200 block to the right of the first and above the
+  // second: its left edge comes from one occluder and its bottom edge from the
+  // other. It beats the full-width band between them (300x100) on area.
+  EXPECT_EQ(LargestVisibleRect(win, {topLeft, bottomRight}),
+            Rect::FromXYWH(100, 0, 200, 200));
+}
+
+TEST(LargestVisibleRect, StepsAroundOverlappingOccluders) {
+  // Occluders which cover each other are no different from ones which don't:
+  // covered is covered, however many times over.
+  const Rect win = Rect::FromXYWH(0, 0, 200, 200);
+  const Rect a = Rect::FromXYWH(0, 0, 150, 150);
+  const Rect b = Rect::FromXYWH(50, 50, 150, 100);
+  // Everything above y=150 is covered by one or the other, leaving the bottom.
+  EXPECT_EQ(LargestVisibleRect(win, {a, b}), Rect::FromXYWH(0, 150, 200, 50));
+}
+
+TEST(LargestVisibleRect, ACompletelyCoveredWindowHasNoVisibleRect) {
+  const Rect win = Rect::FromXYWH(100, 100, 200, 200);
+  const Rect over = Rect::FromXYWH(50, 50, 400, 400);
+  EXPECT_TRUE(LargestVisibleRect(win, {over}).empty());
+  // Two occluders which cover it only between them count just as much.
+  const Rect top = Rect::FromXYWH(100, 100, 200, 100);
+  const Rect bottom = Rect::FromXYWH(100, 200, 200, 100);
+  EXPECT_TRUE(LargestVisibleRect(win, {top, bottom}).empty());
+}
+
+TEST(LargestVisibleRect, AnEmptyWindowHasNoVisibleRect) {
+  EXPECT_TRUE(LargestVisibleRect(Rect{0, 0, 0, 0}, {}).empty());
+  EXPECT_TRUE(LargestVisibleRect(Rect::FromXYWH(10, 10, 0, 50), {}).empty());
+}
+
+TEST(LargestVisibleRect, TheMiddleOfTheAnswerIsInsideTheWindow) {
+  // What the caller actually uses is the middle of the rectangle, so it had
+  // better be a point on the window and not on any of the occluders.
+  const Rect win = Rect::FromXYWH(0, 0, 500, 400);
+  const std::vector<Rect> occluders = {
+      Rect::FromXYWH(-20, -20, 200, 200),
+      Rect::FromXYWH(300, 100, 400, 100),
+      Rect::FromXYWH(100, 300, 100, 300),
+  };
+  const Point p = LargestVisibleRect(win, occluders).middle();
+  EXPECT_TRUE(win.contains(p.x, p.y));
+  for (const Rect& o : occluders) {
+    EXPECT_FALSE(o.contains(p.x, p.y));
+  }
+}

@@ -185,12 +185,34 @@ frame_of() {
 # An application can own several windows, so the one to take is whichever of
 # them lwm decided to frame.
 start_client() {
-  local name="$1" geometry="$2" candidate
-  NEW_CLIENT=""
+  local name="$1" geometry="$2"
   xlogo -name "${name}" -geometry "${geometry}" \
     >>"${WORKDIR}/clients.log" 2>&1 &
   NEW_CLIENT_PID=$!
   CLIENT_PIDS+=("${NEW_CLIENT_PID}")
+  await_framed "${name}"
+}
+
+# start_no_input_client <wm-name> <geometry>: the same, but an xclock.
+#
+# xclock is ICCCM section 4.1.7's "no input" model - WM_HINTS input=False and
+# no WM_TAKE_FOCUS - which is a window lwm has nowhere to put the input focus.
+# It comes from x11-apps, the same package as the xlogo above, so it costs no
+# new dependency.
+start_no_input_client() {
+  local name="$1" geometry="$2"
+  xclock -name "${name}" -geometry "${geometry}" \
+    >>"${WORKDIR}/clients.log" 2>&1 &
+  NEW_CLIENT_PID=$!
+  CLIENT_PIDS+=("${NEW_CLIENT_PID}")
+  await_framed "${name}"
+}
+
+# await_framed <wm-name>: waits for a window of that name which lwm has taken
+# on, and sets NEW_CLIENT to it - empty if it never appeared.
+await_framed() {
+  local name="$1" candidate
+  NEW_CLIENT=""
   for _ in $(seq 1 50); do
     for candidate in $(xdotool search --name "^${name}\$" 2>/dev/null); do
       if [ -n "$(frame_of "${candidate}")" ]; then
@@ -286,8 +308,8 @@ super_click() {
 }
 
 # super_arrow <left|right|up|down> - a Super+arrow press, the focus-navigation
-# gesture. Unlike the mouse gestures, this one doesn't touch the pointer: the
-# whole point of it is that the focus moves without the pointer having to.
+# gesture. This one moves the pointer too, onto the window it gives the focus
+# to, so a check which cares where the pointer is must put it back afterwards.
 super_arrow() {
   xdotool key "super+$1"
   sleep 0.4
@@ -305,6 +327,31 @@ super_shift_arrow() {
 pointer_position() {
   xdotool getmouselocation --shell 2>/dev/null |
     awk -F= '/^X=/ { x = $2 } /^Y=/ { y = $2 } END { print x, y }'
+}
+
+# pointer_on <window-id>: true if the pointer is somewhere within that window.
+pointer_on() {
+  local px py x y w h
+  read -r px py <<<"$(pointer_position)"
+  read -r x y w h <<<"$(geom "$1")"
+  [ "${px}" -ge "${x}" ] && [ "${px}" -lt "$((x + w))" ] &&
+    [ "${py}" -ge "${y}" ] && [ "${py}" -lt "$((y + h))" ]
+}
+
+# active_window -> the window lwm says is the active one, in hex, or "" if it
+# says there isn't one. This is lwm's own idea of which client has the focus,
+# which is not always the window the *server* reports: a client which doesn't
+# take the input focus can still be the one lwm is treating as current.
+active_window() {
+  xprop -root _NET_ACTIVE_WINDOW 2>/dev/null | sed -n 's/.*# //p'
+}
+
+# x_focus_is_set: true unless the server's input focus is None. `xdotool
+# getwindowfocus -f` reports the raw focus window, and prints 0 for None -
+# the state in which the server discards every key event and no passive grab
+# can activate.
+x_focus_is_set() {
+  [ "$(xdotool getwindowfocus -f 2>/dev/null)" != "0" ]
 }
 
 # focused_window -> the window id with the input focus, in hex, or "" if the
@@ -634,12 +681,16 @@ check_eq "so the client shrinks back inside it by exactly the furniture" \
 # keyboard_test.cc covers the same path against the fake server, and
 # navigate_test.cc the geometry underneath it.
 #
-# The pointer is parked on the root throughout, clear of both windows. That's
-# not just tidiness: focus follows the mouse by default, and a pointer sitting
-# over a window keeps generating enter events whose focus changes lwm delays
-# on the timer in focus.h - which on a server as slow as Xvfb can be seconds
-# later, landing in the middle of a check. Off the windows, nothing but the
-# arrow keys moves the focus, which is the thing being tested anyway.
+# The pointer starts on the root, clear of both windows. That's not just
+# tidiness: focus follows the mouse by default, and a pointer sitting over a
+# window keeps generating enter events whose focus changes lwm delays on the
+# timer in focus.h - which on a server as slow as Xvfb can be seconds later,
+# landing in the middle of a check. Off the windows, nothing but the arrow
+# keys moves the focus, which is the thing being tested anyway.
+#
+# Each press then leaves the pointer on the window it just focused, which is
+# safe for the same reason: the enter event that follows names the window
+# which already has the focus, so there is no focus change to be delayed.
 
 place "${CLIENT}" 700 300 200 200
 start_client lwmtest3 '200x200+100+300'
@@ -664,6 +715,7 @@ else
   super_arrow Right
   check_eq "Super+Right moves the focus to the window on the right" \
     "$(focus_after_settling "${WANT}")" "${WANT}"
+  check "and takes the pointer with it" pointer_on "$(frame_of "${CLIENT}")"
 
   WANT=$(printf '0x%x' "${NAV}")
   super_arrow Left
@@ -682,10 +734,9 @@ else
   check_eq "Super+Left does nothing at the left-hand end" \
     "$(focused_window)" "$(printf '0x%x' "${NAV}")"
 
-  # Navigation moves the focus and nothing else: in particular it does not
-  # raise the window it moves to. The left-hand window goes up and to the
-  # left, further along x than y so that it stays in the left-hand cone, and
-  # clear of the point clicked below.
+  # The window navigated to is raised, and the pointer put on it. The
+  # left-hand window goes up and to the left, further along x than y so that
+  # it stays in the left-hand cone, and clear of the point clicked below.
   place "${NAV}" 400 150 200 200
   NAV_FRAME=$(frame_of "${NAV}")
   WANT=$(printf '0x%x' "${CLIENT}")
@@ -704,7 +755,8 @@ else
   super_arrow Left
   check_eq "Super+Left focuses the window it navigates to" \
     "$(focus_after_settling "${WANT}")" "${WANT}"
-  check "but does not raise it" in_front "${FRAME}" "${NAV_FRAME}"
+  check "and raises it" in_front "${NAV_FRAME}" "${FRAME}"
+  check "and puts the pointer on it" pointer_on "${NAV_FRAME}"
 
   xdotool mousemove 5 5
   kill "${NAV_PID}" >/dev/null 2>&1
@@ -712,6 +764,53 @@ else
 fi
 
 place "${CLIENT}" 400 400 200 200
+
+# --- windows which don't want the input focus -------------------------------
+#
+# An xclock is ICCCM's "no input" model: input=False, no WM_TAKE_FOCUS, so
+# there is no window for lwm to hand the focus to. What it must not do is hand
+# it to *nobody*. With the X input focus set to None the server discards every
+# key event, and - the part that actually bites - a passive grab can never
+# activate, since XGrabKey needs the grab window to be the focus window, an
+# ancestor of it, or a descendant of it holding the pointer. lwm's arrow grabs
+# are on the root, so all of its keyboard gestures used to disappear for as
+# long as the pointer sat on an xclock.
+#
+# This can only be seen on a real server: FakeServer hands a KeyPress to
+# HandleKeyPress whatever the focus is, so focus_test.cc can pin where the
+# focus goes but not what the server then does with the keyboard.
+
+start_no_input_client lwmtest5 '200x200+900+400'
+CLOCK="${NEW_CLIENT}"
+CLOCK_PID="${NEW_CLIENT_PID}"
+if [ -z "${CLOCK}" ]; then
+  fail "xclock mapped and framed"
+else
+  pass "xclock mapped and framed"
+  # Sloppy focus, so the pointer on it is what makes it the current window.
+  read -r QX QY <<<"$(cell "${CLOCK}" 1 1)"
+  xdotool mousemove "${QX}" "${QY}"
+  sleep 0.5
+  check_eq "lwm treats the no-input window as the active one" \
+    "$(active_window)" "$(printf '0x%x' "${CLOCK}")"
+  check "but doesn't leave the X input focus at None" x_focus_is_set
+
+  # Both directions, because the point is that the gesture is alive and
+  # measured from the xclock: there is no window to its right, and the one to
+  # its left is the window it should reach.
+  super_arrow Right
+  check_eq "Super+Right from it does nothing: no window that way" \
+    "$(active_window)" "$(printf '0x%x' "${CLOCK}")"
+
+  WANT=$(printf '0x%x' "${CLIENT}")
+  super_arrow Left
+  check_eq "Super+Left from it moves the focus to the window on its left" \
+    "$(focus_after_settling "${WANT}")" "${WANT}"
+
+  xdotool mousemove 5 5
+  kill "${CLOCK_PID}" >/dev/null 2>&1
+  sleep 0.5
+fi
 
 # --- moving windows from the keyboard ---------------------------------------
 #

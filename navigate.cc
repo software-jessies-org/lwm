@@ -204,3 +204,123 @@ Point MapPointToMovedRect(Point p, const Rect& from, const Rect& to) {
       mapCoord(p.y, from.yMin, from.height(), to.yMin, to.height()),
   };
 }
+
+namespace {
+
+// The distinct coordinates, in order, that `r`'s own edges and the occluders'
+// edges cut the interval [lo, hi] into. Coordinates outside it are the
+// occluders' business, not ours: they've already been clipped away.
+std::vector<int> gridLines(int lo, int hi, const std::vector<int>& cuts) {
+  std::vector<int> res;
+  res.reserve(cuts.size() + 2);
+  res.push_back(lo);
+  res.push_back(hi);
+  for (int c : cuts) {
+    res.push_back(c);
+  }
+  std::sort(res.begin(), res.end());
+  res.erase(std::unique(res.begin(), res.end()), res.end());
+  return res;
+}
+
+// One bar of the histogram sweep below: a run of free space `height` pixels
+// deep whose left edge is the grid line `left`.
+struct Bar {
+  int left;
+  int height;
+};
+
+}  // namespace
+
+Rect LargestVisibleRect(const Rect& r, const std::vector<Rect>& occluders) {
+  const Rect kNone{0, 0, 0, 0};
+  if (r.empty()) {
+    return kNone;
+  }
+  // Clip the occluders to r first. Everything after this works within r, and
+  // an occluder which only overlapped a corner of it would otherwise drag
+  // grid lines outside r along with it.
+  std::vector<Rect> obs;
+  std::vector<int> xCuts;
+  std::vector<int> yCuts;
+  for (const Rect& o : occluders) {
+    const Rect clipped = Rect::Intersect(o, r);
+    if (clipped.empty()) {
+      continue;
+    }
+    obs.push_back(clipped);
+    xCuts.push_back(clipped.xMin);
+    xCuts.push_back(clipped.xMax);
+    yCuts.push_back(clipped.yMin);
+    yCuts.push_back(clipped.yMax);
+  }
+  if (obs.empty()) {
+    return r;  // Nothing in the way: the whole window is the answer.
+  }
+  const std::vector<int> xs = gridLines(r.xMin, r.xMax, xCuts);
+  const std::vector<int> ys = gridLines(r.yMin, r.yMax, yCuts);
+  const int nx = (int)xs.size() - 1;  // Columns of the grid.
+  const int ny = (int)ys.size() - 1;  // Rows of it.
+
+  // Which cells of the grid an occluder covers. A cell is covered or it isn't:
+  // the grid lines were chosen so that no occluder edge can pass through the
+  // middle of one.
+  std::vector<bool> covered(nx * ny, false);
+  for (const Rect& o : obs) {
+    const int x0 = std::lower_bound(xs.begin(), xs.end(), o.xMin) - xs.begin();
+    const int x1 = std::lower_bound(xs.begin(), xs.end(), o.xMax) - xs.begin();
+    const int y0 = std::lower_bound(ys.begin(), ys.end(), o.yMin) - ys.begin();
+    const int y1 = std::lower_bound(ys.begin(), ys.end(), o.yMax) - ys.begin();
+    for (int row = y0; row < y1; row++) {
+      for (int col = x0; col < x1; col++) {
+        covered[row * nx + col] = true;
+      }
+    }
+  }
+
+  // The largest free rectangle in the grid, row by row from the top. `heights`
+  // is how far up the free space above each column reaches from the bottom of
+  // the current row, measured in pixels rather than in cells so that the area
+  // compared is the real one; a rectangle of free cells is then a run of
+  // columns taken to the depth of the shallowest of them, which is the classic
+  // largest-rectangle-in-a-histogram problem.
+  //
+  // The stack holds the bars still capable of growing wider, always increasing
+  // in height from the bottom of the stack up. A shallower column closes off
+  // every bar deeper than itself: each is popped and measured, and the last
+  // one popped hands its left edge to the new bar, because the space it
+  // occupied is free to the new bar's lesser depth as well.
+  std::vector<int> heights(nx, 0);
+  std::vector<Bar> stack;
+  Rect best = kNone;
+  int64_t bestArea = 0;
+  for (int row = 0; row < ny; row++) {
+    const int rowHeight = ys[row + 1] - ys[row];
+    for (int col = 0; col < nx; col++) {
+      heights[col] = covered[row * nx + col] ? 0 : heights[col] + rowHeight;
+    }
+    const int bottom = ys[row + 1];
+    stack.clear();
+    // One past the last column, with nothing in it, so that the columns still
+    // on the stack when the row ends are measured too.
+    for (int col = 0; col <= nx; col++) {
+      const int h = (col < nx) ? heights[col] : 0;
+      int left = col;
+      while (!stack.empty() && stack.back().height >= h) {
+        const Bar bar = stack.back();
+        stack.pop_back();
+        const Rect cand{xs[bar.left], bottom - bar.height, xs[col], bottom};
+        const int64_t area = (int64_t)cand.width() * cand.height();
+        if (area > bestArea) {
+          bestArea = area;
+          best = cand;
+        }
+        left = bar.left;
+      }
+      if (h > 0) {
+        stack.push_back(Bar{left, h});
+      }
+    }
+  }
+  return best;
+}

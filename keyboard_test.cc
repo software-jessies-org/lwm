@@ -435,3 +435,127 @@ TEST(HandleKeyPress, TheMovedWindowComesToTheFront) {
       << "the window being moved should have been raised";
   EXPECT_EQ(focuser->GetFocusedClient(), c);
 }
+
+TEST(HandleKeyPress, ThePointerFollowsTheFocus) {
+  // Without this the focus is somewhere the pointer isn't, and with sloppy
+  // focus the next twitch of the mouse hands it straight back.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* left = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  Client* right = world.MapClientWindow(Rect::FromXYWH(900, 400, 200, 200));
+  ASSERT_TRUE(left != nullptr);
+  ASSERT_TRUE(right != nullptr);
+  LScr::I->GetFocuser()->FocusClient(right);
+  world.server().SetMousePosition(1000, 500, 0);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), left);
+  // Nothing is in the way, so it's the middle of the whole window.
+  const MousePos mp = getMousePosition();
+  EXPECT_EQ((Point{mp.x, mp.y}), left->FrameRect().middle());
+}
+
+TEST(HandleKeyPress, TheWindowNavigatedToComesToTheFront) {
+  // The focus is no use on a window buried under another one, and the pointer
+  // is about to be put down on this one.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* target = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  // Overlapping it, and mapped second so it starts in front of it. It sits
+  // further from the window the focus starts on, so it isn't the one the
+  // arrow picks.
+  Client* over = world.MapClientWindow(Rect::FromXYWH(0, 450, 200, 200));
+  Client* focused = world.MapClientWindow(Rect::FromXYWH(900, 400, 200, 200));
+  ASSERT_TRUE(target != nullptr);
+  ASSERT_TRUE(over != nullptr);
+  ASSERT_TRUE(focused != nullptr);
+  ASSERT_TRUE(stackIndex(world, target) < stackIndex(world, over));
+  ASSERT_FALSE(Rect::Intersect(target->FrameRect(), over->FrameRect()).empty());
+  LScr::I->GetFocuser()->FocusClient(focused);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), target);
+  EXPECT_TRUE(stackIndex(world, target) > stackIndex(world, over))
+      << "the window navigated to should have been raised";
+  // And so the whole of it is there for the pointer to land in the middle of.
+  const MousePos mp = getMousePosition();
+  EXPECT_EQ((Point{mp.x, mp.y}), target->FrameRect().middle());
+}
+
+TEST(HandleKeyPress, ThePointerAvoidsATransientInFront) {
+  // A raise doesn't get a window out from under its own dialogs: Client::Raise
+  // takes those up with it and leaves them in front, which is what they're
+  // for. So the middle of the window may still be covered, and the pointer
+  // landing there would give the dialog the focus that was just moved off it.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* target = world.MapClientWindow(Rect::FromXYWH(50, 400, 400, 400));
+  // A dialog over the lower half of it, mapped second so it starts in front.
+  // It's far enough down the screen not to be the nearer of the two to the
+  // window the focus starts on.
+  Client* dialog = world.MapClientWindow(Rect::FromXYWH(50, 620, 400, 380));
+  Client* focused = world.MapClientWindow(Rect::FromXYWH(900, 400, 200, 200));
+  ASSERT_TRUE(target != nullptr);
+  ASSERT_TRUE(dialog != nullptr);
+  ASSERT_TRUE(focused != nullptr);
+  dialog->trans = target->window;
+  ASSERT_FALSE(
+      Rect::Intersect(target->FrameRect(), dialog->FrameRect()).empty());
+  LScr::I->GetFocuser()->FocusClient(focused);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), target);
+  ASSERT_TRUE(stackIndex(world, target) < stackIndex(world, dialog))
+      << "the dialog should have been raised along with its parent";
+
+  const MousePos mp = getMousePosition();
+  EXPECT_TRUE(target->FrameRect().contains(mp.x, mp.y))
+      << "pointer at " << mp.x << "," << mp.y << " left " << target->FrameRect();
+  EXPECT_FALSE(dialog->FrameRect().contains(mp.x, mp.y))
+      << "pointer at " << mp.x << "," << mp.y << " landed on the dialog in "
+      << "front, at " << dialog->FrameRect();
+}
+
+TEST(HandleKeyPress, ACompletelyCoveredWindowLeavesThePointerAlone) {
+  // There is nowhere on this window to put the pointer that isn't on the
+  // dialog in front of it, and putting it there would undo the gesture.
+  // Better to move the focus alone than to move the focus and then lose it.
+  wmtest::World world;
+  GrabNavigationKeys();
+  const Rect where = Rect::FromXYWH(50, 400, 200, 200);
+  Client* target = world.MapClientWindow(where);
+  // Exactly on top of it, and a transient of it, so the raise takes it along
+  // rather than getting the window out from under it.
+  Client* dialog = world.MapClientWindow(where);
+  Client* focused = world.MapClientWindow(Rect::FromXYWH(900, 400, 200, 200));
+  ASSERT_TRUE(target != nullptr);
+  ASSERT_TRUE(dialog != nullptr);
+  ASSERT_TRUE(focused != nullptr);
+  dialog->trans = target->window;
+  ASSERT_EQ(target->FrameRect(), dialog->FrameRect());
+  LScr::I->GetFocuser()->FocusClient(focused);
+  world.server().SetMousePosition(1000, 500, 0);
+  world.server().ClearCalls();
+
+  pressArrow(kLeftKey);
+  // The two are the same distance away, so the tie goes to the first of them;
+  // if that ever changes, this test is no longer testing what it says.
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), target);
+  ASSERT_TRUE(stackIndex(world, target) < stackIndex(world, dialog));
+  const MousePos mp = getMousePosition();
+  EXPECT_EQ((Point{mp.x, mp.y}), (Point{1000, 500}));
+  EXPECT_TRUE(world.server().CallsMatching("WarpPointer(").empty());
+}
+
+TEST(HandleKeyPress, NoWindowThatWayLeavesThePointerAlone) {
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* c = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  ASSERT_TRUE(c != nullptr);
+  LScr::I->GetFocuser()->FocusClient(c);
+  world.server().SetMousePosition(700, 700, 0);
+
+  pressArrow(kRightKey);
+  const MousePos mp = getMousePosition();
+  EXPECT_EQ((Point{mp.x, mp.y}), (Point{700, 700}));
+}

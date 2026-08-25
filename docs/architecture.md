@@ -164,7 +164,31 @@ The choice of window is pure geometry and lives in `navigate.{h,cc}`:
 inside the quarter-plane cone opening from the focused window towards the
 arrow. `keyboard.cc` supplies the candidates - every client that isn't hidden
 or withdrawn, on every monitor - and hands the winner to `Focuser::FocusClient`.
-Nothing is raised and the pointer isn't moved.
+
+Then, as on the window-moving side, two things follow the focus: the window is
+**raised**, and the **pointer** is put on it. Both are about the focus staying
+where the user put it - under sloppy focus a pointer left on the window just
+navigated away from takes the focus back the moment the mouse is touched - and
+they happen in that order, so that the pointer is only put down on a window
+which is already in front.
+
+Where it lands is the other pure function worth knowing about,
+`LargestVisibleRect`: the biggest rectangle of the newly focused window that
+nothing in front of it covers. After a raise that is usually the whole window,
+but not always, and the exception is the reason the function exists:
+`Client::Raise` takes a window's transients up with it and leaves them *above*
+it, so a window with a dialog over its middle is still covered where it
+matters. `keyboard.cc`'s `warpPointerTo` first clips the frame to the monitor
+it's on with the struts taken off (a panel may be override-redirect, and so
+not a window `LargestVisibleRect` will ever be told about), then asks
+`windowsInFrontOf` for the occluders. That walks the root's children from
+`xlib::WindowTree::Query`, since the stacking order lives in the server and
+nowhere else - clients restack themselves, and `fix_stack` restacks them - and
+takes the client frames after the target in that list. That query is also what
+flushes the raise: it's a round trip, so the tree it reports is the one the
+raise has already been applied to. A window with nothing visible at all gets
+no warp: the pointer would have to be put down on the window in front of it,
+which would undo the gesture.
 
 Where a *window* goes is the other pure function in the same file,
 `MoveRectInDirection`: to the inner edge of its own monitor first, and only

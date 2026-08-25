@@ -117,6 +117,10 @@ I spotted a bug whereby one application can end up with the application icon of 
 
 ---
 
+Change the way Windows-arrow works such that the mouse pointer also warps to the window that receives input focus. Place the mouse pointer in the middle of the largest contiguous visible rectangle, taking into account occlusion by other windows.
+
+---
+
 ## Not yet started
 
 In a previous discussion, you reported this:
@@ -124,10 +128,6 @@ In a previous discussion, you reported this:
 One unrelated thing I tripped over: running lwm -debugcli=... < /dev/null spins the event loop on stdin-at-EOF — it wrote 3.4 GB to stdout in about a minute and filled /tmp. It's pre-existing (the unpatched binary does it too) and only affects that invocation, so I left it alone, but you may want it fixed.
 
 Fix this.
-
----
-
-Change the way Windows-arrow works such that the mouse pointer also warps to the window that receives input focus. Place the mouse pointer in the middle of the largest contiguous visible rectangle, taking into account occlusion by other windows.
 
 ---
 

@@ -108,10 +108,26 @@ models:
 | --- | --- | --- |
 | true | either | *Passive/locally active*: `XSetInputFocus` on the top-level, plus `WM_TAKE_FOCUS` if the client listed it |
 | false | yes | *Globally active*: send `WM_TAKE_FOCUS` and let the client focus whichever of its windows it likes — **plus** ping every child that selected `FocusChangeMask`, for Java |
-| false | no | *No input*: give up (`XSetInputFocus(None)`) |
+| false | no | *No input*: `XSetInputFocus` on the **root window** — there is nowhere else to put it, but see below for why "nowhere" is not an option |
 
 Chrome breaks if you focus its children as well as the top level; Java breaks if
 you don't. Don't "simplify" this.
+
+The no-input row is xclock and xload: they neither want the focus nor
+understand `WM_TAKE_FOCUS`. That row used to read `XSetInputFocus(None)`, which
+looks like the honest answer and is a trap. With the input focus set to `None`
+the server discards **every** key event, and a passive grab can never activate:
+`XGrabKey` fires only when the grab window is the focus window, an ancestor of
+it, or a descendant of it containing the pointer, and none of those can hold
+when there is no focus window at all. lwm's arrow grabs are on the root, so all
+of its keyboard gestures vanished for as long as the pointer sat on an xclock —
+Super+arrow and Super+Shift+arrow alike. Focusing the root satisfies the
+"ancestor of the focus window" case and costs the client nothing: it asked for
+no key events and it still gets none. Which window lwm *considers* focused is a
+separate matter — that's `focus_history_`, and it still names the xclock, so
+the title bar stays highlighted and the arrow keys still navigate relative to
+it. `ui_test.sh` covers this one, because `FakeServer` delivers a `KeyPress`
+whatever the focus is: only a real server shows the grab going dead.
 
 The globally active row is the one every Wine/Proton window lands in —
 `winex11.drv`'s `UseTakeFocus` defaults on, so it sets input=false and lists

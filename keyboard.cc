@@ -10,6 +10,7 @@
 #include "log.h"
 #include "navigate.h"
 #include "screen.h"
+#include "screenlayout.h"
 
 namespace {
 
@@ -50,7 +51,67 @@ std::map<uint8_t, Direction>& grabbedKeys() {
   return keys;
 }
 
-// Moves the input focus to the next window in dir, if there is one.
+// The frames of the windows in front of c, bottom-most first: everything
+// which could be hiding part of it. The stacking order comes from the server
+// rather than from anything lwm remembers, because that's the only place it
+// is actually kept - a client can restack itself, and lwm's own fix_stack
+// does the same on its behalf.
+std::vector<Rect> windowsInFrontOf(const Client* c) {
+  std::vector<Rect> res;
+  bool found = false;
+  // Children of the root, bottom-most first, so everything after c in the
+  // list is in front of it. Windows which aren't clients (lwm's own popup and
+  // menu, and anything override-redirect) are skipped: the first two are only
+  // up while the user is using them, and nothing here is asked at that moment.
+  for (Window w : xlib::WindowTree::Query(LScr::I->Root()).children) {
+    Client* other = LScr::I->GetClient(w);
+    if (!other) {
+      continue;
+    }
+    if (other == c) {
+      found = true;
+      continue;
+    }
+    if (!found || other->IsHidden() || other->IsWithdrawn()) {
+      continue;  // Behind c, or not on screen to be hiding anything.
+    }
+    res.push_back(other->FrameRect());
+  }
+  return res;
+}
+
+// Puts the pointer on the newly focused window: in the middle of the largest
+// piece of it which is both on screen and not covered by another window.
+//
+// The window has been raised by the time this is called, so usually nothing
+// is covering it and this is simply its middle. What survives a raise is a
+// window's own transients - Client::Raise takes them up with it, and they end
+// up in front of it, which is the point of them - so a window with a dialog
+// over it still has to be measured rather than assumed. Under the default
+// sloppy focus the pointer landing on that dialog would send lwm an
+// EnterNotify and take the focus straight back off the window the user asked
+// for. If there is no uncovered piece at all, the pointer stays where it is:
+// that's better than undoing the very gesture that moved it.
+void warpPointerTo(Client* c) {
+  // The part of the frame which is on screen at all. VisibleAreas(true)
+  // excludes the space panels have reserved, so a window under a panel
+  // doesn't get the pointer parked on the panel - which, for a panel which is
+  // override-redirect and so not a client, is the only thing that keeps it off.
+  const Rect frame = c->FrameRect();
+  const Rect onScreen = Rect::Intersect(
+      frame, findBestScreenFor(frame, LScr::I->VisibleAreas(true)));
+  const Rect visible = LargestVisibleRect(onScreen, windowsInFrontOf(c));
+  if (visible.empty()) {
+    LOGD(c) << "Not warping the pointer: no visible part of " << frame;
+    return;
+  }
+  xlib::XWarpPointer(visible.middle());
+}
+
+// Moves the input focus to the next window in dir, if there is one, and
+// raises it: the focus is no use on a window buried under another, and having
+// asked for it by name the user means the window in front, not just the one
+// typing goes to.
 void moveFocus(Client* focused, Direction dir) {
   // Every window that could take the focus, on every monitor: navigation
   // deliberately crosses screen boundaries, so nothing here filters by which
@@ -73,7 +134,12 @@ void moveFocus(Client* focused, Direction dir) {
   if (idx < 0) {
     return;  // No window that way.
   }
-  LScr::I->GetFocuser()->FocusClient(candidates[idx]);
+  Client* target = candidates[idx];
+  LScr::I->GetFocuser()->FocusClient(target);
+  target->Raise();
+  // After the raise, so that the part of the window the pointer can be put on
+  // is the part it has once it's in front.
+  warpPointerTo(target);
 }
 
 // Moves the focused window itself in dir: to the inner edge of its monitor,

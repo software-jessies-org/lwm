@@ -88,21 +88,27 @@ The mouse gestures, driven with `xdotool` under the same headless `Xvfb`
 arrangement as the smoke test: Windows-key drags to move and resize, double
 clicks to expand a window up to its neighbours or its monitor, clicks to raise
 or hide it, the Super+Control click that turns its furniture on and off,
-Super+arrow to move the input focus between windows, and Super+Shift+arrow to
-move a window between monitor edges.
+Super+arrow to move the input focus between windows, Super+Shift+arrow to
+move a window between monitor edges, and the arrows still working when the
+current window is one which doesn't take the input focus.
 These need a real server - the passive grabs, the modifier bits in the
 `ButtonPress` and the pointer grab that keeps a drag alive are all things
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at
 the event level and this covers them at the pointer level.
 
-The focus-navigation section parks the pointer on the root window and stays
-off both test windows. Focus follows the mouse by default, and a pointer over
-a window keeps producing enter events whose focus changes lwm defers on the
-timer in `focus.h` — under Xvfb that deferral has been seen to take seconds,
-which lands in the middle of whatever check is running. Keyboard-driven focus
-has no such delay, so with the pointer out of the way the section is
-deterministic. Don't reintroduce a pointer-based way of deciding which window
-starts with the focus: use the fact that lwm focuses a window as it maps it.
+The focus-navigation section starts with the pointer parked on the root
+window, off both test windows. Focus follows the mouse by default, and a
+pointer over a window keeps producing enter events whose focus changes lwm
+defers on the timer in `focus.h` — under Xvfb that deferral has been seen to
+take seconds, which lands in the middle of whatever check is running.
+Keyboard-driven focus has no such delay, so with the pointer out of the way
+the section is deterministic. Don't reintroduce a pointer-based way of
+deciding which window starts with the focus: use the fact that lwm focuses a
+window as it maps it.
+
+Each Super+arrow then raises the window it focused and lands the pointer on
+it, which doesn't disturb that: the enter event names the window which already
+has the focus, and it is in front by then, so nothing else can claim it.
 
 The window-moving section is the exception to the pointer-parking rule above:
 one check deliberately puts the pointer on the window before moving it, since
@@ -116,6 +122,15 @@ The decorations section is the one that most needs a real server: the client
 window is reparented out of its frame and back in again, and what that costs
 (an unmap, a restack and the input focus) is exactly what `FakeServer` models
 only as far as lwm asked for it.
+
+One section covers a window which doesn't take the input focus (an `xclock`,
+started by `start_no_input_client`). It's here rather than in `focus_test.cc`
+because the thing that used to break is invisible to `FakeServer`: it hands a
+`KeyPress` to `HandleKeyPress` whatever the input focus is, whereas a real
+server discards key events, and refuses to activate any passive grab, when the
+focus is `None`. The unit test pins where the focus goes; this pins what the
+keyboard then does. `xdotool getwindowfocus -f` prints 0 for a focus of
+`None`, which is what `x_focus_is_set` looks at.
 
 The last section covers undecorated windows: the gestures and
 `_NET_WM_MOVERESIZE` on a client that draws its own decorations, which are

@@ -2,6 +2,12 @@
 
 ## 2026-08-25 (pn, Basel)
 
+Windows-arrow now raises the window it focuses, and takes the mouse pointer
+with it, putting it in the middle of the largest visible part of that window.
+
+Fixed the keyboard gestures doing nothing while a window which doesn't take
+the input focus (xclock, say) was the current one.
+
 Fixed windows showing another application's icon in their title bar.
 
 

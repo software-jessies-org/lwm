@@ -128,8 +128,22 @@ being unreachable.
 .PP
 Windows on other monitors are included, so this is also the way to move the
 focus from one screen to another.  Hidden windows are not included.  If there
-is no window in the direction pressed, the focus does not move.  Only the
-input focus changes: the window is not raised, and the pointer is not moved.
+is no window in the direction pressed, nothing happens at all.
+.PP
+The window which gains the focus is raised, and the pointer moves to it, so
+that the mouse and the keyboard agree about which window is being worked on:
+with the default focus-follows-mouse, a pointer left behind on another window
+would hand the focus back at the first twitch of the mouse.  The pointer is
+placed in the middle of the largest unbroken piece of the window which can
+actually be seen - the biggest rectangle of it which is on screen, clear of
+the space any panel has reserved, and not covered by anything still in front
+of it.  Usually that is simply the middle of the window, since raising it has
+put it in front of everything else.  What a raise does not get a window out
+from under is its own dialogs, which come up with it and stay in front of it;
+a window mostly covered by one of those gets the pointer in the middle of
+whatever of it still shows, since dropping the pointer on the dialog would
+give the dialog the focus straight back.  A window with nothing showing at all
+leaves the pointer where it is.
 .PP
 Adding Shift moves the focused window itself rather than the focus.  The
 window travels one step per press: the first takes it to the inner edge of the

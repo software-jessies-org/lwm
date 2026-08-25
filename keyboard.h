@@ -4,9 +4,10 @@
 #include "xlib.h"
 
 // Keyboard navigation: holding the Windows key and pressing an arrow moves
-// the input focus to the next window that way. Adding Shift moves the focused
-// window itself instead, to the edge of its monitor and then on to the next
-// monitor.
+// the input focus to the next window that way, raises it, and puts the
+// pointer on it, in the middle of the largest part of it which is actually
+// visible. Adding Shift moves the focused window itself instead, to the edge
+// of its monitor and then on to the next monitor.
 //
 // Both choices are pure geometry, and live in navigate.h. This file is the
 // part that has to talk to X: asking for the keys, and turning a KeyPress

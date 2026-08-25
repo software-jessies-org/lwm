@@ -225,8 +225,22 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
       // keep no children of their own, are unaffected by this.
       focusChildrenOf(c, c->window);
     } else {
-      // FIXME: is this sensible?
-      xlib::XSetInputFocus(XCB_NONE, XCB_INPUT_FOCUS_POINTER_ROOT,
+      // ICCCM 4.1.7's "no input" model: the client neither wants the focus nor
+      // understands WM_TAKE_FOCUS, so there is nowhere to put it - xclock and
+      // xload are the classic examples. The focus goes to the root window,
+      // which is not the same as putting it nowhere.
+      //
+      // This used to be XCB_NONE, and that broke every one of lwm's keyboard
+      // gestures for as long as such a window was the focused client. With no
+      // focus window at all the server discards key events entirely, and - the
+      // part that actually bites - a passive grab never activates: XGrabKey
+      // fires only when the grab window is the focus window, an ancestor of
+      // it, or a descendant of it containing the pointer, and none of those
+      // can hold when there is no focus window. lwm's arrow grabs are on the
+      // root, so Super+arrow simply stopped existing whenever the pointer was
+      // over an xclock. Focusing the root satisfies the first case and costs
+      // the client nothing: it asked for no key events and it still gets none.
+      xlib::XSetInputFocus(LScr::I->Root(), XCB_INPUT_FOCUS_POINTER_ROOT,
                            XCB_CURRENT_TIME);
     }
   }
