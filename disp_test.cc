@@ -379,6 +379,70 @@ TEST(EvConfigureRequest, UndecoratedWindowThatIsNotMonitorSizedIsNotSnapped) {
       << "a panel that wants to sit off the top of the screen may do so";
 }
 
+namespace {
+
+// The same layout with gummiband's 32-pixel strut off the top of the screen,
+// which is what makes the primary monitor's work area smaller than the
+// monitor. Mirrors what ewmh_set_strut does when a panel appears.
+void setTwoMonitorsWithTopPanel() {
+  setTwoMonitors();
+  LScr::I->ChangeStrut(EWMHStrut{0, 0, 32, 0});
+}
+
+}  // namespace
+
+TEST(EvConfigureRequest, UndecoratedWorkAreaSizedRequestCoversTheWholeMonitor) {
+  wmtest::World world(5760, 2160);
+  setTwoMonitorsWithTopPanel();
+  Client* c = mapUndecorated(&world, Rect::FromXYWH(1920, 0, 3840, 2160));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  // Shadow of the Tomb Raider after being hidden and restored: it re-derives
+  // its geometry from the Windows work area, and so asks to be the size of the
+  // monitor minus the panel, leaving the panel showing over the game.
+  xcb_configure_request_event_t e = configureRequest(
+      LScr::I->Root(), c->window,
+      XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH |
+          XCB_CONFIG_WINDOW_HEIGHT);
+  e.x = 1920;
+  e.y = 32;
+  e.width = 3840;
+  e.height = 2128;
+  world.server().ClearCalls();
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(1920, 0, 3840, 2160))
+      << "granting the request as asked would leave the panel over the game";
+}
+
+TEST(EvConfigureRequest, PanelSizedLikeTheWorkAreaIsNotGrownOverItsOwnStrut) {
+  wmtest::World world(5760, 2160);
+  setTwoMonitorsWithTopPanel();
+  Client* c = mapUndecorated(&world, Rect::FromXYWH(1920, 32, 3840, 2128));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+  // A client of its own that reserves the top of the screen. Its window is
+  // the size of the work area, which is exactly what it means to be.
+  c->strut = EWMHStrut{0, 0, 32, 0};
+
+  xcb_configure_request_event_t e = configureRequest(
+      LScr::I->Root(), c->window,
+      XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH |
+          XCB_CONFIG_WINDOW_HEIGHT);
+  e.x = 1920;
+  e.y = 32;
+  e.width = 3840;
+  e.height = 2128;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(1920, 32, 3840, 2128));
+}
+
 TEST(ClientLifecycle, UndecoratedFullMonitorWindowIsSnappedWhenAdopted) {
   wmtest::World world(5760, 2160);
   setTwoMonitors();
@@ -392,4 +456,19 @@ TEST(ClientLifecycle, UndecoratedFullMonitorWindowIsSnappedWhenAdopted) {
   EXPECT_EQ(world.server().Get(c->window)->rect,
             Rect::FromXYWH(1920, 0, 3840, 2160))
       << "the window itself has to move: there's no frame to carry it";
+}
+
+TEST(ClientLifecycle, UndecoratedWorkAreaSizedWindowIsGrownWhenAdopted) {
+  wmtest::World world(5760, 2160);
+  setTwoMonitorsWithTopPanel();
+  // A game that starts up while the panel is already there gets its geometry
+  // from the work area, and never sends a configure request about it.
+  Client* c = mapUndecorated(&world, Rect::FromXYWH(1920, 32, 3840, 2128));
+  ASSERT_TRUE(c != nullptr);
+  ASSERT_FALSE(c->framed);
+
+  EXPECT_EQ(c->ContentRect(), Rect::FromXYWH(1920, 0, 3840, 2160));
+  EXPECT_EQ(world.server().Get(c->window)->rect,
+            Rect::FromXYWH(1920, 0, 3840, 2160))
+      << "it has to grow over the panel, not just move: hence MoveResizeTo";
 }

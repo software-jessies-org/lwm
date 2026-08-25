@@ -153,6 +153,11 @@ checks the three things a strut should reach — `_NET_WORKAREA` on the root,
 `LScr::VisibleAreas(true)` (read back through the debug CLI's `xrandr ?`),
 and the position `AutoPlacer` gives the next window.
 
+A fourth check goes the other way: with the dock's strut in place, an
+undecorated window mapped at exactly the size of the work area (a borderless
+full-screen game, played by `csdclient.cc`) has to be grown to cover the whole
+screen, dock and all. See "Borderless full screen" in `concepts.md`.
+
 It uses a deep (200 pixel) strut on purpose: the auto-placement cascade
 starts 100 pixels in, so a shallower strut would leave the placement check
 unable to tell an honoured strut from an ignored one.

@@ -2,6 +2,9 @@
 
 ## 2026-08-25 (pn, Basel)
 
+A borderless full-screen game which sizes itself to the work area now covers
+the whole monitor, instead of leaving the panel showing over the top of it.
+
 A window filling its monitor on one axis keeps filling whichever monitor it's
 dragged onto: drag a vertically maximised window to a taller one and it grows.
 Which monitor a drag is over now goes by the pointer, not by the window.

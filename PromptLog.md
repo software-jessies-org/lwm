@@ -125,6 +125,10 @@ Another drag fix. When dragging a window from a monitor in which it is verticall
 
 ---
 
+In my current desktop, right now, the 'shadow of the tomb raider' window has been hidden and then re-maximised. It should be full-screen, but the Gummiband window at the top of the same monitor is visible. I don't know whether its strut has pushed the game's window downwards, or if the gummiband window is somehow sticking to the top of the window stack, but it shouldn't be visible in this situation - the game's window should be full-screen and over the top of the gummiband window. Diagnose and fix. Note that this game doesn't use the proper 'full screen' mode, but forces its own window geometry, and it sometimes gets it wrong (we had to add a hack for this already once, which forced a window the exact size of the monitor to be positioned correctly).
+
+---
+
 ## Not yet started
 
 In a previous discussion, you reported this:

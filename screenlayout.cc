@@ -326,30 +326,39 @@ int absDist(int min1, int max1, int min2, int max2) {
   return 0;
 }
 
-Rect SnapToMonitor(const Rect& r, const std::vector<Rect>& areas) {
-  // Only an exact size match counts. A window one pixel off a monitor's size
-  // isn't trying to cover it, and guessing on its behalf would be worse than
-  // leaving it alone.
+Rect SnapToMonitor(const Rect& r,
+                   const std::vector<Rect>& areas,
+                   const EWMHStrut& strut) {
+  // Two sizes mean "this window is trying to cover that monitor": the
+  // monitor's, and the monitor's work area - what a panel's strut leaves of
+  // it. Only an exact match of one of them counts. A window one pixel off
+  // isn't trying to cover the monitor, and guessing on its behalf would be
+  // worse than leaving it alone.
+  const std::vector<Rect> work_areas = areasMinusStruts(areas, strut);
   Rect best{};
   int best_overlap = 0;
-  for (const Rect& area : areas) {
-    if (area.area() != r.area()) {
+  for (size_t i = 0; i < areas.size(); i++) {
+    if (areas[i].area() != r.area() && work_areas[i].area() != r.area()) {
       continue;
     }
-    const int overlap = Rect::Intersect(r, area).area().num_pixels();
+    const int overlap = Rect::Intersect(r, areas[i]).area().num_pixels();
     if (overlap > best_overlap) {
       best_overlap = overlap;
-      best = area;
+      best = areas[i];
     }
   }
   // Require the window to be mostly on the monitor already. Because r is
-  // exactly one monitor's size, at most one monitor can hold more than half of
-  // it, so this both picks the target unambiguously and stops us dragging a
-  // window across the desk because its size happened to match.
+  // exactly the size of one monitor or of its work area, at most one monitor
+  // can hold more than half of it, so this both picks the target unambiguously
+  // and stops us dragging a window across the desk because its size happened
+  // to match.
   if (best_overlap * 2 <= r.area().num_pixels()) {
     return r;
   }
-  return Rect::Translate(r, Point::Sub(best.origin(), r.origin()));
+  // The whole monitor, both when the window was merely mis-placed (where this
+  // is r translated onto the monitor) and when it was sized to the work area
+  // (where it also grows over the panel, which is the point).
+  return best;
 }
 
 Rect findBestScreenFor(const Rect& r, const std::vector<Rect>& areas) {

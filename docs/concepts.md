@@ -308,14 +308,32 @@ decorations off (`_MOTIF_WM_HINTS`, see `motifWouldDecorate` in `manage.cc`)
 and sizes itself to the monitor, so lwm never gets a say and its own arithmetic
 has to be right.
 
-It sometimes isn't. A game under Proton positions such a window using the
-Windows work area, which lwm derives from panel struts, and lands the window
-exactly the height of a top panel's strut above the monitor. So
-`SnapToMonitor` (`screenlayout.cc`) puts it back: an **unframed** window whose
-requested size is *exactly* one monitor's, and which already covers most of
-that monitor, is translated onto the monitor's origin. It never resizes, never
-moves a window to a monitor it wasn't mostly on already, and doesn't apply to
-framed windows, where a monitor-sized window is just a big window.
+It sometimes isn't, and always for the same reason: what such a game has to
+work from is the Windows work area, which Wine derives from the panel struts
+lwm publishes in `_NET_WORKAREA`. That goes wrong in two ways, and
+`SnapToMonitor` (`screenlayout.cc`) fixes both. It takes an **unframed** window
+which already covers most of one monitor and whose size is *exactly* either
+
+* that monitor's, in which case it has only been mis-placed - it lands the
+  height of a top panel's strut above the monitor - and is translated onto the
+  monitor's origin; or
+* that monitor's **work area**, the monitor minus the strut, in which case it
+  is grown over the panel as well as moved. That's the shape Shadow of the
+  Tomb Raider comes back in after being hidden and restored: it stops being a
+  full-screen window and becomes a maximised one, and a maximised window
+  respects the panel, which for a game covering the monitor is exactly wrong.
+  Growing it is safe because the client asked to fill the screen; it gets a
+  `ConfigureNotify` for a size it didn't name and adjusts, in the game's case
+  by dropping its own fixed-size `WM_NORMAL_HINTS`.
+
+Only an exact match of one of those two sizes counts: a window a pixel off
+either isn't trying to cover a monitor, and guessing on its behalf would be
+worse than leaving it alone. Nor does it ever move a window to a monitor it
+wasn't mostly on already, or apply to framed windows, where a
+monitor-sized window is just a big window. A client with **struts of its own**
+is exempt too: a panel the size of the work area is doing exactly what it means
+to, and blowing it up to the size of the monitor would cover the screen with
+somebody's furniture.
 
 Two call sites, because a client need not use either alone: `manage()`, for a
 client that creates its window in the wrong place and simply maps it, and the
@@ -324,7 +342,11 @@ afterwards. The latter only acts on a request naming all of x, y, width and
 height - lwm's `content_rect_` for an unframed client is only ever the geometry
 it had when we adopted it, since these requests are passed to the server rather
 than applied through `Client`, so there is nothing trustworthy to combine a
-partial request with.
+partial request with. The `manage()` one uses `MoveResizeTo`, not `MoveTo`,
+since the work-area case changes the size.
+
+`strut_test.sh` covers the work-area case end to end, since it already has a
+dock with a strut on screen; `csdclient.cc` plays the borderless game.
 
 On an xrandr change, `LScr::SetVisibleAreas` computes every client's new rect
 with `MapToNewAreas` *before* swapping in the new geometry, then applies the

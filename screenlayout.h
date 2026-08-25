@@ -23,22 +23,29 @@ Rect findBestScreenFor(const Rect& r, const std::vector<Rect>& areas);
 // `areas` (specifically, the one findBestScreenFor picks).
 Rect makeVisible(Rect r, const std::vector<Rect>& areas);
 
-// If `r` is exactly the size of one of the monitors in `areas`, and already
-// covers most of that monitor, returns `r` translated onto the monitor's
-// origin. Otherwise returns `r` unchanged. Never resizes, and never moves a
-// window to a monitor it wasn't mostly on already.
+// If `r` is exactly the size of one of the monitors in `areas`, or of that
+// monitor's work area (the monitor minus `strut`), and `r` already covers most
+// of that monitor, returns the monitor's rectangle. Otherwise returns `r`
+// unchanged. It never moves a window to a monitor it wasn't mostly on already.
 //
 // This exists for undecorated windows that go full screen by sizing themselves
 // to a monitor rather than by asking for _NET_WM_STATE_FULLSCREEN - which is
 // what "borderless fullscreen" means in every game's display settings. Their
-// arithmetic is their own, and it can be wrong: a game under Proton positions
-// such a window using the Windows work area, and lands it exactly the height
-// of a top panel's strut above the monitor. Since the request can only have
-// been meant to cover the monitor, put it on the monitor.
+// arithmetic is their own, and it can be wrong, because what a game under
+// Proton has to hand is the Windows work area, which Wine derives from the
+// panel struts lwm publishes in _NET_WORKAREA. So such a game lands its window
+// either the height of a top panel's strut above the monitor (the right size,
+// the wrong place) or filling the work area exactly (the wrong size as well,
+// which is what you get if the game is hidden and restores itself as a
+// maximised window rather than a full-screen one). Since neither request can
+// have been meant as anything but "cover that monitor", cover that monitor:
+// the work-area case is grown over the panel as well as moved.
 //
 // `areas` should be the visible areas *without* struts subtracted: a window
 // covering a monitor covers the panels too.
-Rect SnapToMonitor(const Rect& r, const std::vector<Rect>& areas);
+Rect SnapToMonitor(const Rect& r,
+                   const std::vector<Rect>& areas,
+                   const EWMHStrut& strut);
 
 // The monitor a drag is over. That's the one the *pointer* is in, not the one
 // the window overlaps most: the window can be far bigger than the pointer's

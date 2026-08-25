@@ -127,7 +127,8 @@ Each carries its own compile command in a comment at the top of the file.
   and for moving/resizing undecorated windows (gestures and
   `_NET_WM_MOVERESIZE`); see `../docs/dev-workflow.md`.
 * `strut_test.sh` — Xvfb test for a strut set by a dock that was already on
-  screen before lwm started; see `../docs/dev-workflow.md`.
+  screen before lwm started, and for a borderless full-screen window sized to
+  the work area being grown over that dock; see `../docs/dev-workflow.md`.
 
 ## Where to look for...
 

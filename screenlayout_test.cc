@@ -176,22 +176,28 @@ static const std::vector<Rect> kTwoMonitors = {
     Rect::FromXYWH(1920, 0, 3840, 2160),  // primary
 };
 
+// No panels, so a monitor's work area is the whole monitor.
+static const EWMHStrut kNoStrut = EWMHStrut{0, 0, 0, 0};
+
+// The strut gummiband sets: 32 pixels off the top of the screen.
+static const EWMHStrut kTopPanelStrut = EWMHStrut{0, 0, 32, 0};
+
 TEST(SnapToMonitor, MonitorSizedWindowJustAboveItsMonitorIsPulledOn) {
   // Shadow of the Tomb Raider, borderless full screen, with a 32-pixel panel
   // reserving the top of the primary monitor.
   const Rect asked = Rect::FromXYWH(1920, -32, 3840, 2160);
-  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors),
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut),
             Rect::FromXYWH(1920, 0, 3840, 2160));
 }
 
 TEST(SnapToMonitor, WindowAlreadyOnItsMonitorIsUntouched) {
   const Rect asked = Rect::FromXYWH(1920, 0, 3840, 2160);
-  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut), asked);
 }
 
 TEST(SnapToMonitor, SmallerMonitorGetsItsOwnWindowSnapped) {
   const Rect asked = Rect::FromXYWH(-3, 395, 1920, 1200);
-  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors),
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut),
             Rect::FromXYWH(0, 400, 1920, 1200));
 }
 
@@ -199,36 +205,65 @@ TEST(SnapToMonitor, SizeMustMatchAMonitorExactly) {
   // One pixel short of the primary. A window that isn't trying to cover a
   // monitor is none of our business, however close it gets.
   const Rect asked = Rect::FromXYWH(1920, -32, 3840, 2159);
-  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut), asked);
 }
 
 TEST(SnapToMonitor, WindowMostlyOffItsMonitorIsLeftAlone) {
   // Deliberately parked with only a third of it on the primary: that's a
   // position, not a mistake, so don't drag it back.
   const Rect asked = Rect::FromXYWH(1920, 1440, 3840, 2160);
-  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut), asked);
 }
 
 TEST(SnapToMonitor, WindowSizedLikeAMonitorButOnAnotherIsLeftAlone) {
   // Same size as the secondary monitor, but sitting on the primary. It doesn't
   // cover a monitor and never did, so there's nothing to correct.
   const Rect asked = Rect::FromXYWH(2500, 500, 1920, 1200);
-  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors), asked);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut), asked);
 }
 
 TEST(SnapToMonitor, IdenticalMonitorsSnapToTheOneTheWindowIsOn) {
   const std::vector<Rect> twins = {Rect::FromXYWH(0, 0, 1920, 1080),
                                    Rect::FromXYWH(1920, 0, 1920, 1080)};
-  EXPECT_EQ(SnapToMonitor(Rect::FromXYWH(1900, -20, 1920, 1080), twins),
+  EXPECT_EQ(SnapToMonitor(Rect::FromXYWH(1900, -20, 1920, 1080), twins, kNoStrut),
             Rect::FromXYWH(1920, 0, 1920, 1080))
       << "nearly on the right-hand twin, so it belongs to the right-hand twin";
-  EXPECT_EQ(SnapToMonitor(Rect::FromXYWH(20, 20, 1920, 1080), twins),
+  EXPECT_EQ(SnapToMonitor(Rect::FromXYWH(20, 20, 1920, 1080), twins, kNoStrut),
             Rect::FromXYWH(0, 0, 1920, 1080));
 }
 
 TEST(SnapToMonitor, NoMonitorsIsNotACrash) {
   const Rect asked = Rect::FromXYWH(10, 10, 100, 100);
-  EXPECT_EQ(SnapToMonitor(asked, {}), asked);
+  EXPECT_EQ(SnapToMonitor(asked, {}, kNoStrut), asked);
+}
+
+TEST(SnapToMonitor, WorkAreaSizedWindowIsGrownToCoverTheMonitor) {
+  // The same game after being hidden and restored: this time it doesn't just
+  // mis-place a monitor-sized window, it sizes itself to the work area, which
+  // is what Wine hands it as the monitor's usable area. Nothing else it could
+  // mean but "full screen", so it gets the monitor, panel and all.
+  const Rect asked = Rect::FromXYWH(1920, 32, 3840, 2128);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kTopPanelStrut),
+            Rect::FromXYWH(1920, 0, 3840, 2160));
+}
+
+TEST(SnapToMonitor, WorkAreaSizedWindowOnAMonitorTheStrutMissesIsLeftAlone) {
+  // The secondary monitor starts below the strut, so its work area is the
+  // whole of it and this window is the size of neither. It's just a window.
+  const Rect asked = Rect::FromXYWH(0, 400, 1920, 1168);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kTopPanelStrut), asked);
+}
+
+TEST(SnapToMonitor, WorkAreaSizedWindowMostlyOffItsMonitorIsLeftAlone) {
+  const Rect asked = Rect::FromXYWH(1920, 1440, 3840, 2128);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kTopPanelStrut), asked);
+}
+
+TEST(SnapToMonitor, WorkAreaSizeOnlyCountsWhenThereIsAStrut) {
+  // With no panel there's no work area distinct from the monitor, so a window
+  // 32 pixels short of the monitor is just a window 32 pixels short.
+  const Rect asked = Rect::FromXYWH(1920, 32, 3840, 2128);
+  EXPECT_EQ(SnapToMonitor(asked, kTwoMonitors, kNoStrut), asked);
 }
 
 namespace {

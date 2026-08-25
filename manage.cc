@@ -168,16 +168,23 @@ void manage(Client* c) {
   if (c->framed) {
     c->FurnishAt(rect);
   } else {
-    // An undecorated window the exact size of a monitor is going full screen
-    // the borderless way, and may have got the position slightly wrong; put it
-    // on the monitor. See SnapToMonitor. The move has to happen here as well as
-    // in EvConfigureRequest, because a client that gets the geometry it wants
-    // at creation time never sends us a configure request at all.
-    const Rect snapped =
-        SnapToMonitor(c->ContentRect(), LScr::I->VisibleAreas(false));
-    if (snapped != c->ContentRect()) {
-      LOGD(c) << "Snapping undecorated full-monitor window to " << snapped;
-      c->MoveTo(snapped);
+    // An undecorated window the exact size of a monitor, or of a monitor's
+    // work area, is going full screen the borderless way, and may have got the
+    // geometry slightly wrong; put it on the monitor. See SnapToMonitor. This
+    // has to happen here as well as in EvConfigureRequest, because a client
+    // that gets the geometry it wants at creation time never sends us a
+    // configure request at all. Clients with struts of their own are exempt:
+    // a panel filling the work area is doing what it means to.
+    if (!c->HasStruts()) {
+      const Rect snapped =
+          SnapToMonitor(c->ContentRect(), LScr::I->VisibleAreas(false),
+                        LScr::I->Strut());
+      if (snapped != c->ContentRect()) {
+        LOGD(c) << "Snapping undecorated full-monitor window to " << snapped;
+        // MoveResizeTo, not MoveTo: a window sized to the work area has to
+        // grow over the panel as well as move.
+        c->MoveResizeTo(snapped);
+      }
     }
   }
 

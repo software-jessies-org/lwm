@@ -66,6 +66,7 @@ wait_for() {
 cli() { echo "$1" >"${CLI_FIFO}"; }
 
 cleanup() {
+  [ -n "${CSD_PID:-}" ] && kill "${CSD_PID}" >/dev/null 2>&1
   [ -n "${CLIENT_PID:-}" ] && kill "${CLIENT_PID}" >/dev/null 2>&1
   [ -n "${DOCK_PID:-}" ] && kill "${DOCK_PID}" >/dev/null 2>&1
   [ -n "${CLI_HOLD_PID:-}" ] && kill "${CLI_HOLD_PID}" >/dev/null 2>&1
@@ -212,6 +213,47 @@ else
     pass "auto-placed window is positioned below the strut"
   else
     fail "auto-placed window is positioned below the strut (y=${GOT_Y}, want >= ${WANT_Y})"
+  fi
+fi
+
+# --- 4: a borderless full-screen window covers the strut --------------------
+#
+# The other side of the same coin. A game under Proton in "borderless
+# fullscreen" sizes its own undecorated window from the Windows work area,
+# which Wine takes from the _NET_WORKAREA checked above - so it asks for the
+# screen minus the strut, and the dock stays visible over the top of the game.
+# Shadow of the Tomb Raider does this after being hidden and restored. lwm
+# grows such a window to the whole monitor; see SnapToMonitor.
+
+CSD_BIN="${WORKDIR}/csdclient"
+if ! g++ -o "${CSD_BIN}" -std=c++17 csdclient.cc -lxcb \
+    >"${WORKDIR}/csdclient.log" 2>&1; then
+  fail "could not build csdclient.cc, skipping the borderless full-screen check"
+else
+  "${CSD_BIN}" window 0 "${STRUT_TOP}" "${SCREEN_W}" \
+    "$((SCREEN_H - STRUT_TOP))" >"${WORKDIR}/csdwin.log" 2>&1 &
+  CSD_PID=$!
+  CSD_ID=""
+  for _ in $(seq 1 50); do
+    CSD_ID=$(xdotool search --name '^csdwin$' 2>/dev/null | head -1)
+    [ -n "${CSD_ID}" ] && break
+    sleep 0.1
+  done
+  if [ -z "${CSD_ID}" ]; then
+    fail "the borderless full-screen test client appeared"
+  else
+    sleep 0.5
+    GOT_GEOM=$(xwininfo -id "${CSD_ID}" 2>/dev/null | sed -n \
+      's/.*Absolute upper-left X: *\(.*\)/x=\1/p;
+       s/.*Absolute upper-left Y: *\(.*\)/y=\1/p;
+       s/.*Width: *\(.*\)/w=\1/p;
+       s/.*Height: *\(.*\)/h=\1/p' | tr '\n' ' ')
+    WANT_GEOM="x=0 y=0 w=${SCREEN_W} h=${SCREEN_H} "
+    if [ "${GOT_GEOM}" = "${WANT_GEOM}" ]; then
+      pass "work-area-sized undecorated window is grown to cover the screen"
+    else
+      fail "work-area-sized undecorated window is grown to cover the screen (got '${GOT_GEOM}', want '${WANT_GEOM}')"
+    fi
   fi
 fi
 
