@@ -131,6 +131,13 @@ void LScr::InitEWMH() {
   // friends conclude they're running with no WM to co-operate with.
   xlib::XChangeProperty(ewmh_compat_, ewmh_atom[_NET_SUPPORTING_WM_CHECK],
                         XCB_ATOM_WINDOW, 32, &ewmh_compat_, 1);
+  // Map it. Nothing is ever drawn in it, and at -200,-200 it's nowhere near
+  // the screen, but it has to be viewable because it's where the input focus
+  // goes when no client will take it (see Focuser::ReallyFocusClient), and
+  // XSetInputFocus on an unmapped window is a BadMatch. Mapping it doesn't
+  // hand it to the window management code: it's one of our own windows, so
+  // GetOrAddClient refuses it.
+  xlib::XMapWindow(ewmh_compat_);
 
   // set root window properties. Note the 32-bit arrays: these properties are
   // format 32, and that means uint32_t, not long.

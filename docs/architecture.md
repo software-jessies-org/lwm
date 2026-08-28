@@ -26,6 +26,9 @@
    and believe there's an EWMH window manager only if the two agree (that's how
    a property left behind by a crashed WM is detected), so getting only the
    first one right makes SDL, Wine and friends decide they're running bare.
+   That window (`LScr::EwmhWindow()`) is mapped, because it doubles as the
+   place lwm parks the input focus when no client will take it; see
+   `concepts.md`'s focus section.
 8. `session_init()`.
 9. XRandR: `xcb_randr_query_version` (mandatory before any other RandR
    request), select screen-change notifications, take the initial layout via

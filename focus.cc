@@ -227,8 +227,8 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
     } else {
       // ICCCM 4.1.7's "no input" model: the client neither wants the focus nor
       // understands WM_TAKE_FOCUS, so there is nowhere to put it - xclock and
-      // xload are the classic examples. The focus goes to the root window,
-      // which is not the same as putting it nowhere.
+      // xload are the classic examples. The focus goes to lwm's own EWMH
+      // window, which is not the same as putting it nowhere.
       //
       // This used to be XCB_NONE, and that broke every one of lwm's keyboard
       // gestures for as long as such a window was the focused client. With no
@@ -238,9 +238,17 @@ void Focuser::ReallyFocusClient(Client* c, bool give_focus) {
       // it, or a descendant of it containing the pointer, and none of those
       // can hold when there is no focus window. lwm's arrow grabs are on the
       // root, so Super+arrow simply stopped existing whenever the pointer was
-      // over an xclock. Focusing the root satisfies the first case and costs
-      // the client nothing: it asked for no key events and it still gets none.
-      xlib::XSetInputFocus(LScr::I->Root(), XCB_INPUT_FOCUS_POINTER_ROOT,
+      // over an xclock. Parking the focus on the EWMH window satisfies the
+      // "ancestor of the focus window" case, because the root is its parent,
+      // and it costs the client nothing: it asked for no key events and it
+      // still gets none.
+      //
+      // The obvious place to park it is the root itself, and that's what this
+      // used to do. The trouble is that the root is common property: anything
+      // else on the display can focus it too, so we couldn't tell our own
+      // parked focus from someone else's, and whoever went last won. The EWMH
+      // window is ours alone.
+      xlib::XSetInputFocus(LScr::I->EwmhWindow(), XCB_INPUT_FOCUS_POINTER_ROOT,
                            XCB_CURRENT_TIME);
     }
   }

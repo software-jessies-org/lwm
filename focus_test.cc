@@ -213,13 +213,15 @@ TEST(Focuser, GloballyActiveClientIsSentWmTakeFocus) {
   EXPECT_TRUE(sent) << "no WM_TAKE_FOCUS client message was sent";
 }
 
-TEST(Focuser, NoInputClientPutsTheFocusOnTheRootAndNotNowhere) {
+TEST(Focuser, NoInputClientPutsTheFocusOnLWMsWindowAndNotNowhere) {
   // ICCCM 4.1.7's "no input" model: input=False and no WM_TAKE_FOCUS, which
   // is what xclock and xload look like. There's nowhere to put the focus, but
   // "nowhere" must not mean XCB_NONE: with no focus window the server drops
   // every key event, and a passive grab can't activate at all, so lwm's own
   // Super+arrow gestures stop working for as long as such a window is the
   // focused client. See keyboard_test.cc for that end of it.
+  // It parks on lwm's EWMH window rather than the root, because the root is
+  // shared with every other program on the display and they park there too.
   wmtest::World world;
   Client* c = world.MapClientWindow(Rect::FromXYWH(10, 10, 100, 100));
   ASSERT_TRUE(c != nullptr);
@@ -230,7 +232,7 @@ TEST(Focuser, NoInputClientPutsTheFocusOnTheRootAndNotNowhere) {
   LScr::I->GetFocuser()->UnfocusClient(c);
   LScr::I->GetFocuser()->FocusClient(c);
 
-  EXPECT_EQ(world.server().FocusedWindow(), LScr::I->Root());
+  EXPECT_EQ(world.server().FocusedWindow(), LScr::I->EwmhWindow());
   EXPECT_NE(world.server().FocusedWindow(), Window(XCB_NONE));
   // And lwm still counts it as the focused client, which is what keeps its
   // title bar highlighted and gives the arrow keys somewhere to start from.

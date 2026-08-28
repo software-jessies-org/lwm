@@ -1,5 +1,11 @@
 # Change Log for "lwm"
 
+## 2026-08-28 (pn, Basel)
+
+When no window will take the input focus, lwm now parks it on its own EWMH
+window rather than on the root, which other programs also use.
+
+
 ## 2026-08-25 (pn, Basel)
 
 A borderless full-screen game which sizes itself to the work area now covers

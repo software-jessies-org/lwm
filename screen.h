@@ -27,6 +27,11 @@ class LScr {
   Window Popup() const { return popup_; }
   Window Menu() const { return menu_; }
 
+  // The EWMH _NET_SUPPORTING_WM_CHECK window. It's a 1x1 window parked off the
+  // side of the screen, and it's also where lwm parks the input focus when
+  // there's no client which can take it. See Focuser::ReallyFocusClient.
+  Window EwmhWindow() const { return ewmh_compat_; }
+
   int Width() const { return width_; }
   int Height() const { return height_; }
   void ChangeScreenDimensions(int nScrWidth, int nScrHeight);
