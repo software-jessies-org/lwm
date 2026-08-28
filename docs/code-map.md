@@ -1,9 +1,13 @@
 # Code map
 
-Build list lives in `SRCS` in the hand-written `Makefile` (imake is gone; see
-`xcb-migration-plan.md`). This page tracks progress against
-`refactoring-plan.md`: phases A through E are done. Tier 0 is extracted and
-tested with no X11 dependency, `lwm.h` is split into one header per `.cc`, the
+lwm's source lives in `src/lwm/`; the build list is `LWM_SRCS` in the
+hand-written `Makefile` (imake is gone; see `xcb-migration-plan.md`), objects
+land in `build/lwm/` and the binary in `bin/lwm`. File names below are relative
+to `src/lwm/`. The repo holds two other programs — `src/gummiband/`, a panel,
+and `src/speckeysd/`, a hot key daemon — but this page is about lwm.
+
+This page tracks progress against `refactoring-plan.md`: phases A through E
+are done. Tier 0 is extracted and tested with no X11 dependency, `lwm.h` is split into one header per `.cc`, the
 misplaced classes (`Focuser`/`Hider`/`DragHandler`) live in their own files,
 and the `xlib` shim has been inverted into an interface — `xlib::Server`
 (`server.h`) with `RealServer` (`realserver.cc`) and `FakeServer`
@@ -90,7 +94,7 @@ all, and neither do `xbridge.cc` or `xfont.cc` (they *can't*: see below).
 | `wmtest.cc` / `wmtest.h` | `wmtest::World`: stands up a `FakeServer`, `Resources`, the atoms, the fake font and `LScr` in main()'s own order, and puts everything back afterwards. One per test, on the stack. Also calls `xlib::ForgetLWMWindows()`: each `FakeServer` hands out window ids from the start again, so ids the last test's lwm windows claimed would make this test's *client* windows look like lwm's own. |
 | `disp_test.cc`, `focus_test.cc`, `client_test.cc`, `ewmh_test.cc`, `drag_test.cc`, `keyboard_test.cc`, `icon_test.cc` | The tests that need a server: `EvConfigureRequest`'s Nautilus offset arithmetic, `Focuser`'s history and its timerfd deferral, the client lifecycle across `LScr`'s registries, `fix_stack` plus the recursion guard, the Windows-key gestures from the `ButtonPress` down to the window moving, shrinking onto a smaller monitor, growing to a bigger one it's still maximised on, or losing its furniture, and Super(+Shift)+arrow from the `KeyPress` down to the focus or the window moving. `FakeServer::GetKeyboardMapping` reports a keyboard with the four arrows on it and nothing else. `icon_test.cc` covers the icon cache's keying and refcounts, using `FakeServer::CreatePixmapWithPixels` to hand out a recycled pixmap ID the way a real server does. |
 
-Still compiled straight into the main binary and run via `./lwm -test`; the
+Still compiled straight into the main binary and run via `./bin/lwm -test`; the
 separate X11-free tier-0 test target mentioned in the plan doesn't exist yet.
 
 ## The Xlib boundary
@@ -107,7 +111,7 @@ the include prefix but is a separate library that doesn't link libX11.)
 ## Standalone tools (not linked into lwm)
 
 These are still on Xlib and always will be; they aren't part of lwm and
-aren't in `SRCS`.
+aren't in `LWM_SRCS`. They sit in `src/lwm/` alongside it.
 
 Each carries its own compile command in a comment at the top of the file.
 
@@ -118,7 +122,7 @@ Each carries its own compile command in a comment at the top of the file.
 * `csdclient.cc` — a stand-in for an app that draws its own decorations:
   maps an undecorated (`_MOTIF_WM_HINTS`) window, and sends
   `_NET_WM_MOVERESIZE` on demand. Built by `ui_test.sh` into its own temp
-  dir; not in `SRCS`.
+  dir; not in `LWM_SRCS`.
 * `force_title.sh` — zenity prompt + `setvisname`; the default action for
   alt-button1 on a title bar.
 * `smoke_test.sh` — Xvfb + xdotool functional smoke test; see

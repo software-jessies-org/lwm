@@ -129,7 +129,33 @@ In my current desktop, right now, the 'shadow of the tomb raider' window has bee
 
 ---
 
+## 2026-08-28
+
+We currently grab focus on the root window in order to capture keys, but I think another program tries to do the same. Let's instead use our ewmh_hints window (or whatever it's called). Please make this switch.
+
+---
+
+I want to add extra programs to this repo, which naturally live alongside lwm. To this end, I've moved the lwm source code under a new 'src/lwm' directory. Please rework the makefile to follow this.
+
+---
+
+I've added the source code to the gummiband and speckeysd programs to their own subdirs of src/. Adjust the Makefile appropriately. It can by default make all the binaries. Binaries should be built into the 'bin' directory (eg "bin/lwm" should be the binary of lwm).
+
+---
+
 ## Not yet started
+
+Convert the gummiband program to use xcb instead of xlib. Be careful of function call argument order, as some args are reordered between xlib and xcb.
+
+---
+
+Convert the speckeysd program to use xcb instead of xlib. Be careful of function call argument order, as some args are reordered between xlib and xcb.
+
+---
+
+The speckeysd program grabs input focus on the root window. This isn't very safe, as another process might have already grabbed root's focus. One way to get around this is to have speckeysd create its own invisible window, and grab hotkeys via that. Check that this will work for a non-window-manager client (in that we'll need to filter *all* keypress events, irrespective of where input focus us). If it's going to work OK, then implement this, otherwise suggest any good alternatives you know of.
+
+---
 
 In a previous discussion, you reported this:
 

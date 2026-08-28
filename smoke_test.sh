@@ -23,7 +23,7 @@ if [ "${1:-}" = "--record-golden" ]; then
   shift
 fi
 
-LWM_BIN="${1:-./lwm}"
+LWM_BIN="${1:-./bin/lwm}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GOLDEN_FILE="${SCRIPT_DIR}/testdata/golden_shim_calls.txt"
 
@@ -442,7 +442,9 @@ fi
 # Regenerate deliberately with --record-golden after an intentional change.
 
 ACTUAL_CALLS="${WORKDIR}/shim_calls.txt"
-grep -oE '^D [^ ]+ [^ ]+ xlib\.cc:[0-9]+: [^:]*: [A-Za-z_]+\(' "${LWM_LOG}" |
+# The file field is whatever __FILE__ was at compile time, so it carries the
+# path the compiler was given: src/lwm/xlib.cc, not xlib.cc.
+grep -oE '^D [^ ]+ [^ ]+ [^ ]*xlib\.cc:[0-9]+: [^:]*: [A-Za-z_]+\(' "${LWM_LOG}" |
   sed 's/.*: \([A-Za-z_]*\)($/\1/' | sort -u >"${ACTUAL_CALLS}"
 
 if [ ! -s "${ACTUAL_CALLS}" ]; then

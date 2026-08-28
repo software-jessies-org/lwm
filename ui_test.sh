@@ -38,7 +38,7 @@
 
 set -u
 
-LWM_BIN="${1:-./lwm}"
+LWM_BIN="${1:-./bin/lwm}"
 
 DISPLAY_NUM=$((90 + RANDOM % 400))
 DISPLAY_SPEC=":${DISPLAY_NUM}"
@@ -979,7 +979,7 @@ check_eq "Super+button 3 click hides the window" \
 # being the case that found it.
 
 CSD_BIN="${WORKDIR}/csdclient"
-if ! g++ -o "${CSD_BIN}" -std=c++17 csdclient.cc -lxcb \
+if ! g++ -o "${CSD_BIN}" -std=c++17 src/lwm/csdclient.cc -lxcb \
     >>"${WORKDIR}/clients.log" 2>&1; then
   fail "could not build csdclient.cc, skipping the undecorated-window checks"
 else

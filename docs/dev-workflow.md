@@ -9,12 +9,28 @@ make -j20          # incremental; the Makefile is hand-written and checked in
 Flags live in the `Makefile`: `-std=c++17 -g3 -O0 -DSHAPE -Wall -Werror -Wextra
 -Wpedantic -Wno-sign-compare`. **`-Werror` is on**, so warnings break the build.
 
-Adding a source file means adding it to `SRCS` in the `Makefile`.
+Source lives under `src/`, one directory per program; objects mirror that
+layout under `build/`, and the binaries land in `bin/`. `make` builds all
+three: `bin/lwm`, `bin/gummiband` (a panel) and `bin/speckeysd` (a hot key
+daemon). `make lwm` (or `gummiband`, or `speckeysd`) builds just the one.
+
+Adding a source file means adding it to that program's source list in the
+`Makefile` (`LWM_SRCS` and friends); adding a *program* means a new
+`src/<name>/` directory with its own source list, its own pkg-config package
+list and a link rule, alongside the three that are there.
+
+Each program compiles against its own packages: lwm's are the xcb ones, and
+the other two are plain Xlib. Which set a file gets is decided by the
+directory it's in, via the pattern-specific `PKG_CFLAGS` assignments in the
+`Makefile`. gummiband borrows lwm's logging by including `"lwm/log.h"` — the
+`-Isrc` on every compile is what makes that work — and links `build/lwm/log.o`
+directly. Don't add `-Isrc/lwm` to make that shorter: it would put lwm's
+`strings.h` ahead of the system one, which libc's `string.h` includes.
 
 ## Tests
 
 ```sh
-./lwm -test        # runs testing::RunAll() and exits; 0 = pass
+./bin/lwm -test    # runs testing::RunAll() and exits; 0 = pass
 ```
 
 Tests use the in-tree framework in `test.h`/`test.cc` (see
@@ -67,11 +83,11 @@ geometry doesn't need a font on a display).
 ## Functional smoke test
 
 ```sh
-./smoke_test.sh [path-to-lwm-binary]   # defaults to ./lwm
+./smoke_test.sh [path-to-lwm-binary]   # defaults to ./bin/lwm
 ```
 
 Runs lwm under a headless `Xvfb` and drives an `xterm` with `xdotool` to
-check the things `./lwm -test` can't: framing, `EvConfigureRequest`
+check the things `./bin/lwm -test` can't: framing, `EvConfigureRequest`
 move/resize, focus-on-activate, `WM_DELETE_WINDOW` close, and that lwm logs
 no `E `-level lines and is still alive at the end. Picks a random display
 number so it's safe to run alongside a real X session. Not exhaustive —
@@ -81,7 +97,7 @@ not a replacement for manual Xephyr testing of new behaviour.
 ## UI tests
 
 ```sh
-./ui_test.sh [path-to-lwm-binary]   # defaults to ./lwm; also `make ui`
+./ui_test.sh [path-to-lwm-binary]   # defaults to ./bin/lwm; also `make ui`
 ```
 
 The mouse gestures, driven with `xdotool` under the same headless `Xvfb`
@@ -142,7 +158,7 @@ there's no compiler to hand.
 ## Strut test
 
 ```sh
-./strut_test.sh [path-to-lwm-binary]   # defaults to ./lwm; also `make strut`
+./strut_test.sh [path-to-lwm-binary]   # defaults to ./bin/lwm; also `make strut`
 ```
 
 Struts (`_NET_WM_STRUT`), from the direction that isn't covered elsewhere: a
@@ -186,7 +202,7 @@ Two things worth knowing before adding a check:
 ```sh
 Xephyr :2 -screen 2000x1400 &
 DISPLAY=:2 xsetroot -solid Grey
-DISPLAY=:2 ./lwm -debugcli="xrandr 800x1200+0+0 800x500+800+0;dbg auto" 2>$HOME/stderr
+DISPLAY=:2 ./bin/lwm -debugcli="xrandr 800x1200+0+0 800x500+800+0;dbg auto" 2>$HOME/stderr
 # separate terminal:
 tail -f $HOME/stderr
 ```

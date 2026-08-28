@@ -19,7 +19,12 @@
 # Other generated Stuffs
 # (The Makefile is hand-written and checked in; imake is gone.)
 *.d
-lwm
+
+# Build tree: one directory of objects per program under src/, and the
+# binaries they link into.
+build/
+bin/
+
 lwm._man
 
 mkdist.sh

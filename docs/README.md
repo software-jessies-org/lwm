@@ -22,7 +22,12 @@ Notes-to-self for working on this codebase efficiently. Written for an agent
 ## Project shape at a glance
 
 * C++17, X11 (XCB; libX11 survives only to serve Xft), ~15k lines across the
-  `.cc`/`.h` files in `SRCS`, tests included, all compiled into one binary.
+  `.cc`/`.h` files under `src/lwm/`, tests included, all compiled into one
+  binary, `bin/lwm`.
+* Two other programs share the repo and the build: `src/gummiband/` (a panel)
+  and `src/speckeysd/` (a hot key daemon). Both are ordinary Xlib programs,
+  neither is documented here, and neither shares anything with lwm beyond
+  `log.h`. `make` builds all three into `bin/`.
 * Reparenting window manager: every framed client gets an LWM-owned *frame*
   window (`Client::parent`) which draws the title bar, borders and close cross.
 * Three global singletons: `dpy` (Display*), `LScr::I` (screen + client

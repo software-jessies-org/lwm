@@ -2,6 +2,9 @@
 
 ## 2026-08-28 (pn, Basel)
 
+The repo now holds gummiband and speckeysd too. Source moved to src/<program>/,
+and `make` builds all three into bin/.
+
 When no window will take the input focus, lwm now parks it on its own EWMH
 window rather than on the root, which other programs also use.
 
