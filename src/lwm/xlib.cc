@@ -383,6 +383,22 @@ int XLowerWindow(Window w) {
   return 0;
 }
 
+int XStackWindowAbove(Window w, Window sibling) {
+  LOGD(w) << "XStackWindowAbove(" << WinID(w) << ", " << WinID(sibling) << ")";
+  WindowChanges wc;
+  if (sibling) {
+    wc.Sibling(sibling);
+    wc.StackMode(XCB_STACK_MODE_ABOVE);
+  } else {
+    // Above nothing at all is the bottom of the stack, which is a plain Below
+    // with no sibling. Asking for Above with a sibling of None would be a
+    // raise, which is the opposite of what the caller asked for.
+    wc.StackMode(XCB_STACK_MODE_BELOW);
+  }
+  server->ConfigureWindow(w, wc);
+  return 0;
+}
+
 int XAddToSaveSet(Window w) {
   LOGD(w) << "XAddToSaveSet(" << WinID(w) << ")";
   server->ChangeSaveSet(w, true);

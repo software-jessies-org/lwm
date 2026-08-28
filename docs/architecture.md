@@ -193,6 +193,28 @@ raise has already been applied to. A window with nothing visible at all gets
 no warp: the pointer would have to be put down on the window in front of it,
 which would undo the gesture.
 
+The raise is the part with a memory. Raising the window the focus lands on is
+right for the window the user is going to and wrong for the ones they pass
+over on the way: with two windows either side of a third, flipping between
+them by tapping the same arrow twice used to leave that third window parked on
+top of both. So `keyboard.cc` keeps a note — one, never more — of the window
+its last press raised and where in the stacking order it came from, and each
+press puts that window back before raising its own. A window flipped across
+comes to the front for as long as it holds the focus and drops out of the way
+again as soon as the focus leaves it.
+
+The note is a `Client::window` and a bare `Window` naming what it sat directly
+above (0 for the bottom of the stack), which `Client::StackPosition` reads out
+of the server's tree and `Client::RestoreStackPosition` puts back with
+`xlib::XStackWindowAbove` — the general case of which `XRaiseWindow` and
+`XLowerWindow` are the two ends. The neighbour needn't be a client: a panel is
+just as good a marker of a place. Three things drop a note instead of acting on
+it: the window has since been closed (`GetClient` says so), the window it was
+above has gone (there is no longer a place to point at, and guessing is worse
+than leaving it), or the user has moved it by hand with Super+Shift+arrow,
+which earns it the front. Transients come down with their parent, in front of
+it, in the same way `Client::Raise` takes them up.
+
 Where a *window* goes is the other pure function in the same file,
 `MoveRectInDirection`: to the inner edge of its own monitor first, and only
 once it's already there to the next monitor that way, arriving against that

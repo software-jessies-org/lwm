@@ -22,7 +22,9 @@
 #include <string.h>
 #include <sys/timerfd.h>
 #include <time.h>
+#include <algorithm>
 #include <sstream>
+#include <vector>
 
 #include <unistd.h>
 
@@ -380,6 +382,51 @@ void Client::Raise() {
       xlib::XRaiseWindow(tr->parent);
     }
     xlib::XRaiseWindow(tr->window);
+  }
+  ewmh_set_client_list();
+}
+
+// The root-level window of a client: the frame if it has one, and the client
+// window itself if it doesn't. That's the one which has a place in the
+// stacking order the user can see; a framed client's own window is a child of
+// its frame, and restacking it moves it only among the frame's children.
+static Window stackedWindow(const Client* c) {
+  return c->framed ? c->parent : c->window;
+}
+
+Window Client::StackPosition() const {
+  const Window self = stackedWindow(this);
+  Window below = 0;
+  for (Window w : xlib::WindowTree::Query(LScr::I->Root()).children) {
+    if (w == self) {
+      return below;
+    }
+    below = w;
+  }
+  return 0;  // Not in the stack at all, so nothing is below us in it.
+}
+
+void Client::RestoreStackPosition(Window below) {
+  if (below) {
+    const std::vector<Window> stack =
+        xlib::WindowTree::Query(LScr::I->Root()).children;
+    if (std::find(stack.begin(), stack.end(), below) == stack.end()) {
+      return;  // The window we were above has gone; see client.h.
+    }
+  }
+  xlib::XStackWindowAbove(stackedWindow(this), below);
+  // The transients went up with us, so they come back down with us, each one
+  // just above the last: a dialog belongs in front of the window it's for
+  // wherever in the stack that window happens to be.
+  Window prev = stackedWindow(this);
+  for (auto it : LScr::I->Clients()) {
+    Client* tr = it.second;
+    if (tr->trans != window && !(framed && tr->trans == parent)) {
+      continue;
+    }
+    const Window trw = stackedWindow(tr);
+    xlib::XStackWindowAbove(trw, prev);
+    prev = trw;
   }
   ewmh_set_client_list();
 }

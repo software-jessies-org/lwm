@@ -758,6 +758,58 @@ else
   check "and raises it" in_front "${NAV_FRAME}" "${FRAME}"
   check "and puts the pointer on it" pointer_on "${NAV_FRAME}"
 
+  # A window flipped *past* rather than to: three windows in a row, with the
+  # middle one at the back. Tapping Left twice raises it on the way through
+  # and must put it back at the back afterwards, rather than leaving it parked
+  # on top of the two the user is working in.
+  #
+  # keyboard_test.cc has the same case against the fake server; what only a
+  # real one can show is that ConfigureWindow with a sibling and Above puts a
+  # window exactly where it was, which the fake merely models.
+  start_client lwmtest6 '200x200+450+300'
+  MID="${NEW_CLIENT}"
+  MID_PID="${NEW_CLIENT_PID}"
+  if [ -z "${MID}" ]; then
+    fail "middle xlogo mapped and framed"
+  else
+    pass "middle xlogo mapped and framed"
+    place "${NAV}" 100 300 200 200
+    place "${MID}" 450 300 200 200
+    place "${CLIENT}" 800 300 200 200
+    MID_FRAME=$(frame_of "${MID}")
+    NAV_FRAME=$(frame_of "${NAV}")
+
+    # Raise the outer two over the middle one, which leaves the focus on the
+    # right-hand window: the window the user is working in, with the one they
+    # aren't behind both of them.
+    read -r CX CY <<<"$(cell "${NAV}" 1 1)"
+    super_click 1 "${CX}" "${CY}"
+    read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+    super_click 1 "${CX}" "${CY}"
+    check "the middle window starts behind the right-hand one" \
+      in_front "${FRAME}" "${MID_FRAME}"
+
+    WANT=$(printf '0x%x' "${MID}")
+    super_arrow Left
+    check_eq "Super+Left reaches the middle window" \
+      "$(focus_after_settling "${WANT}")" "${WANT}"
+    check "and raises it while it has the focus" \
+      in_front "${MID_FRAME}" "${FRAME}"
+
+    WANT=$(printf '0x%x' "${NAV}")
+    super_arrow Left
+    check_eq "Super+Left again reaches the left-hand window" \
+      "$(focus_after_settling "${WANT}")" "${WANT}"
+    check "and the window flipped past goes back behind the right-hand one" \
+      in_front "${FRAME}" "${MID_FRAME}"
+    check "and stays behind the left-hand one too" \
+      in_front "${NAV_FRAME}" "${MID_FRAME}"
+
+    xdotool mousemove 5 5
+    kill "${MID_PID}" >/dev/null 2>&1
+    sleep 0.5
+  fi
+
   xdotool mousemove 5 5
   kill "${NAV_PID}" >/dev/null 2>&1
   sleep 0.5

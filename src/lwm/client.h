@@ -176,6 +176,23 @@ class Client {
   // over the top of their corresponding client window.
   void Raise();
 
+  // The window this one currently sits directly above in the stacking order,
+  // or 0 if it's at the bottom of it. Taken before a Raise(), this is what
+  // RestoreStackPosition needs to undo that raise later. It's a bare Window
+  // rather than a Client because the neighbour needn't be a client at all: a
+  // panel, or lwm's own popup, is just as good a marker of the place.
+  Window StackPosition() const;
+
+  // Puts this window back where it was: directly above `below`, or at the
+  // bottom of the stack if `below` is 0. Its transients come down with it and
+  // stay in front of it, in the same way Raise() takes them up.
+  //
+  // Does nothing if `below` has gone away in the meantime. The position was a
+  // description of the stack as it used to be, and if the window it named
+  // isn't in the stack any more then there is no longer anywhere it points
+  // to; leaving this window where it is beats guessing.
+  void RestoreStackPosition(Window below);
+
   // Tells the client to kill its window, in response to a user clicking on the
   // close button.
   void Close();

@@ -28,6 +28,20 @@ void GrabNavigationKeys();
 
 // Acts on a Super+arrow or Super+Shift+arrow press. Returns false if the
 // press wasn't one of ours, in which case nothing was done with it.
+//
+// A press which moves the focus also raises the window it moves to, and
+// remembers where in the stacking order that window came from. The next such
+// press puts it back there before raising its own window, so that flipping
+// between two windows across a third leaves the third one where it was
+// instead of stacking it on top of them both. keyboard.cc has the details.
 bool HandleKeyPress(xcb_key_press_event_t* ev);
+
+// Forgets that note of where the last window the arrow keys raised came from,
+// leaving the stacking order alone. Only wmtest::World calls this, for the
+// same reason it calls xlib::ForgetLWMWindows(): lwm's own moment for
+// forgetting is process exit, but each test starts a fresh server whose
+// window ids begin again, so a note left over from the last test would name a
+// window this one has since handed to a different client.
+void ForgetNavigationState();
 
 #endif  // LWM_KEYBOARD_H_included

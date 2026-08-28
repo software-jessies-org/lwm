@@ -145,6 +145,15 @@ whatever of it still shows, since dropping the pointer on the dialog would
 give the dialog the focus straight back.  A window with nothing showing at all
 leaves the pointer where it is.
 .PP
+A window is only kept in front for as long as it holds the focus.  When a
+later press moves the focus on, the window it moves off goes back to the place
+in the stack it had before it was raised, so that flipping between two windows
+across a third leaves that third one where it was rather than stacking it on
+top of both.  Any dialogs it owns go back down with it and stay in front of
+it.  A window which has been moved by hand with \fBWindows+Shift\fP and an
+arrow keeps its place at the front instead: having been put there on purpose,
+it stays there.
+.PP
 Adding Shift moves the focused window itself rather than the focus.  The
 window travels one step per press: the first takes it to the inner edge of the
 monitor it is on, on the side the arrow names, keeping its position on the

@@ -559,3 +559,150 @@ TEST(HandleKeyPress, NoWindowThatWayLeavesThePointerAlone) {
   const MousePos mp = getMousePosition();
   EXPECT_EQ((Point{mp.x, mp.y}), (Point{700, 700}));
 }
+
+// The tests below are about the window flipped *past* rather than the one
+// flipped to. Each maps the middle window first, so that it starts at the
+// bottom of the stack: it's the window the user has parked behind the two
+// they're working in, and the point of the note keyboard.cc keeps is that
+// that's where it ends up again.
+
+TEST(HandleKeyPress, FlippingPastAWindowPutsItBackInTheStack) {
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* middle = world.MapClientWindow(Rect::FromXYWH(540, 400, 200, 200));
+  Client* left = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  Client* right = world.MapClientWindow(Rect::FromXYWH(1000, 400, 200, 200));
+  ASSERT_TRUE(middle != nullptr);
+  ASSERT_TRUE(left != nullptr);
+  ASSERT_TRUE(right != nullptr);
+  ASSERT_TRUE(stackIndex(world, middle) < stackIndex(world, left));
+  ASSERT_TRUE(stackIndex(world, middle) < stackIndex(world, right));
+  LScr::I->GetFocuser()->FocusClient(right);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+  EXPECT_TRUE(stackIndex(world, middle) > stackIndex(world, right))
+      << "the window flipped to should be in front while it has the focus";
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), left);
+  EXPECT_TRUE(stackIndex(world, middle) < stackIndex(world, right))
+      << "the window flipped past should have gone back to the bottom";
+  EXPECT_TRUE(stackIndex(world, middle) < stackIndex(world, left));
+}
+
+TEST(HandleKeyPress, FlippingThereAndBackLeavesTheStackExactlyAsItWas) {
+  // Four presses: right to middle to left, and back again. Every window the
+  // focus passed over was raised and put back, and the one it started on is
+  // where it started, so the stacking order should be indistinguishable from
+  // the one before the first press - not merely similar.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* middle = world.MapClientWindow(Rect::FromXYWH(540, 400, 200, 200));
+  Client* left = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  Client* right = world.MapClientWindow(Rect::FromXYWH(1000, 400, 200, 200));
+  ASSERT_TRUE(middle != nullptr);
+  ASSERT_TRUE(left != nullptr);
+  ASSERT_TRUE(right != nullptr);
+  LScr::I->GetFocuser()->FocusClient(right);
+  const std::vector<Window> before =
+      world.server().ChildrenOf(LScr::I->Root());
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), left);
+  pressArrow(kRightKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+  pressArrow(kRightKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), right);
+
+  EXPECT_TRUE(world.server().ChildrenOf(LScr::I->Root()) == before)
+      << "the stacking order should have been left as it was found";
+}
+
+TEST(HandleKeyPress, ADialogComesBackDownWithItsWindow) {
+  // Client::Raise takes a window's transients up with it, so putting it back
+  // has to bring them down too - and leave them in front of it, which is the
+  // whole point of a dialog.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* middle = world.MapClientWindow(Rect::FromXYWH(540, 400, 200, 200));
+  Client* dialog = world.MapClientWindow(Rect::FromXYWH(540, 150, 200, 150));
+  Client* left = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  Client* right = world.MapClientWindow(Rect::FromXYWH(1000, 400, 200, 200));
+  ASSERT_TRUE(middle != nullptr);
+  ASSERT_TRUE(dialog != nullptr);
+  ASSERT_TRUE(left != nullptr);
+  ASSERT_TRUE(right != nullptr);
+  dialog->trans = middle->window;
+  LScr::I->GetFocuser()->FocusClient(right);
+
+  // The dialog is further from the window we start on than its parent is, so
+  // it isn't the one the arrow picks; if that ever changes this test stops
+  // testing what it says it does.
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+  ASSERT_TRUE(stackIndex(world, dialog) == stackIndex(world, middle) + 1);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), left);
+  EXPECT_TRUE(stackIndex(world, middle) < stackIndex(world, right))
+      << "the window flipped past should have gone back to the bottom";
+  EXPECT_EQ(stackIndex(world, dialog), stackIndex(world, middle) + 1)
+      << "the dialog should have come down with it, still in front of it";
+}
+
+TEST(HandleKeyPress, AWindowMovedByHandStaysInFront) {
+  // Super+Shift+arrow is the user putting a window where they want it, so it
+  // has earned its place at the front. The note that would otherwise drop it
+  // back down as the focus flips away is discarded.
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* middle = world.MapClientWindow(Rect::FromXYWH(540, 400, 200, 200));
+  Client* left = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  Client* right = world.MapClientWindow(Rect::FromXYWH(1000, 400, 200, 200));
+  ASSERT_TRUE(middle != nullptr);
+  ASSERT_TRUE(left != nullptr);
+  ASSERT_TRUE(right != nullptr);
+  LScr::I->GetFocuser()->FocusClient(right);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+  pressShiftArrow(kDownKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), left);
+  EXPECT_TRUE(stackIndex(world, middle) > stackIndex(world, right))
+      << "a window the user moved on purpose should stay in front";
+}
+
+TEST(HandleKeyPress, ANoteForAWindowThatHasGoneIsDropped) {
+  wmtest::World world;
+  GrabNavigationKeys();
+  Client* middle = world.MapClientWindow(Rect::FromXYWH(540, 400, 200, 200));
+  Client* left = world.MapClientWindow(Rect::FromXYWH(50, 400, 200, 200));
+  Client* right = world.MapClientWindow(Rect::FromXYWH(1000, 400, 200, 200));
+  ASSERT_TRUE(middle != nullptr);
+  ASSERT_TRUE(left != nullptr);
+  ASSERT_TRUE(right != nullptr);
+  LScr::I->GetFocuser()->FocusClient(right);
+
+  pressArrow(kLeftKey);
+  ASSERT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), middle);
+
+  // The application exits while it's the window the note is about, so the
+  // next press has a note naming a client which no longer exists.
+  xcb_destroy_notify_event_t e{};
+  e.response_type = XCB_DESTROY_NOTIFY;
+  e.event = middle->window;
+  e.window = middle->window;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+  ASSERT_EQ(LScr::I->Clients().size(), size_t(2));
+
+  LScr::I->GetFocuser()->FocusClient(right);
+  pressArrow(kLeftKey);
+  EXPECT_EQ(LScr::I->GetFocuser()->GetFocusedClient(), left);
+}

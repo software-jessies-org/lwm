@@ -2,6 +2,10 @@
 
 ## 2026-08-28 (pn, Basel)
 
+A window Windows+arrow raises drops back to where it was in the window stack
+as soon as the focus moves off it, so flipping across a window no longer
+leaves it on top.
+
 The repo now holds gummiband and speckeysd too. Source moved to src/<program>/,
 and `make` builds all three into bin/.
 

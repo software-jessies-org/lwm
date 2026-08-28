@@ -277,6 +277,12 @@ extern int XUnmapWindow(Window w);
 extern int XRaiseWindow(Window w);
 extern int XLowerWindow(Window w);
 
+// Puts w directly above `sibling` in its parent's stacking order, or at the
+// bottom of it if `sibling` is 0. XRaiseWindow and XLowerWindow are the two
+// ends of this; the general case is what putting a window back exactly where
+// it came from needs.
+extern int XStackWindowAbove(Window w, Window sibling);
+
 extern int XAddToSaveSet(Window w);
 extern int XRemoveFromSaveSet(Window w);
 

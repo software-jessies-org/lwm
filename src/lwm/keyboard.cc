@@ -108,6 +108,44 @@ void warpPointerTo(Client* c) {
   xlib::XWarpPointer(visible.middle());
 }
 
+// Where the window these keys last raised came from in the stacking order.
+//
+// Raising the window the focus moves to is right for the window you're going
+// to, and wrong for the ones you pass over on the way: flipping between two
+// windows either side of a third leaves that third one parked on top of both,
+// which is not what the user asked for by pressing an arrow twice. So the
+// raise is remembered, and undone by the next one - each arrow press puts the
+// last window it raised back where it was before raising the new one. A
+// window flipped across therefore comes to the front for as long as it holds
+// the focus, and drops back out of the way as soon as the focus leaves it.
+//
+// There's only ever one note. Each raise consumes the previous one, so at
+// most one window is ever up out of its place because of these keys.
+struct RaiseNote {
+  Window client = 0;  // The raised client's window; 0 for "no note".
+  Window below = 0;   // Where it was: what it sat directly above.
+};
+
+RaiseNote& raiseNote() {
+  static RaiseNote note;
+  return note;
+}
+
+// Puts the noted window back where it came from, and forgets it. A note for a
+// window which has since been closed is simply dropped: GetClient with
+// scan_parents off is the lookup that answers "is this still a client of
+// ours", without asking the server about a window which may not exist.
+void restoreLastRaised() {
+  const RaiseNote note = raiseNote();
+  raiseNote() = RaiseNote{};
+  if (!note.client) {
+    return;
+  }
+  if (Client* c = LScr::I->GetClient(note.client, false)) {
+    c->RestoreStackPosition(note.below);
+  }
+}
+
 // Moves the input focus to the next window in dir, if there is one, and
 // raises it: the focus is no use on a window buried under another, and having
 // asked for it by name the user means the window in front, not just the one
@@ -135,6 +173,18 @@ void moveFocus(Client* focused, Direction dir) {
     return;  // No window that way.
   }
   Client* target = candidates[idx];
+  // Unless the target is the window the note is already about - a press which
+  // has come back to a window we raised and which then lost the focus some
+  // other way, to the mouse. Raising it again doesn't change where it
+  // originally came from, so the note stands.
+  if (raiseNote().client != target->window) {
+    // Whatever the last press raised goes back down before this one raises
+    // anything, so that the position noted for the target is where it really
+    // sits now, rather than where it sits under a window that's on its way
+    // back down.
+    restoreLastRaised();
+    raiseNote() = RaiseNote{target->window, target->StackPosition()};
+  }
   LScr::I->GetFocuser()->FocusClient(target);
   target->Raise();
   // After the raise, so that the part of the window the pointer can be put on
@@ -167,6 +217,14 @@ void moveWindow(Client* c, Direction dir) {
   // - and the focus with it - which is exactly what the raise prevents. It
   // also matches what a mouse drag does: a window the user is moving comes to
   // the front.
+  //
+  // Anything the arrow keys raised goes back where it came from first -
+  // including this window, if it's the one the note is about. Putting it back
+  // only to raise it again on the next line is a no-op the user never sees;
+  // what matters is that the note is cleared, because a window the user has
+  // moved on purpose has earned its place at the front and shouldn't drop
+  // back down when the focus flips away from it.
+  restoreLastRaised();
   c->Raise();
   // The user has placed this window by hand, so it isn't maximised any more,
   // however it got that way - the same as dragging it with the mouse.
@@ -211,6 +269,10 @@ void GrabNavigationKeys() {
       }
     }
   }
+}
+
+void ForgetNavigationState() {
+  raiseNote() = RaiseNote{};
 }
 
 bool HandleKeyPress(xcb_key_press_event_t* ev) {

@@ -3,6 +3,7 @@
 #include "client.h"
 #include "disp.h"
 #include "ewmh.h"
+#include "keyboard.h"
 #include "lwm.h"
 #include "resource.h"
 #include "screen.h"
@@ -22,6 +23,9 @@ World::World(int width, int height)
   // tests are order-dependent in a way that only shows up when someone adds
   // one.
   xlib::ForgetLWMWindows();
+  // Same reason: the note the arrow keys keep of where a window came from in
+  // the stacking order names a window id the next test will hand out again.
+  ForgetNavigationState();
 
   // From here on the order matches main()'s, because the dependencies are the
   // same ones: Resources before anything that reads a colour, the atoms before
