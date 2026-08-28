@@ -1,3 +1,22 @@
+// speckeysd is a hot key daemon.
+//
+// It reads a file of "key<tab>command" lines, grabs each of those keys on the
+// root window of every screen, and runs the command when the key is pressed.
+// SIGHUP makes it exec itself, which is how the file is reloaded.
+//
+// It's on XCB, and unlike lwm and gummiband it is on nothing else: those two
+// keep libX11 in the link because Xft needs a Display and nothing draws text
+// without it (see docs/xcb-migration-plan.md, "The one real blocker: Xft").
+// speckeysd draws nothing, so the only piece of Xlib it ever wanted was
+// XStringToKeysym, and xkbcommon's xkb_keysym_from_name takes the same key
+// names.
+//
+// speckeysd_test.sh is the regression test for all of this. Most of what the
+// port could get wrong - the order of xcb_grab_key's arguments, which field
+// of a key event is the keycode, the root window of the second screen - is
+// invisible to the compiler and visible only in whether a key press runs
+// anything.
+
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,18 +27,17 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <X11/X.h>
-#include <X11/XKBlib.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/keysym.h>
+#include <xcb/xcb.h>
+#include <xcb/xcb_keysyms.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include <initializer_list>
+#include <vector>
 
 typedef struct HotKey HotKey;
 struct HotKey {
-  KeySym keysym;
-  unsigned int modifiers;
+  xcb_keysym_t keysym;
+  uint16_t modifiers;
   char* command;
   HotKey* next;
 };
@@ -28,28 +46,30 @@ struct HotKey {
 HotKey* hotkeys = NULL;
 
 /* The connection to the X server. */
-Display* dpy;
+xcb_connection_t* conn;
 
-/* The number of screens. */
-int screen_count;
+/* The root window of each screen. Xlib had RootWindow(dpy, n); XCB makes you
+ * walk the list, so we walk it once here. */
+std::vector<xcb_window_t> roots;
+
+/* The keycode/keysym mapping, kept up to date from MappingNotify. */
+xcb_key_symbols_t* key_symbols;
 
 char* argv0;
 char* hot_key_file;
 
-const char* attempting_to_grab = 0;
-
-int report_key_grab_error(Display* /*d*/, XErrorEvent* e) {
+static void report_key_grab_error(const char* keyname,
+                                  const xcb_generic_error_t* e) {
   const char* reason = "unknown reason";
-  if (e->error_code == BadAccess) {
+  if (e->error_code == XCB_ACCESS) {
     reason = "the key/button combination is already in use by another client";
-  } else if (e->error_code == BadValue) {
-    reason = "the key code was out of range for XGrabKey";
-  } else if (e->error_code == BadWindow) {
-    reason = "the root window we passed to XGrabKey was incorrect";
+  } else if (e->error_code == XCB_VALUE) {
+    reason = "the key code was out of range for GrabKey";
+  } else if (e->error_code == XCB_WINDOW) {
+    reason = "the root window we passed to GrabKey was incorrect";
   }
   fprintf(stderr, "%s: couldn't grab key \"%s\": %s (X error code %i)\n", argv0,
-          attempting_to_grab, reason, e->error_code);
-  return 0;
+          keyname, reason, e->error_code);
 }
 
 static void reap_zombies() {
@@ -72,7 +92,7 @@ static void shell(const char* command) {
 
   switch (fork()) {
     case 0: /* Child. */
-      close(ConnectionNumber(dpy));
+      close(xcb_get_file_descriptor(conn));
       execl(sh, sh, "-c", command, (char*)NULL);
       fprintf(stderr, "%s: can't exec \"%s -c %s\"\n", argv0, sh, command);
       exit(EXIT_FAILURE);
@@ -87,9 +107,9 @@ static void panic(const char* s) {
   exit(EXIT_FAILURE);
 }
 
-unsigned int parse_modifiers(char* name, const char* full_spec) {
+uint16_t parse_modifiers(char* name, const char* full_spec) {
   char* separator = strchr(name, '-');
-  unsigned int modifiers = 0;
+  uint16_t modifiers = 0;
   if (separator != NULL) {
     *separator = 0;
     modifiers |= parse_modifiers(separator + 1, full_spec);
@@ -98,13 +118,13 @@ unsigned int parse_modifiers(char* name, const char* full_spec) {
   // (scroll lock), because they're stateful buttons, not real modifiers in the
   // normal hotkey sense.
   if (!strcmp(name, "Shift")) {
-    modifiers |= ShiftMask;
+    modifiers |= XCB_MOD_MASK_SHIFT;
   } else if (!strcmp(name, "Control")) {
-    modifiers |= ControlMask;
+    modifiers |= XCB_MOD_MASK_CONTROL;
   } else if (!strcmp(name, "Alt") || !strcmp(name, "Mod1")) {
-    modifiers |= Mod1Mask;
+    modifiers |= XCB_MOD_MASK_1;
   } else if (!strcmp(name, "Super") || !strcmp(name, "Mod4")) {
-    modifiers |= Mod4Mask;
+    modifiers |= XCB_MOD_MASK_4;
   } else {
     fprintf(stderr, "%s: ignoring unknown modifier \"%s\" in \"%s\"\n", argv0,
             name, full_spec);
@@ -112,55 +132,111 @@ unsigned int parse_modifiers(char* name, const char* full_spec) {
   return modifiers;
 }
 
-static void add_hot_key_modified(const char* keyname,
-                                 const char* command,
-                                 unsigned int base_mod) {
+// parse_hot_key splits a specification like "Control-Alt-x" into the keysym
+// and the modifier mask it describes. Returns false, having said why, if the
+// key part names no keysym we can grab.
+static bool parse_hot_key(const char* keyname,
+                          xcb_keysym_t* keysym,
+                          uint16_t* modifiers) {
   char* copy = strdup(keyname);
   char* unmodified = strrchr(copy, '-');
-  unsigned int modifiers = 0;
+  *modifiers = 0;
   if (unmodified == NULL) {
     unmodified = copy;
   } else {
     *unmodified = 0;
     ++unmodified;
-    modifiers = parse_modifiers(copy, keyname);
+    *modifiers = parse_modifiers(copy, keyname);
   }
-  modifiers |= base_mod;
+  // xkb_keysym_from_name is XStringToKeysym under a different name: same key
+  // names, same case sensitivity, and no libX11 behind it.
+  *keysym = xkb_keysym_from_name(unmodified, XKB_KEYSYM_NO_FLAGS);
+  const bool ok = *keysym != XKB_KEY_NoSymbol;
+  if (!ok) {
+    fprintf(stderr, "%s: unknown key \"%s\" in \"%s\"\n", argv0, unmodified,
+            keyname);
+  }
+  free(copy);
+  return ok;
+}
 
+static void add_hot_key_modified(const char* keyname,
+                                 xcb_keysym_t keysym,
+                                 xcb_keycode_t keycode,
+                                 const char* command,
+                                 uint16_t modifiers) {
   HotKey* new_key = new HotKey;
-  new_key->keysym = XStringToKeysym(unmodified);
+  new_key->keysym = keysym;
   new_key->modifiers = modifiers;
   new_key->command = strdup(command);
   new_key->next = hotkeys;
   hotkeys = new_key;
 
-  XSynchronize(dpy, True);
-  attempting_to_grab = keyname;
-  XSetErrorHandler(report_key_grab_error);
-  for (int screen = 0; screen < screen_count; ++screen) {
-    Window root = RootWindow(dpy, screen);
-    XGrabKey(dpy, XKeysymToKeycode(dpy, new_key->keysym), modifiers, root,
-             False, GrabModeAsync, GrabModeAsync);
+  // Beware the argument order: XGrabKey led with the keycode and the
+  // modifiers and had owner_events buried in the middle, while xcb_grab_key
+  // leads with owner_events and puts the modifiers before the key. Every one
+  // of those is an integer, so getting it wrong compiles perfectly happily
+  // and grabs something else.
+  //
+  // The requests go out for every screen first, and only then do we ask what
+  // became of them: xcb_request_check waits for the server to catch up with
+  // that one request, so anything sent before it has been answered by the
+  // time we look. Xlib's equivalent was XSynchronize(True) around the grabs,
+  // which cost a round trip each.
+  std::vector<xcb_void_cookie_t> cookies;
+  cookies.reserve(roots.size());
+  for (xcb_window_t root : roots) {
+    cookies.push_back(xcb_grab_key_checked(conn, 0 /* owner_events */, root,
+                                           modifiers, keycode,
+                                           XCB_GRAB_MODE_ASYNC,
+                                           XCB_GRAB_MODE_ASYNC));
   }
-  XSetErrorHandler(NULL);
-
-  free(copy);
+  for (xcb_void_cookie_t cookie : cookies) {
+    if (xcb_generic_error_t* err = xcb_request_check(conn, cookie)) {
+      report_key_grab_error(keyname, err);
+      free(err);
+    }
+  }
 }
 
 static void add_hot_key(const char* keyname, const char* command) {
+  xcb_keysym_t keysym = XCB_NO_SYMBOL;
+  uint16_t modifiers = 0;
+  if (!parse_hot_key(keyname, &keysym, &modifiers)) {
+    return;
+  }
+  // A keysym which isn't on the keyboard has no keycode, and a keycode of 0
+  // is AnyKey to GrabKey: grabbing it would quietly claim every key with
+  // these modifiers. A NoSymbol hot key would be no better, matching any key
+  // event the server can't name. Neither is what a typo in the file meant.
+  //
+  // The reply is a malloc'd list of every keycode carrying the keysym,
+  // terminated by XCB_NO_SYMBOL; the first is the one Xlib's
+  // XKeysymToKeycode would have returned.
+  xcb_keycode_t* keycodes = xcb_key_symbols_get_keycode(key_symbols, keysym);
+  const xcb_keycode_t keycode = keycodes ? keycodes[0] : 0;
+  free(keycodes);
+  if (keycode == 0) {
+    fprintf(stderr, "%s: key \"%s\" isn't on this keyboard\n", argv0, keyname);
+    return;
+  }
+
   // https://stackoverflow.com/questions/4037230/global-hotkey-with-x11-xlib/4037579
-  // Xlib is very particular about the mod key mask. Having caps lock, num lock,
+  // X is very particular about the mod key mask. Having caps lock, num lock,
   // scroll lock etc enabled or disabled results in a different mod mask, and
   // thus will fail to match if we don't grab that key too.
   // In X11 terms, we want to ignore these:
   // LockMask = caps lock
   // Mod2Mask = num lock
   // Mod3Mask = scroll lock
-  for (int capsMask : {0, LockMask}) {
-    for (int numLockMask : {0, Mod2Mask}) {
-      for (int scrLockMask : {0, Mod3Mask}) {
-        auto combinedMask = capsMask | numLockMask | scrLockMask;
-        add_hot_key_modified(keyname, command, combinedMask);
+  // The masks are cast because XCB gives them an enum type, and a list of
+  // {0, some_enum} has no type both halves agree on.
+  for (uint16_t capsMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_LOCK)}) {
+    for (uint16_t numLockMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_2)}) {
+      for (uint16_t scrLockMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_3)}) {
+        const uint16_t combinedMask = capsMask | numLockMask | scrLockMask;
+        add_hot_key_modified(keyname, keysym, keycode, command,
+                             uint16_t(modifiers | combinedMask));
       }
     }
   }
@@ -186,13 +262,17 @@ static void read_hot_key_file(const char* fname) {
   fclose(fp);
 }
 
-static void keypress(XEvent* ev) {
-  KeySym keysym = XkbKeycodeToKeysym(dpy, ev->xkey.keycode, 0,
-                                     ev->xkey.state & ShiftMask ? 1 : 0);
+static void keypress(xcb_key_press_event_t* ev) {
+  // The keycode is called 'detail' in every XCB key and button event; there's
+  // no xkey sub-struct to name it. Column 1 is the shifted keysym, so that a
+  // hot key written "Shift-A" matches, which is what XkbKeycodeToKeysym's
+  // level argument was doing here.
+  xcb_keysym_t keysym = xcb_key_symbols_get_keysym(
+      key_symbols, ev->detail, ev->state & XCB_MOD_MASK_SHIFT ? 1 : 0);
 
   HotKey* h = hotkeys;
   for (; h != NULL; h = h->next) {
-    if (h->keysym == keysym && ev->xkey.state == h->modifiers) {
+    if (h->keysym == keysym && ev->state == h->modifiers) {
       shell(h->command);
       break;
     }
@@ -200,20 +280,24 @@ static void keypress(XEvent* ev) {
 }
 
 bool forceRestart;
-#define NullEvent -1
 
-static void getEvent(XEvent* ev) {
-  // Is there a message waiting?
-  if (QLength(dpy) > 0) {
-    XNextEvent(dpy, ev);
-    return;
+static xcb_generic_event_t* getEvent() {
+  // Is there a message waiting? poll_for_queued_event only looks at what has
+  // already been read off the socket, which is what QLength used to report.
+  if (xcb_generic_event_t* ev = xcb_poll_for_queued_event(conn)) {
+    return ev;
   }
 
-  // Beg...
-  XFlush(dpy);
+  // Beg... XCB never pushes requests to the server on its own, so anything we
+  // queued would otherwise sit in the output buffer while we block in
+  // select(). This is the one flush, in the one place.
+  xcb_flush(conn);
+  if (xcb_connection_has_error(conn)) {
+    panic("lost the connection to the X server.");
+  }
 
   // Wait one second to see if a message arrives.
-  int fd = ConnectionNumber(dpy);
+  int fd = xcb_get_file_descriptor(conn);
   fd_set readfds;
   FD_ZERO(&readfds);
   FD_SET(fd, &readfds);
@@ -221,12 +305,13 @@ static void getEvent(XEvent* ev) {
   tv.tv_sec = 1;
   tv.tv_usec = 0;
   if (select(fd + 1, &readfds, 0, 0, &tv) == 1) {
-    XNextEvent(dpy, ev);
-    return;
+    // This can still come back empty: what woke us might have been a reply
+    // rather than an event, which is a null event as far as we're concerned.
+    return xcb_poll_for_event(conn);
   }
 
   // No message, so we have a null event.
-  ev->type = NullEvent;
+  return NULL;
 }
 
 // If we execvp ourselves in the signal handler itself, it seems to prevent
@@ -252,40 +337,67 @@ int main(int argc, char* argv[]) {
   }
 
   /* Open a connection to the X server. */
-  dpy = XOpenDisplay("");
-  if (dpy == 0) {
+  conn = xcb_connect(NULL, NULL);
+  if (xcb_connection_has_error(conn)) {
     panic("can't open display.");
   }
 
   /* Set up signal handlers. */
   signal(SIGCHLD, sigchld_handler);
 
-  screen_count = ScreenCount(dpy);
+  /* One root window per screen, all of which we grab our keys on: a key press
+   * goes to the root of whichever screen the pointer is on. */
+  for (xcb_screen_iterator_t it = xcb_setup_roots_iterator(xcb_get_setup(conn));
+       it.rem; xcb_screen_next(&it)) {
+    roots.push_back(it.data->root);
+  }
+
+  key_symbols = xcb_key_symbols_alloc(conn);
+  if (key_symbols == NULL) {
+    panic("can't read the keyboard mapping.");
+  }
 
   if (argc != 2) {
     panic("syntax: speckeysd <keys file>");
   }
 
+  /* There's no XSync to follow this any more: every grab it makes is waited
+   * on as it's made, so by the time we're here the server has dealt with the
+   * lot of them and told us about any it refused. */
   read_hot_key_file(hot_key_file);
-
-  /* Make sure all our communication to the server got through. */
-  XSync(dpy, False);
 
   /* The main event loop. */
   while (!forceRestart) {
-    XEvent ev;
-    getEvent(&ev);
-    switch (ev.type) {
-      case KeyPress:
-        keypress(&ev);
+    xcb_generic_event_t* ev = getEvent();
+    if (ev == NULL) {
+      continue;
+    }
+    // Bit 0x80 of response_type marks an event that arrived via SendEvent,
+    // and has to be masked off before the type means anything. We don't
+    // otherwise care where an event came from.
+    switch (ev->response_type & 0x7f) {
+      case 0:
+        // Errors are events here rather than a callback. The grabs are all
+        // checked as they're made, so anything reaching this point is a
+        // surprise; say so rather than dropping it.
+        fprintf(stderr, "%s: X error code %i\n", argv0,
+                ((xcb_generic_error_t*)ev)->error_code);
         break;
-      case MappingNotify:
-        XRefreshKeyboardMapping((XMappingEvent*)&ev);
+      case XCB_KEY_PRESS:
+        keypress((xcb_key_press_event_t*)ev);
+        break;
+      case XCB_MAPPING_NOTIFY:
+        // The keyboard map has changed under us, and our idea of which
+        // keycode carries which keysym is now stale. We grabbed keycodes, but
+        // we match on keysyms, so without this the wrong keys run commands.
+        xcb_refresh_keyboard_mapping(key_symbols,
+                                     (xcb_mapping_notify_event_t*)ev);
         break;
       default:
         /* Do I look like I care? */
         break;
     }
+    free(ev);
   }
   execvp(argv[0], argv);
 }

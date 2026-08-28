@@ -12,16 +12,19 @@ Flags live in the `Makefile`: `-std=c++17 -g3 -O0 -DSHAPE -Wall -Werror -Wextra
 Source lives under `src/`, one directory per program; objects mirror that
 layout under `build/`, and the binaries land in `bin/`. `make` builds all
 three: `bin/lwm`, `bin/gummiband` (a panel) and `bin/speckeysd` (a hot key
-daemon). `make lwm` (or `gummiband`, or `speckeysd`) builds just the one.
+daemon). `make lwm` (or `gummiband`, or `speckeysd`) builds just the one; the
+test targets are named separately (`make gummi`, `make speckeys`) so that
+building and testing stay different verbs.
 
 Adding a source file means adding it to that program's source list in the
 `Makefile` (`LWM_SRCS` and friends); adding a *program* means a new
 `src/<name>/` directory with its own source list, its own pkg-config package
 list and a link rule, alongside the three that are there.
 
-Each program compiles against its own packages: lwm's are the xcb ones, and
-the other two are plain Xlib. Which set a file gets is decided by the
-directory it's in, via the pattern-specific `PKG_CFLAGS` assignments in the
+Each program compiles against its own packages: lwm and gummiband are both on
+XCB and keep libX11 in the link for Xft alone, and speckeysd is on XCB with no
+libX11 at all — it draws nothing, so Xft never came into it. Which set a file
+gets is decided by the directory it's in, via the pattern-specific `PKG_CFLAGS` assignments in the
 `Makefile`. gummiband borrows lwm's logging by including `"lwm/log.h"` — the
 `-Isrc` on every compile is what makes that work — and links `build/lwm/log.o`
 directly. Don't add `-Isrc/lwm` to make that shorter: it would put lwm's
@@ -194,6 +197,85 @@ Two things worth knowing before adding a check:
   asking for the position it is already in makes lwm quite correctly do
   nothing, so `--sync` waits for ever. `place()` polls the frame geometry
   instead.
+
+## gummiband tests
+
+```sh
+./gummiband_test.sh [path-to-gummiband-binary]   # defaults to ./bin/gummiband; also `make gummi`
+```
+
+gummiband's only tests. It has no unit tests and nothing to hang one on — a
+single translation unit whose every interesting behaviour is a request to an
+X server — so this runs the real binary under `Xvfb` with a generated
+`.gummiband` in a temp directory, and checks the panel's geometry, its EWMH
+properties, the pixels it paints, what its items do when clicked, the
+drop-down menu's position, highlighting and `<item>` substitution, the
+`updatesecs` repaint, and the SIGHUP restart that reloads the config.
+
+No window manager runs: gummiband maps itself and nothing here needs framing,
+so leaving lwm out keeps the test independent of it. `strut_test.sh` covers
+the lwm-and-dock direction.
+
+It is also the regression test for the XCB port, which is why the checks
+insist on looking at painted pixels and property *values* rather than at
+whether a call succeeded. Nothing XCB gets wrong here fails to compile:
+argument order (`xcb_copy_area` takes both positions before the size),
+value-list ordering, 32-bit property data (`_NET_WM_STRUT` written as an
+array of `long` comes back as `0,0,0,0`), and the missing flush that leaves
+the panel one repaint behind. Each of those was reintroduced deliberately to
+confirm a check goes red for it.
+
+Four things worth knowing before adding a check:
+
+* gummiband reads `.gummiband` from the *current directory*, and `~/.Xresources`
+  when no `RESOURCE_MANAGER` is set, so the test runs it with both its working
+  directory and `HOME` pointed at the temp dir. Without that, the developer's
+  own font resource changes the panel's height and half the assertions with it.
+* Pass it an *absolute* path. SIGHUP makes gummiband `execvp(argv[0])` itself,
+  which a relative path can't survive a changed working directory.
+* Its windows have no `WM_NAME`, so `xdotool search --name` can't find them.
+  Find them by `_NET_WM_WINDOW_TYPE` instead — `DOCK` for the panel, `MENU`
+  for the drop-down.
+* Nothing asserts the panel's height, which depends on the font that happens
+  to be installed. It's read once and everything else — the strut depth, the
+  drop-down's height, where its items are — is expressed in terms of it.
+
+## speckeysd tests
+
+```sh
+./speckeysd_test.sh [path-to-speckeysd-binary]   # defaults to ./bin/speckeysd; also `make speckeys`
+```
+
+speckeysd's only tests, and its regression test for the XCB port, in the same
+shape as gummiband's: the real binary under `Xvfb`, a generated keys file in a
+temp directory, key presses driven with `xdotool`, and each hot key's command
+touching a file so that "did it fire?" is a file test. They cover the hot key
+matching (modifiers, the shifted keysym, Super, the lock-key combinations),
+that the grab is on the root and reaches the second screen, that commands are
+reaped and don't inherit the X connection, the errors it reports for a bad
+keys file and for a key another client already holds, the `MappingNotify`
+refresh, and the SIGHUP reload.
+
+Every check was confirmed to go red for the mistake it's there to catch, by
+making that mistake on purpose: swapping `xcb_grab_key`'s keycode and
+modifiers, grabbing on the first root only, looking the keysym up at the wrong
+column, dropping `xcb_refresh_keyboard_mapping`, and sending the grabs without
+flushing.
+
+Four things worth knowing before adding a check:
+
+* Don't use Control-Alt with a function key. The default keyboard map makes
+  Ctrl+Alt+F1..F12 the VT switch keys, and the server swallows them before any
+  client sees them, grab or no grab. Ctrl+Alt with a letter is fine.
+* The display has two screens on purpose (`:N.0` and `:N.1`, separate roots,
+  not Xinerama), because grabbing on screen 0's root *n* times instead of on
+  each screen's root is the easy XCB mistake to make here.
+* Which screen a key press goes to is decided by the pointer only while the
+  input focus is `PointerRoot`. Anything that focuses a window has to put the
+  focus back — `xdotool windowfocus 1` — or the second-screen check passes
+  whatever the daemon does.
+* Pass it an *absolute* path, for the same reason gummiband's test does:
+  SIGHUP makes speckeysd `execvp(argv[0])` itself.
 
 ## Running it safely
 

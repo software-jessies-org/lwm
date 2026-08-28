@@ -143,17 +143,25 @@ I've added the source code to the gummiband and speckeysd programs to their own 
 
 ---
 
-## Not yet started
-
 Convert the gummiband program to use xcb instead of xlib. Be careful of function call argument order, as some args are reordered between xlib and xcb.
 
----
-
-Convert the speckeysd program to use xcb instead of xlib. Be careful of function call argument order, as some args are reordered between xlib and xcb.
+Also added tests (using Xvfb).
 
 ---
+
+Add tests to speckeysd using Xvfb, and then convert the speckeysd program to use xcb instead of xlib. Be careful of function call argument order, as some args are reordered between xlib and xcb.
+
+---
+
+## Not yet started
 
 The speckeysd program grabs input focus on the root window. This isn't very safe, as another process might have already grabbed root's focus. One way to get around this is to have speckeysd create its own invisible window, and grab hotkeys via that. Check that this will work for a non-window-manager client (in that we'll need to filter *all* keypress events, irrespective of where input focus us). If it's going to work OK, then implement this, otherwise suggest any good alternatives you know of.
+
+---
+
+The windows-arrow hotkeys switch input focus between windows, raising the focused window to the top of the window stack. If I'm mainly working in two windows, on the left and right, and there's a window between them at the bottom of the stack, I want to be able to flip across the middle one. In the current implementation, I can flip across two windows by tapping, say, windows-left twice in succession, but the middle window gets put on top of the right-hand window, which is annoying and not what I want.
+
+We can fix this by, when flipping to a window and raising it, at the same time storing its previous location in the window stack. When we then flip past it, we should restore it to its old position in the window stack. In that way, if we have to flip past a middle window (as above), it'll briefly be on top, but once we move across it it'll go back down where it belongs. Please implement this.
 
 ---
 

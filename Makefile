@@ -125,8 +125,10 @@ LWM_SRCS = $(addprefix $(SRCDIR)/lwm/, \
 
 # ---------------------------------------------------------------- gummiband
 
-# A panel: Xlib, Xft for the text and Xrandr to find the monitor it sits on.
-GUMMIBAND_PKGS = x11 xft xrandr
+# A panel: XCB, Xft for the text and RandR to find the monitor it sits on.
+# x11-xcb and xft are the Xft bridge, exactly as for lwm above: libX11 opens
+# the connection because Xft needs a Display, and XCB takes the socket over.
+GUMMIBAND_PKGS = xcb xcb-randr xcb-xrm x11-xcb xft
 
 # It borrows lwm's logging, as "lwm/log.h". log.cc pulls in nothing X-related,
 # so the object build/lwm/log.o (built with lwm's package flags) serves both
@@ -135,8 +137,12 @@ GUMMIBAND_SRCS = $(SRCDIR)/gummiband/gummiband.cpp $(SRCDIR)/lwm/log.cc
 
 # ---------------------------------------------------------------- speckeysd
 
-# A hot key daemon: plain Xlib, with XKB for the keyboard map.
-SPECKEYSD_PKGS = x11
+# A hot key daemon. It draws nothing, so Xft never came into it and there was
+# no reason to keep libX11: this is the one program here that is pure XCB.
+# xcb-keysyms provides the keycode/keysym mapping XKB used to, and xkbcommon
+# is there for xkb_keysym_from_name alone, which is the one thing XCB has no
+# answer to (it replaces XStringToKeysym, and takes the same key names).
+SPECKEYSD_PKGS = xcb xcb-keysyms xkbcommon
 
 SPECKEYSD_SRCS = $(SRCDIR)/speckeysd/speckeysd.cpp
 
@@ -210,9 +216,14 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
 # include prefix but is a separate library that doesn't link libX11 or define
 # any of its types.
 #
-# This applies to lwm alone. gummiband and speckeysd are ordinary Xlib
-# programs which never see lwm's headers, so they aren't checked.
-X11_CHECKED = $(LWM_SRCS) $(wildcard $(SRCDIR)/lwm/*.h)
+# speckeysd is in the gate too, for a different reason: it links no libX11 at
+# all, and the way that gets lost is somebody reaching for an X11 header for a
+# constant. There's nothing it could legitimately want from one.
+#
+# gummiband is the exception. It's on XCB as well, but it's a single file that
+# includes none of lwm's headers, so nothing stops Xlib and XCB sitting side
+# by side in it, and its Xft calls need them there.
+X11_CHECKED = $(LWM_SRCS) $(wildcard $(SRCDIR)/lwm/*.h) $(SPECKEYSD_SRCS)
 X11_ALLOWED = $(SRCDIR)/lwm/xfont.cc $(SRCDIR)/lwm/xbridge.cc
 check-x11-boundary:
 	@bad=$$(for f in $(X11_CHECKED); do \
@@ -244,6 +255,21 @@ ui: $(BINDIR)/lwm
 strut: $(BINDIR)/lwm
 	./strut_test.sh $(BINDIR)/lwm
 
+# gummiband's own tests: config in, clicks in, pixels and properties out, on
+# an Xvfb display with no window manager. It has no unit tests, so this is all
+# the coverage it has.
+#
+# Named 'gummi' rather than 'gummiband' so that 'make gummiband' still just
+# builds it, as 'make lwm' does.
+gummi: $(BINDIR)/gummiband
+	./gummiband_test.sh $(BINDIR)/gummiband
+
+# speckeysd's own tests: a keys file in, key presses in, the commands it runs
+# out, on a two-screen Xvfb display. Also its only coverage, and the
+# regression test for its XCB port.
+speckeys: $(BINDIR)/speckeysd
+	./speckeysd_test.sh $(BINDIR)/speckeysd
+
 install: all
 	install -d $(DESTDIR)$(bindir) $(DESTDIR)$(mandir)/man1
 	install -m 755 $(BINDIR)/lwm $(DESTDIR)$(bindir)/lwm
@@ -256,5 +282,5 @@ install: all
 clean:
 	rm -rf $(BUILDDIR) $(BINDIR)
 
-.PHONY: all clean install test smoke ui strut check-x11-boundary \
-	lwm gummiband speckeysd
+.PHONY: all clean install test smoke ui strut gummi speckeys \
+	check-x11-boundary lwm gummiband speckeysd

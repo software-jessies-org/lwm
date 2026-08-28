@@ -5,6 +5,13 @@
 The repo now holds gummiband and speckeysd too. Source moved to src/<program>/,
 and `make` builds all three into bin/.
 
+gummiband now speaks XCB. Its X resources (font and colours) work at last;
+they were silently ignored before. It has tests now too: `make gummi`.
+
+speckeysd speaks XCB as well, and links no Xlib at all. It has tests too:
+`make speckeys`. A hot key naming a key that isn't on the keyboard is now
+reported, rather than quietly grabbing every key with those modifiers.
+
 When no window will take the input focus, lwm now parks it on its own EWMH
 window rather than on the root, which other programs also use.
 
