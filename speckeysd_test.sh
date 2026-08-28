@@ -91,6 +91,7 @@ wait_for() {
 cleanup() {
   [ -n "${SK_PID:-}" ] && kill "${SK_PID}" >/dev/null 2>&1
   [ -n "${SK2_PID:-}" ] && kill "${SK2_PID}" >/dev/null 2>&1
+  [ -n "${SK3_PID:-}" ] && kill "${SK3_PID}" >/dev/null 2>&1
   [ -n "${XLOGO_PID:-}" ] && kill "${XLOGO_PID}" >/dev/null 2>&1
   [ -n "${XVFB_PID:-}" ] && kill "${XVFB_PID}" >/dev/null 2>&1
   wait >/dev/null 2>&1
@@ -378,6 +379,16 @@ else
   fail "a second instance reports the keys it couldn't grab"
   sed 's/^/    /' "${SK2_LOG}"
 fi
+
+# One message per hot key, not one per grab. A hot key is eight grabs (the
+# lock combinations) on each of the two screens, and all sixteen are refused
+# together, so the complaint is worth de-duplicating.
+SK2_COMPLAINTS=$(grep -c "couldn't grab key \"Control-F2\"" "${SK2_LOG}")
+if [ "${SK2_COMPLAINTS}" -eq 1 ]; then
+  pass "a key it can't grab is complained about once, not once per grab"
+else
+  fail "a key it can't grab is complained about once, not once per grab (${SK2_COMPLAINTS} times)"
+fi
 kill "${SK2_PID}" >/dev/null 2>&1
 wait "${SK2_PID}" >/dev/null 2>&1
 SK2_PID=
@@ -395,18 +406,63 @@ check_fires ctrl-f2 ctrl+F2 \
 # daemon working from a stale map would still see F5 there and run the command.
 
 F5_KEYCODE=$(xmodmap -pke | sed -n 's/^keycode *\([0-9]*\) = F5 .*/\1/p' | head -1)
-if [ -z "${F5_KEYCODE}" ]; then
-  fail "the keyboard map is re-read after a MappingNotify (no F5 keycode)"
+# Somewhere to move F5 to: a keycode the default map leaves empty.
+SPARE_KEYCODE=$(xmodmap -pke | sed -n 's/^keycode *\([0-9]*\) =$/\1/p' |
+  awk '$1 > 100 { print; exit }')
+if [ -z "${F5_KEYCODE}" ] || [ -z "${SPARE_KEYCODE}" ]; then
+  fail "the keyboard map is re-read after a MappingNotify (no keycode to use)"
 else
   xmodmap -e "keycode ${F5_KEYCODE} = F13"
   sleep 0.7
-  # xdotool finds F13 on that same keycode, so this presses the key that is
-  # still grabbed.
+  # xdotool finds F13 on that same keycode, so this presses the key that was
+  # grabbed. Nothing should fire, but for either of two reasons - a stale map
+  # would match the wrong keysym, and a moved grab isn't listening to that
+  # keycode at all - which is why the re-grab gets its own checks below.
   check_no_fire f5 F13 \
     "the keyboard map is re-read after a MappingNotify"
+
+  # F5 is nowhere on the keyboard now, and the grab that was on it has been
+  # given up. Worth saying out loud: the hot key has silently stopped working
+  # and it isn't the daemon's doing.
+  if grep -q "key \"F5\" is no longer on this keyboard" "${SK_LOG}"; then
+    pass "a hot key vanishing from the keyboard map is reported"
+  else
+    fail "a hot key vanishing from the keyboard map is reported"
+  fi
+
   xmodmap -e "keycode ${F5_KEYCODE} = F5"
   sleep 0.7
   check_fires f5 F5 "the hot key works again once the map is put back"
+
+  # --- the grabs move with the keysym ---------------------------------
+  #
+  # The check the one above can't be: F5 doesn't vanish here, it *moves*.
+  # xdotool presses whichever keycode carries F5, so it presses the new one.
+  # A daemon that only re-read the map still holds the grab on the old
+  # keycode, never sees the press, and the hot key is dead until it restarts.
+  #
+  # Order matters: F5 has to leave the old keycode before it arrives at the
+  # new one, or it's on both at once and xdotool presses the lower.
+  xmodmap -e "keycode ${F5_KEYCODE} = F13"
+  xmodmap -e "keycode ${SPARE_KEYCODE} = F5"
+  sleep 0.7
+  check_fires f5 F5 \
+    "a hot key whose keysym moves to another keycode is grabbed there"
+
+  xmodmap -e "keycode ${SPARE_KEYCODE} ="
+  xmodmap -e "keycode ${F5_KEYCODE} = F5"
+  sleep 0.7
+  check_fires f5 F5 "the hot key follows the keysym back again"
+
+  # A remap with nothing to do with any hot key, which is this pass's chance
+  # to break a key that was working: it runs over every hot key, moved or not.
+  # It does not pin down the re-grabbing of keys that didn't move - nothing
+  # here does, and regrab_after_mapping_change says why that's done anyway.
+  xmodmap -e "keycode ${SPARE_KEYCODE} = F14"
+  sleep 0.7
+  check_fires f5 F5 "an unrelated remap leaves the hot keys working"
+  xmodmap -e "keycode ${SPARE_KEYCODE} ="
+  sleep 0.7
 fi
 
 # --- SIGHUP reloads the configuration ---------------------------------------
@@ -463,6 +519,54 @@ else
   fail "speckeysd survived the whole session"
   tail -20 "${SK_LOG}" | sed 's/^/    /'
 fi
+
+# --- picking up a key that was taken when it started ------------------------
+#
+# This one goes last, because it works by taking the first instance away.
+#
+# A grab on the root is exclusive - that's the whole reason for grabbing there
+# - so starting second means starting without your keys, and nothing ever
+# tells you when the client holding them lets go. So the daemon asks again
+# every few seconds. Without the retry the first check here still passes (the
+# message is printed once at startup) and the last two go red: the key stays
+# dead for the life of the process.
+#
+# The keys file is the one the SIGHUP section left behind, so Control-F4 is
+# the only hot key, and the first instance is holding it.
+
+SK3_LOG="${WORKDIR}/speckeysd3.log"
+"${SPECKEYSD_BIN}" "${KEYS}" >"${SK3_LOG}" 2>&1 &
+SK3_PID=$!
+sleep 1.5
+
+if grep -q "couldn't grab key \"Control-F4\".*will keep trying" "${SK3_LOG}"; then
+  pass "a key another client holds is reported as one it will keep trying for"
+else
+  fail "a key another client holds is reported as one it will keep trying for"
+  sed 's/^/    /' "${SK3_LOG}"
+fi
+
+# The server drops a client's grabs when its connection goes, so this is what
+# frees Control-F4. Waited for, not just signalled: the grab is held until the
+# process is actually gone.
+kill "${SK_PID}" >/dev/null 2>&1
+wait "${SK_PID}" >/dev/null 2>&1
+SK_PID=
+
+# The retry interval is 5s, so allow a couple of them before giving up.
+if wait_for 150 grep -q "grabbed key \"Control-F4\" at last" "${SK3_LOG}"; then
+  pass "the key is grabbed on a retry once the other client exits"
+else
+  fail "the key is grabbed on a retry once the other client exits"
+  sed 's/^/    /' "${SK3_LOG}"
+fi
+
+# And the grab is real, not just a message: the point of the exercise.
+check_fires ctrl-f4 ctrl+F4 "the retried hot key runs its command"
+
+kill "${SK3_PID}" >/dev/null 2>&1
+wait "${SK3_PID}" >/dev/null 2>&1
+SK3_PID=
 
 echo
 if [ "${FAILURES}" -eq 0 ]; then

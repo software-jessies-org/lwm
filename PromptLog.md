@@ -159,9 +159,19 @@ We can fix this by, when flipping to a window and raising it, at the same time s
 
 ---
 
+The speckeysd program grabs input focus on the root window. This isn't very safe, as another process might have already grabbed root's focus. One way to get around this is to have speckeysd create its own invisible window, and grab hotkeys via that. Check that this will work for a non-window-manager client (in that we'll need to filter *all* keypress events, irrespective of where input focus us). If it's going to work OK, then implement this, otherwise suggest any good alternatives you know of.
+
+We ended up adding retry; the current grab mechanism is the only really sensible one.
+
+---
+
 ## Not yet started
 
-The speckeysd program grabs input focus on the root window. This isn't very safe, as another process might have already grabbed root's focus. One way to get around this is to have speckeysd create its own invisible window, and grab hotkeys via that. Check that this will work for a non-window-manager client (in that we'll need to filter *all* keypress events, irrespective of where input focus us). If it's going to work OK, then implement this, otherwise suggest any good alternatives you know of.
+I often run in a multi-monitor setup (like now), with gummiband shown only on the main monitor. When I run a game, the game should only run on the main monitor, but when that happens I want gummiband to flip to the secondary monitor (whichever has the minimum top Y value, or if there's a tie, use the min X value as the tie-breaker). Make gummiband listen for windows opening full-screen on one monitor. Make sure it covers not only the proper 'full screen mode' in X11, but also cases where an application simply creates a window that is exactly the size and location of the main monitor's display area (some Steam games do this). If we detect such an event, have the gummiband window flip to another monitor, and then flip back once the game window has gone.
+
+---
+
+**TDB** Add support for colours in gummiband (possibly support the i3blocks protocol, but not sure).
 
 ---
 

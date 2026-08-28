@@ -4,6 +4,14 @@
 // root window of every screen, and runs the command when the key is pressed.
 // SIGHUP makes it exec itself, which is how the file is reloaded.
 //
+// The grabs have to be on the root: a passive grab fires only when the grab
+// window is the focus window, an ancestor of it, or a descendant of it
+// containing the pointer, and for a key typed at somebody else's window the
+// root is the only window we could own that qualifies. That makes the grab
+// exclusive - two clients can't hold the same key on the same window - so a
+// key can be unavailable when we start and free later, which is what
+// retry_busy_grabs is for.
+//
 // It's on XCB, and unlike lwm and gummiband it is on nothing else: those two
 // keep libX11 in the link because Xft needs a Display and nothing draws text
 // without it (see docs/xcb-migration-plan.md, "The one real blocker: Xft").
@@ -21,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <cerrno>
 
 #include <sys/types.h>
@@ -55,11 +64,47 @@ std::vector<xcb_window_t> roots;
 /* The keycode/keysym mapping, kept up to date from MappingNotify. */
 xcb_key_symbols_t* key_symbols;
 
+/* One per hot key in the file: what we want grabbed, and how that went.
+ *
+ * The keycode is the reason this list exists. The file names a keysym, but
+ * GrabKey takes a keycode, and which keycode carries a keysym is up to the
+ * keyboard map - which changes, at any moment, for reasons that have nothing
+ * to do with us. Remembering the keycode we grabbed is what lets us ungrab it
+ * again when the map moves out from under it.
+ *
+ * The two ways a grab can fail are both temporary, so neither throws the
+ * entry away:
+ *  - busy: another client holds the key. That client may be a copy of us that
+ *    hasn't finished exiting, or a window manager still starting up.
+ *  - keycode == 0: the keysym isn't anywhere on the keyboard. A different
+ *    keyboard layout, or a keyboard being plugged in, can put it there.
+ * Either way the key is unusable now and might not be later, so we keep
+ * asking - retry_busy_grabs for the first, regrab_after_mapping_change for
+ * the second. */
+typedef struct Grab Grab;
+struct Grab {
+  char* keyname;         /* Ours, for the messages; strdup'd. */
+  xcb_keysym_t keysym;   /* What the file asked for. */
+  uint16_t modifiers;    /* As in the file: the lock bits are added on. */
+  xcb_keycode_t keycode; /* What we last grabbed; 0 if we hold nothing. */
+  bool busy;             /* Another client has it; ask again. */
+};
+
+std::vector<Grab> grabs;
+
+/* How often we go back for the keys another client holds, and when we last
+ * did. The interval is a compromise: a key is unusable until the retry that
+ * gets it, but every attempt is a round trip to the server, and nothing
+ * forces the client squatting on the key to ever let go. */
+static const time_t kRetrySeconds = 5;
+time_t last_retry_time;
+
 char* argv0;
 char* hot_key_file;
 
 static void report_key_grab_error(const char* keyname,
-                                  const xcb_generic_error_t* e) {
+                                  const xcb_generic_error_t* e,
+                                  const char* note) {
   const char* reason = "unknown reason";
   if (e->error_code == XCB_ACCESS) {
     reason = "the key/button combination is already in use by another client";
@@ -68,8 +113,8 @@ static void report_key_grab_error(const char* keyname,
   } else if (e->error_code == XCB_WINDOW) {
     reason = "the root window we passed to GrabKey was incorrect";
   }
-  fprintf(stderr, "%s: couldn't grab key \"%s\": %s (X error code %i)\n", argv0,
-          keyname, reason, e->error_code);
+  fprintf(stderr, "%s: couldn't grab key \"%s\": %s (X error code %i)%s\n",
+          argv0, keyname, reason, e->error_code, note);
 }
 
 static void reap_zombies() {
@@ -160,42 +205,197 @@ static bool parse_hot_key(const char* keyname,
   return ok;
 }
 
-static void add_hot_key_modified(const char* keyname,
-                                 xcb_keysym_t keysym,
-                                 xcb_keycode_t keycode,
-                                 const char* command,
-                                 uint16_t modifiers) {
+// https://stackoverflow.com/questions/4037230/global-hotkey-with-x11-xlib/4037579
+// X is very particular about the mod key mask. Having caps lock, num lock,
+// scroll lock etc enabled or disabled results in a different mod mask, and
+// thus will fail to match if we don't grab that key too.
+// In X11 terms, we want to ignore these:
+// LockMask = caps lock
+// Mod2Mask = num lock
+// Mod3Mask = scroll lock
+// The masks are cast because XCB gives them an enum type, and a list of
+// {0, some_enum} has no type both halves agree on.
+//
+// So one hot key is eight grabs on each screen, and eight entries in the
+// hotkeys list - keypress compares the event's modifier state for equality,
+// lock bits and all, so the list needs every combination too.
+static std::vector<uint16_t> lock_combinations(uint16_t modifiers) {
+  std::vector<uint16_t> masks;
+  masks.reserve(8);
+  for (uint16_t capsMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_LOCK)}) {
+    for (uint16_t numLockMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_2)}) {
+      for (uint16_t scrLockMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_3)}) {
+        masks.push_back(
+            uint16_t(modifiers | capsMask | numLockMask | scrLockMask));
+      }
+    }
+  }
+  return masks;
+}
+
+static void add_hot_key_binding(xcb_keysym_t keysym,
+                                uint16_t modifiers,
+                                const char* command) {
   HotKey* new_key = new HotKey;
   new_key->keysym = keysym;
   new_key->modifiers = modifiers;
   new_key->command = strdup(command);
   new_key->next = hotkeys;
   hotkeys = new_key;
+}
 
-  // Beware the argument order: XGrabKey led with the keycode and the
-  // modifiers and had owner_events buried in the middle, while xcb_grab_key
-  // leads with owner_events and puts the modifiers before the key. Every one
-  // of those is an integer, so getting it wrong compiles perfectly happily
-  // and grabs something else.
-  //
-  // The requests go out for every screen first, and only then do we ask what
-  // became of them: xcb_request_check waits for the server to catch up with
-  // that one request, so anything sent before it has been answered by the
-  // time we look. Xlib's equivalent was XSynchronize(True) around the grabs,
-  // which cost a round trip each.
+enum GrabOutcome {
+  GRAB_OK,     // Every grab this hot key needs is ours.
+  GRAB_BUSY,   // Someone else holds it; worth asking again later.
+  GRAB_FAILED  // Something no amount of waiting will fix.
+};
+
+// grab_hot_key takes the whole of one hot key: every lock combination, on
+// every screen. Report says whether a key another client holds is worth a
+// message, which it is the first time and not on every retry afterwards.
+//
+// Beware the argument order: XGrabKey led with the keycode and the modifiers
+// and had owner_events buried in the middle, while xcb_grab_key leads with
+// owner_events and puts the modifiers before the key. Every one of those is
+// an integer, so getting it wrong compiles perfectly happily and grabs
+// something else.
+static GrabOutcome grab_hot_key(const char* keyname,
+                                xcb_keycode_t keycode,
+                                uint16_t modifiers,
+                                bool report) {
+  // The requests all go out first, and only then do we ask what became of
+  // them: xcb_request_check waits for the server to catch up with that one
+  // request, so anything sent before it has been answered by the time we
+  // look. Xlib's equivalent was XSynchronize(True) around the grabs, which
+  // cost a round trip each; this way the whole hot key costs one.
+  const std::vector<uint16_t> masks = lock_combinations(modifiers);
   std::vector<xcb_void_cookie_t> cookies;
-  cookies.reserve(roots.size());
-  for (xcb_window_t root : roots) {
-    cookies.push_back(xcb_grab_key_checked(conn, 0 /* owner_events */, root,
-                                           modifiers, keycode,
-                                           XCB_GRAB_MODE_ASYNC,
-                                           XCB_GRAB_MODE_ASYNC));
-  }
-  for (xcb_void_cookie_t cookie : cookies) {
-    if (xcb_generic_error_t* err = xcb_request_check(conn, cookie)) {
-      report_key_grab_error(keyname, err);
-      free(err);
+  cookies.reserve(masks.size() * roots.size());
+  for (uint16_t mask : masks) {
+    for (xcb_window_t root : roots) {
+      cookies.push_back(xcb_grab_key_checked(conn, 0 /* owner_events */, root,
+                                             mask, keycode,
+                                             XCB_GRAB_MODE_ASYNC,
+                                             XCB_GRAB_MODE_ASYNC));
     }
+  }
+
+  bool busy = false;
+  bool failed = false;
+  for (xcb_void_cookie_t cookie : cookies) {
+    xcb_generic_error_t* err = xcb_request_check(conn, cookie);
+    if (err == NULL) {
+      continue;
+    }
+    // A key another client holds is refused in every one of these requests,
+    // so say it once rather than once per lock combination per screen.
+    if (err->error_code == XCB_ACCESS) {
+      if (!busy && report) {
+        report_key_grab_error(keyname, err, "; will keep trying");
+      }
+      busy = true;
+    } else {
+      if (!failed) {
+        report_key_grab_error(keyname, err, "");
+      }
+      failed = true;
+    }
+    free(err);
+  }
+  return failed ? GRAB_FAILED : (busy ? GRAB_BUSY : GRAB_OK);
+}
+
+// The counterpart of grab_hot_key: every lock combination, on every screen.
+// Unchecked, because UngrabKey on a grab we don't hold is a no-op rather than
+// an error, and there'd be nothing useful to do about a failure anyway.
+static void ungrab_hot_key(xcb_keycode_t keycode, uint16_t modifiers) {
+  for (uint16_t mask : lock_combinations(modifiers)) {
+    for (xcb_window_t root : roots) {
+      xcb_ungrab_key(conn, keycode, root, mask);
+    }
+  }
+}
+
+// Which keycode currently carries a keysym, or 0 for none.
+//
+// The reply is a malloc'd list of every keycode carrying the keysym,
+// terminated by XCB_NO_SYMBOL; the first is the one Xlib's XKeysymToKeycode
+// would have returned.
+static xcb_keycode_t keycode_for(xcb_keysym_t keysym) {
+  xcb_keycode_t* keycodes = xcb_key_symbols_get_keycode(key_symbols, keysym);
+  const xcb_keycode_t keycode = keycodes ? keycodes[0] : 0;
+  free(keycodes);
+  return keycode;
+}
+
+// retry_busy_grabs goes back for the keys another client held last time we
+// asked. Called from the main loop, so the throttling lives here.
+static void retry_busy_grabs() {
+  const time_t now = time(NULL);
+  if (now - last_retry_time < kRetrySeconds) {
+    return;
+  }
+  last_retry_time = now;
+
+  for (Grab& g : grabs) {
+    if (!g.busy) {
+      continue;
+    }
+    // Every lock combination goes in again, including any that got through
+    // last time. GrabKey only refuses a key some *other* client holds, so
+    // re-grabbing one of our own is not an error, and that saves remembering
+    // which of the requests were the ones that failed.
+    if (grab_hot_key(g.keyname, g.keycode, g.modifiers, false /* report */) ==
+        GRAB_BUSY) {
+      continue;
+    }
+    g.busy = false;
+    fprintf(stderr, "%s: grabbed key \"%s\" at last\n", argv0, g.keyname);
+  }
+}
+
+// regrab_after_mapping_change moves the grabs when the keyboard map moves.
+//
+// The grabs are on keycodes; the file names keysyms; the map decides which is
+// which, and setxkbmap, xmodmap or a keyboard being plugged in can change it
+// at any time. Keeping the old grab through that is wrong twice over: the hot
+// key stops working, and whatever keysym inherited the old keycode starts
+// firing it instead. Refreshing our copy of the map (which is what the
+// MappingNotify handler used to do, and all it used to do) fixes only the
+// second of those, and only by making the key do nothing at all.
+static void regrab_after_mapping_change() {
+  for (Grab& g : grabs) {
+    const xcb_keycode_t keycode = keycode_for(g.keysym);
+    const bool moved = keycode != g.keycode;
+    if (moved && g.keycode != 0) {
+      // The keysym has gone somewhere else. Let go of the keycode it used to
+      // be on, or we go on firing this command for whatever inherited it.
+      ungrab_hot_key(g.keycode, g.modifiers);
+    }
+    g.keycode = keycode;
+    g.busy = false;
+    if (keycode == 0) {
+      // Only worth saying when it's news. A hot key for a key this keyboard
+      // simply doesn't have would otherwise say so after every remap.
+      if (moved) {
+        fprintf(stderr, "%s: key \"%s\" is no longer on this keyboard\n", argv0,
+                g.keyname);
+      }
+      continue;
+    }
+    // Grabbed again even when the keycode hasn't changed. That looks like
+    // wasted work and isn't: a build of this that only re-grabbed keys whose
+    // keycode had moved was seen to lose a grab it had never ungrabbed, on a
+    // keycode that ended up exactly where it started, after the map had been
+    // rewritten a few times in a row. A single unrelated remap doesn't do it,
+    // so the rule is something subtler than that - and the exact rule is not
+    // worth betting a hot key on. Re-grabbing a key we already hold costs one
+    // request in a batch we're already sending and does nothing else. Note
+    // there's no ungrab on this path, so the key is never even briefly
+    // unheld.
+    g.busy =
+        grab_hot_key(g.keyname, keycode, g.modifiers, moved /* report */) ==
+        GRAB_BUSY;
   }
 }
 
@@ -203,43 +403,33 @@ static void add_hot_key(const char* keyname, const char* command) {
   xcb_keysym_t keysym = XCB_NO_SYMBOL;
   uint16_t modifiers = 0;
   if (!parse_hot_key(keyname, &keysym, &modifiers)) {
+    // The one failure that is permanent: a name that isn't a keysym at all
+    // won't become one because the keyboard changed. Nothing to remember.
     return;
   }
+
+  for (uint16_t mask : lock_combinations(modifiers)) {
+    add_hot_key_binding(keysym, mask, command);
+  }
+
+  Grab g;
+  g.keyname = strdup(keyname);
+  g.keysym = keysym;
+  g.modifiers = modifiers;
+  g.busy = false;
   // A keysym which isn't on the keyboard has no keycode, and a keycode of 0
   // is AnyKey to GrabKey: grabbing it would quietly claim every key with
   // these modifiers. A NoSymbol hot key would be no better, matching any key
   // event the server can't name. Neither is what a typo in the file meant.
-  //
-  // The reply is a malloc'd list of every keycode carrying the keysym,
-  // terminated by XCB_NO_SYMBOL; the first is the one Xlib's
-  // XKeysymToKeycode would have returned.
-  xcb_keycode_t* keycodes = xcb_key_symbols_get_keycode(key_symbols, keysym);
-  const xcb_keycode_t keycode = keycodes ? keycodes[0] : 0;
-  free(keycodes);
-  if (keycode == 0) {
-    fprintf(stderr, "%s: key \"%s\" isn't on this keyboard\n", argv0, keyname);
-    return;
+  g.keycode = keycode_for(keysym);
+  if (g.keycode == 0) {
+    fprintf(stderr, "%s: key \"%s\" isn't on this keyboard yet\n", argv0,
+            keyname);
+  } else {
+    g.busy = grab_hot_key(keyname, g.keycode, modifiers, true /* report */) ==
+             GRAB_BUSY;
   }
-
-  // https://stackoverflow.com/questions/4037230/global-hotkey-with-x11-xlib/4037579
-  // X is very particular about the mod key mask. Having caps lock, num lock,
-  // scroll lock etc enabled or disabled results in a different mod mask, and
-  // thus will fail to match if we don't grab that key too.
-  // In X11 terms, we want to ignore these:
-  // LockMask = caps lock
-  // Mod2Mask = num lock
-  // Mod3Mask = scroll lock
-  // The masks are cast because XCB gives them an enum type, and a list of
-  // {0, some_enum} has no type both halves agree on.
-  for (uint16_t capsMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_LOCK)}) {
-    for (uint16_t numLockMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_2)}) {
-      for (uint16_t scrLockMask : {uint16_t(0), uint16_t(XCB_MOD_MASK_3)}) {
-        const uint16_t combinedMask = capsMask | numLockMask | scrLockMask;
-        add_hot_key_modified(keyname, keysym, keycode, command,
-                             uint16_t(modifiers | combinedMask));
-      }
-    }
-  }
+  grabs.push_back(g);
 }
 
 static void read_hot_key_file(const char* fname) {
@@ -363,11 +553,17 @@ int main(int argc, char* argv[]) {
 
   /* There's no XSync to follow this any more: every grab it makes is waited
    * on as it's made, so by the time we're here the server has dealt with the
-   * lot of them and told us about any it refused. */
+   * lot of them and told us about any it refused. Any it refused because
+   * another client had the key are marked busy now; start the clock so that
+   * the first retry is one interval away rather than immediate. */
+  last_retry_time = time(NULL);
   read_hot_key_file(hot_key_file);
 
   /* The main event loop. */
   while (!forceRestart) {
+    /* getEvent gives up after a second whether or not anything arrived, which
+     * is what makes this a poll rather than something needing its own timer. */
+    retry_busy_grabs();
     xcb_generic_event_t* ev = getEvent();
     if (ev == NULL) {
       continue;
@@ -386,13 +582,21 @@ int main(int argc, char* argv[]) {
       case XCB_KEY_PRESS:
         keypress((xcb_key_press_event_t*)ev);
         break;
-      case XCB_MAPPING_NOTIFY:
+      case XCB_MAPPING_NOTIFY: {
         // The keyboard map has changed under us, and our idea of which
         // keycode carries which keysym is now stale. We grabbed keycodes, but
         // we match on keysyms, so without this the wrong keys run commands.
-        xcb_refresh_keyboard_mapping(key_symbols,
-                                     (xcb_mapping_notify_event_t*)ev);
+        xcb_mapping_notify_event_t* map = (xcb_mapping_notify_event_t*)ev;
+        xcb_refresh_keyboard_mapping(key_symbols, map);
+        // Refreshing the map only stops the wrong key firing. The grabs are
+        // on the old keycodes and have to be moved as well, or the hot key
+        // itself is gone. Only a keyboard remap moves keysyms about: the
+        // modifier and pointer mappings leave every keycode where it was.
+        if (map->request == XCB_MAPPING_KEYBOARD) {
+          regrab_after_mapping_change();
+        }
         break;
+      }
       default:
         /* Do I look like I care? */
         break;

@@ -256,11 +256,35 @@ reaped and don't inherit the X connection, the errors it reports for a bad
 keys file and for a key another client already holds, the `MappingNotify`
 refresh, and the SIGHUP reload.
 
+The `MappingNotify` checks come in two halves, because the daemon has two
+separate things to do when the keyboard map changes: re-read the map, or it
+matches a press against a stale keysym, and move its grabs, or they're left on
+the old keycodes. The first half's check passes for either reason, so the
+re-grab has checks of its own - F5's keysym is moved to a spare keycode and
+the hot key has to follow it there and back.
+
+The last section is the retry, and it runs last because it works by killing
+the first instance to free the key the second one wanted. A grab on the root
+is exclusive, so starting second means starting without your keys, and the
+server never says when the holder lets go; speckeysd re-issues the failed
+grabs every five seconds. Both halves are checked - the "at last" message and
+the key actually firing - because the message alone would pass on a daemon
+that logged its way through a retry that grabbed nothing.
+
 Every check was confirmed to go red for the mistake it's there to catch, by
 making that mistake on purpose: swapping `xcb_grab_key`'s keycode and
 modifiers, grabbing on the first root only, looking the keysym up at the wrong
-column, dropping `xcb_refresh_keyboard_mapping`, and sending the grabs without
-flushing.
+column, dropping `xcb_refresh_keyboard_mapping`, sending the grabs without
+flushing, making `retry_busy_grabs` a no-op, reporting a refused grab once per
+request instead of once per hot key (which prints it sixteen times: eight lock
+combinations on each of the two screens), and skipping
+`regrab_after_mapping_change`.
+
+One check is deliberately weaker than that standard: "an unrelated remap
+leaves the hot keys working" guards the re-grab pass against breaking keys it
+touches unnecessarily, but nothing in the suite goes red if the pass skips
+keys whose keycode didn't change. That skip is avoided on the evidence in
+`regrab_after_mapping_change`'s comment rather than on a check here.
 
 Four things worth knowing before adding a check:
 

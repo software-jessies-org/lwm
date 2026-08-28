@@ -16,6 +16,13 @@ speckeysd speaks XCB as well, and links no Xlib at all. It has tests too:
 `make speckeys`. A hot key naming a key that isn't on the keyboard is now
 reported, rather than quietly grabbing every key with those modifiers.
 
+speckeysd keeps trying for a hot key another program held when it started,
+instead of losing that key until it's restarted. It also complains about such
+a key once rather than sixteen times.
+
+speckeysd moves its grabs when the keyboard map changes, so a hot key whose
+key moves to another keycode keeps working.
+
 When no window will take the input focus, lwm now parks it on its own EWMH
 window rather than on the root, which other programs also use.
 
