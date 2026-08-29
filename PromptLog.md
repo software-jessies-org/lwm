@@ -165,9 +165,18 @@ We ended up adding retry; the current grab mechanism is the only really sensible
 
 ---
 
-## Not yet started
+## 2026-08-29
 
 I often run in a multi-monitor setup (like now), with gummiband shown only on the main monitor. When I run a game, the game should only run on the main monitor, but when that happens I want gummiband to flip to the secondary monitor (whichever has the minimum top Y value, or if there's a tie, use the min X value as the tie-breaker). Make gummiband listen for windows opening full-screen on one monitor. Make sure it covers not only the proper 'full screen mode' in X11, but also cases where an application simply creates a window that is exactly the size and location of the main monitor's display area (some Steam games do this). If we detect such an event, have the gummiband window flip to another monitor, and then flip back once the game window has gone.
+
+---
+
+## Not yet started
+
+I want the following changes to the windows-key-drag handling in lwm:
+* windows+left drag (move window) should also raise the window.
+* windows+middle drag in the central of the 3x3 grid should move the window without raising it.
+* While using windows+middle drag for any purpose, if the user briefly clicks the left button (in a chord) it should raise the window; briefly clicking the right button should iconise it and cancel the drag action.
 
 ---
 

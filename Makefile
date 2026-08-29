@@ -107,6 +107,7 @@ LWM_SRCS = $(addprefix $(SRCDIR)/lwm/, \
 	realserver.cc \
 	resource.cc \
 	screen.cc \
+	screen_test.cc \
 	screenlayout.cc \
 	screenlayout_test.cc \
 	session.cc \

@@ -131,6 +131,11 @@ void manage(Client* c) {
   // Get the WM_TRANSIENT_FOR property (see ICCCM section 4.1.2.6).
   getTransientFor(c);
 
+  // And whatever else the window says about whose it is. The WM_HINTS are
+  // already in hand; the other two are a property each.
+  c->window_group = hints.ok ? hints.window_group : 0;
+  getProgramIdentity(c);
+
   // Work out details for the Client structure from the hints.
   if (hints.has_input) {
     c->accepts_focus = hints.input;
@@ -158,7 +163,7 @@ void manage(Client* c) {
   // windows, as it's perfectly reasonable for a launcher (eg gummiband) to
   // want to place itself at the origin of the screen.
   if (c->framed && rect.xMin == 0 && rect.yMin == 0) {
-    Point p = LScr::I->NextAutoPosition(rect.area());
+    Point p = LScr::I->NextAutoPosition(c, rect.area());
     rect = Rect::Translate(rect, p);
   }
   // There was code here which called 'applyGravity' if there was a user-
@@ -266,6 +271,33 @@ void getTransientFor(Client* c) {
   c->trans = xlib::XGetTransientForHint(c->window);
   if (c->trans != XCB_NONE) {
     LOGD(c) << "Transient for window " << WinID(c->trans);
+  }
+}
+
+// getProgramIdentity reads the two properties, beyond WM_HINTS' window group,
+// by which a window can say which program it belongs to: WM_CLIENT_LEADER
+// (ICCCM 5.1) and _NET_WM_PID, the latter only meaning anything alongside the
+// WM_CLIENT_MACHINE that says whose process table it is a number in.
+//
+// None of them is required, and a window setting none of them is not an error
+// - see Client::SameProgramAs for what the answer is worth.
+void getProgramIdentity(Client* c) {
+  const xlib::WindowProperty leader = xlib::XGetWindowProperty(
+      c->window, wm_client_leader, 1, XCB_ATOM_WINDOW);
+  if (leader.ok() && leader.Data32().size()) {
+    c->client_leader = leader.Data32()[0];
+  }
+  const xlib::WindowProperty pid = xlib::XGetWindowProperty(
+      c->window, ewmh_atom[_NET_WM_PID], 1, XCB_ATOM_CARDINAL);
+  if (pid.ok() && pid.Data32().size()) {
+    c->pid = pid.Data32()[0];
+    // Any type: WM_CLIENT_MACHINE is STRING by the letter of the ICCCM, but
+    // plenty of toolkits write it as UTF8_STRING, and asking for STRING would
+    // read those back as empty. Only two clients agreeing matters here, and
+    // they agree by holding the same bytes whatever the type says.
+    const xlib::WindowProperty machine = xlib::XGetWindowProperty(
+        c->window, XCB_ATOM_WM_CLIENT_MACHINE, 100, xlib::kAnyPropertyType);
+    c->client_machine = machine.ok() ? machine.Data8() : "";
   }
 }
 

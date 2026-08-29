@@ -316,6 +316,71 @@ Rect LScr::GetPrimaryVisibleArea(bool withStruts) const {
   return PrimaryArea(VisibleAreas(withStruts));
 }
 
+Client* LScr::FullScreenOccupantOf(const Rect& area) const {
+  if (area.empty()) {
+    return nullptr;
+  }
+  for (const auto& it : clients_) {
+    Client* c = it.second;
+    // A hidden or withdrawn window covers nothing, whatever its geometry says.
+    if (!c->IsNormal()) {
+      continue;
+    }
+    // The desktop background, and any panel, is meant to fill the screen and
+    // is no reason to send anything anywhere.
+    if (c->wtype == WTypeDesktop || c->wtype == WTypeDock || c->HasStruts()) {
+      continue;
+    }
+    const Rect r = c->ContentRect();
+    if (c->wstate.fullscreen) {
+      // Taken at its word if most of the monitor is under it. The slack is for
+      // a client whose idea of the monitor is a pixel or two out, not for one
+      // which is somewhere else entirely.
+      if (Rect::Intersect(r, area).area().num_pixels() * 2 >
+          area.area().num_pixels()) {
+        return c;
+      }
+      continue;
+    }
+    if (r.xMin <= area.xMin && r.yMin <= area.yMin && r.xMax >= area.xMax &&
+        r.yMax >= area.yMax) {
+      return c;
+    }
+  }
+  return nullptr;
+}
+
+Rect LScr::PlacementAreaFor(const Client* c) const {
+  // The monitors, and their work areas, are index-aligned: whether a monitor
+  // is taken is decided on the whole of it, but what a window is placed in is
+  // the part of it no panel has claimed.
+  const std::vector<Rect> areas = VisibleAreas(false);
+  const std::vector<Rect> work_areas = VisibleAreas(true);
+  const Rect primary = PrimaryArea(work_areas);
+  std::vector<Rect> free_areas;
+  for (size_t i = 0; i < areas.size(); i++) {
+    // SameProgramAs is symmetric, so which way round this is asked doesn't
+    // matter; it's asked of the occupant because that one is never null.
+    const Client* occupant = FullScreenOccupantOf(areas[i]);
+    if (occupant == nullptr || occupant->SameProgramAs(c)) {
+      free_areas.push_back(work_areas[i]);
+    }
+  }
+  if (free_areas.empty()) {
+    return primary;  // Everything is taken; there's nowhere better to go.
+  }
+  // PrimaryArea picks the best of whatever it's given, by the same rule that
+  // picked the primary monitor out of the whole set. So when the primary is
+  // among the free areas this returns it, and the answer only differs when it
+  // isn't - no separate "is the primary taken?" test needed.
+  const Rect res = PrimaryArea(free_areas);
+  if (res != primary) {
+    LOGI() << "Primary monitor is full screen for another program; placing new "
+              "window on " << res << " instead";
+  }
+  return res;
+}
+
 std::vector<Rect> LScr::VisibleAreas(bool withStruts) const {
   if (!withStruts) {
     return visible_areas_;

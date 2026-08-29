@@ -134,6 +134,29 @@ Hopefully the above examples should give a reasonable indication as to what's
 possible.
 
 
+.SH "MULTIPLE MONITORS"
+\fIGummiband\fP sits along the top of the topmost row of monitors, rather than
+across the whole width of the display, so a monitor which is lower down or off
+to one side is left alone.
+.PP
+When a window goes full screen on a monitor the panel is on, the panel moves
+out of the way onto another monitor, and moves back when that window goes.
+The monitor it moves to is the topmost one that nothing is filling, with the
+leftmost winning a tie; if every monitor is covered, or there is only one, the
+panel stays where it is.
+.PP
+Two kinds of window count as full screen. One is a window which asks for
+\fB_NET_WM_STATE_FULLSCREEN\fP, which is what a toolkit does. The other is a
+window simply sized and placed to cover a monitor exactly, which is what the
+\&'borderless fullscreen' setting in a game's display options produces, and
+what games run under Proton generally do. A merely maximised window is neither, and the
+panel ignores it.
+.PP
+While the panel is away from the top of the display it reserves no space for
+itself: \fB_NET_WM_STRUT\fP can only name an edge of the whole display, so a
+top strut would reserve a strip across the very window the panel just got out
+of the way of. It reserves its height again on returning home.
+
 .SH RESOURCES
 \fIGummiband\fP understands the following X resources:
 .TP 14

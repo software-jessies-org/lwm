@@ -46,6 +46,7 @@ World::World(int width, int height)
       "COMPOUND_TEXT",
       "_MOZILLA_URL",
       "_MOTIF_WM_HINTS",
+      "WM_CLIENT_LEADER",
   });
   wm_state = atoms[0];
   wm_change_state = atoms[1];
@@ -55,6 +56,7 @@ World::World(int width, int height)
   compound_text = atoms[5];
   _mozilla_url = atoms[6];
   motif_wm_hints = atoms[7];
+  wm_client_leader = atoms[8];
 
   ewmh_init();
   xfont::InitForTest(kTextHeight, kTextAscent, kCharWidth);
@@ -83,7 +85,14 @@ World::~World() {
 }
 
 Client* World::MapClientWindow(const Rect& rect) {
-  const Window w = server_->AddClientWindow(rect);
+  return MapWindow(AddClientWindow(rect));
+}
+
+Window World::AddClientWindow(const Rect& rect) {
+  return server_->AddClientWindow(rect);
+}
+
+Client* World::MapWindow(Window w) {
   xcb_map_request_event_t ev{};
   ev.response_type = XCB_MAP_REQUEST;
   ev.parent = server_->Root();

@@ -54,6 +54,10 @@ extern Atom wm_protocols;
 extern Atom wm_delete;
 extern Atom wm_take_focus;
 extern Atom compound_text;
+// WM_CLIENT_LEADER (ICCCM section 5.1): the window an application nominates to
+// stand for the whole of it. Read to tell whose window a new one is - see
+// Client::SameProgramAs.
+extern Atom wm_client_leader;
 extern bool shape;
 extern int shape_event;
 

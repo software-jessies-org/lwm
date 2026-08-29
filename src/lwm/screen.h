@@ -78,10 +78,41 @@ class LScr {
 
   // Returns the position at which to place the next auto-placed (i.e. no
   // position hint of its own) window of the given size, cascading down and
-  // to the right within the primary visible area on successive calls.
-  Point NextAutoPosition(const Area& client_area) {
-    return auto_placer_.NextPosition(client_area, GetPrimaryVisibleArea(true));
+  // to the right within PlacementAreaFor(c) on successive calls.
+  Point NextAutoPosition(const Client* c, const Area& client_area) {
+    return auto_placer_.NextPosition(client_area, PlacementAreaFor(c));
   }
+
+  // The work area an auto-placed window belonging to c should go in.
+  //
+  // Normally the primary monitor's, as it always was. The exception is a
+  // monitor filled by another program's full-screen window - a game, in
+  // practice - which is no place to put a window the user has just asked some
+  // other program for: it would either be hidden behind the game or would pop
+  // up over it. So when the primary monitor is taken that way, the best of the
+  // monitors that aren't is used instead, chosen by the same rule that picks
+  // the primary in the first place (largest, then topmost, then leftmost).
+  //
+  // The full-screen window's *own* program is exempt, so a game's dialogs and
+  // second windows still open where the game is. See Client::SameProgramAs.
+  //
+  // If every monitor is taken, or the only one is, the primary is still the
+  // answer: there's nowhere better to go.
+  Rect PlacementAreaFor(const Client* c) const;
+
+  // The client filling the whole of `area` with a full-screen window, or null
+  // if there isn't one.
+  //
+  // Two kinds of window count. One has asked for _NET_WM_STATE_FULLSCREEN, and
+  // need only cover most of the monitor to be taken at its word. The other has
+  // simply sized itself to cover the monitor exactly, which is what
+  // "borderless fullscreen" in a game's display settings does; that one has to
+  // cover the monitor completely, which a merely maximised window never does
+  // (its content sits inside lwm's furniture, and inside any panel's strut).
+  //
+  // `area` should be a monitor *without* struts subtracted: a window covering
+  // a monitor covers the panels on it too.
+  Client* FullScreenOccupantOf(const Rect& area) const;
 
   // GetClient returns the Client which owns the given window (including if w
   // is a sub-window of the main client window). Returns nullptr if there is

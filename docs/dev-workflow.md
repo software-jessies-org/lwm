@@ -54,8 +54,8 @@ There are two kinds of test:
   `framegeometry_test.cc`, `menulayout_test.cc`, `gesture_test.cc`) call pure
   functions. Nothing to set up.
 * **Tests that need a server** (`disp_test.cc`, `focus_test.cc`,
-  `client_test.cc`, `ewmh_test.cc`, `drag_test.cc`) start with a
-  `wmtest::World` on the stack.
+  `client_test.cc`, `ewmh_test.cc`, `drag_test.cc`, `screen_test.cc`) start
+  with a `wmtest::World` on the stack.
   That installs an `xlib::FakeServer` and stands up `Resources`, the atoms, a
   fixed-metric font and `LScr` in the same order `main()` does, then puts it
   all back when it goes out of scope. Drive lwm by pushing events —
@@ -210,7 +210,8 @@ X server — so this runs the real binary under `Xvfb` with a generated
 `.gummiband` in a temp directory, and checks the panel's geometry, its EWMH
 properties, the pixels it paints, what its items do when clicked, the
 drop-down menu's position, highlighting and `<item>` substitution, the
-`updatesecs` repaint, and the SIGHUP restart that reloads the config.
+`updatesecs` repaint, the SIGHUP restart that reloads the config, and the
+step aside onto another monitor when something goes full screen.
 
 No window manager runs: gummiband maps itself and nothing here needs framing,
 so leaving lwm out keeps the test independent of it. `strut_test.sh` covers
@@ -239,6 +240,17 @@ Four things worth knowing before adding a check:
 * Nothing asserts the panel's height, which depends on the font that happens
   to be installed. It's read once and everything else — the strut depth, the
   drop-down's height, where its items are — is expressed in terms of it.
+* `Xvfb` has one screen and no way to fake a second monitor, so the
+  two-monitor checks use `xrandr --setmonitor` to carve that one screen up by
+  hand. That's a RandR 1.5 feature, and it's why gummiband reads the RandR
+  monitor list rather than the CRTCs — asking the question the way `xrandr
+  --listmonitors` does is what makes the multi-monitor behaviour testable at
+  all. Setting a monitor list fires no RandR event, so gummiband has to be
+  restarted (SIGHUP, which keeps the pid) to see it.
+* What stands in for a game is `xclock -geometry`, which honours the geometry
+  to the pixel. Mind the *border*: a window with a border width of 1 covers a
+  monitor when its own size is two pixels short of it, which is enough to turn
+  a check meant to be negative green.
 
 ## speckeysd tests
 

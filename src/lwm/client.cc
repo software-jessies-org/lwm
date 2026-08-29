@@ -891,6 +891,39 @@ bool Client::HasFocus() const {
   return this == LScr::I->GetFocuser()->GetFocusedClient();
 }
 
+bool Client::SameProgramAs(const Client* o) const {
+  if (o == nullptr) {
+    return false;
+  }
+  if (o == this) {
+    return true;
+  }
+  // A dialog over its own window, or two dialogs over the same one. Note that
+  // trans is only ever one level deep here: lwm doesn't follow the chain, and
+  // neither do the applications that set it.
+  if (trans && (trans == o->window || trans == o->trans)) {
+    return true;
+  }
+  if (o->trans && o->trans == window) {
+    return true;
+  }
+  if (client_leader && client_leader == o->client_leader) {
+    return true;
+  }
+  if (window_group && window_group == o->window_group) {
+    return true;
+  }
+  // A pid is only a number in some machine's process table, so it means
+  // nothing until we know it's the same table. Two clients which both set the
+  // pid but neither of which set the machine are taken as local, which they
+  // almost always are, and which is the reading that was true before
+  // WM_CLIENT_MACHINE existed.
+  if (pid && pid == o->pid && client_machine == o->client_machine) {
+    return true;
+  }
+  return false;
+}
+
 // static
 Client* Client::FocusedClient() {
   return LScr::I->GetFocuser()->GetFocusedClient();

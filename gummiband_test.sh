@@ -76,6 +76,7 @@ wait_for() {
 }
 
 cleanup() {
+  [ -n "${GAME_PID:-}" ] && kill "${GAME_PID}" >/dev/null 2>&1
   [ -n "${GB_PID:-}" ] && kill "${GB_PID}" >/dev/null 2>&1
   [ -n "${XVFB_PID:-}" ] && kill "${XVFB_PID}" >/dev/null 2>&1
   wait >/dev/null 2>&1
@@ -477,6 +478,101 @@ elif [ "${HAVE_PIXELS}" = "yes" ]; then
   fi
 else
   pass "the restarted gummiband recreated its dock window"
+fi
+
+# --- stepping aside for a full-screen window ---------------------------------
+#
+# The panel gets out of the way of a game running full screen on its own
+# monitor, and comes back when the game goes. That needs two monitors, which
+# Xvfb has no way of providing - but RandR 1.5 lets a client carve the screen
+# up into monitors by hand, with 'xrandr --setmonitor', and gummiband reads
+# that list rather than the CRTCs precisely so that this is testable. So carve
+# the 1280x1024 screen into an 800x600 monitor at the top left (the "main"
+# one, which gets the real output) and a 400x300 one below and to the right of
+# it.
+#
+# Note that a monitor list set this way is a client-side override, and setting
+# it fires no RandR event, so gummiband has to be restarted to see it. SIGHUP
+# does that, and keeps the same pid, so the checks after this one still apply
+# to the same process.
+#
+# What stands in for the game is xclock, which honours -geometry exactly and
+# so can be told to cover a monitor to the pixel. That's the case worth
+# testing: it is what "borderless fullscreen" produces, and unlike
+# _NET_WM_STATE_FULLSCREEN it can only be spotted by measuring the window.
+
+OUTPUT=$(xrandr --query 2>/dev/null | awk '/ connected/ {print $1; exit}')
+if [ -z "${OUTPUT}" ] || ! command -v xclock >/dev/null 2>&1; then
+  echo "SKIP: two-monitor checks (need xrandr with an output, and xclock)"
+else
+  xrandr --setmonitor main 800/212x600/159+0+0 "${OUTPUT}" >/dev/null 2>&1
+  xrandr --setmonitor side 400/106x300/79+800+600 none >/dev/null 2>&1
+
+  kill -HUP "${GB_PID}"
+  sleep 1.5
+  PANEL=$(window_of_type _NET_WM_WINDOW_TYPE_DOCK)
+  read -r PX PY PW PH <<<"$(geom "${PANEL}")"
+  if [ "${PX}" = "0" ] && [ "${PY}" = "0" ] && [ "${PW}" = "800" ]; then
+    pass "panel spans only the top monitor (${PW}x${PH}+${PX}+${PY})"
+  else
+    fail "panel spans only the top monitor (got ${PW}x${PH}+${PX}+${PY}, want 800xN+0+0)"
+  fi
+
+  # A window that covers the main monitor exactly: the panel should move to
+  # the other one.
+  xclock -geometry 800x600+0+0 >/dev/null 2>&1 &
+  GAME_PID=$!
+  sleep 1.5
+  read -r PX PY PW PH <<<"$(geom "${PANEL}")"
+  if [ "${PX}" = "800" ] && [ "${PY}" = "600" ] && [ "${PW}" = "400" ]; then
+    pass "panel steps aside onto the other monitor (${PW}x${PH}+${PX}+${PY})"
+  else
+    fail "panel steps aside onto the other monitor (got ${PW}x${PH}+${PX}+${PY}, want 400xN+800+600)"
+  fi
+
+  # _NET_WM_STRUT can only name an edge of the whole display, so while the
+  # panel is off on a lower monitor it must claim nothing at all - a top strut
+  # would reserve a strip across the very window it stepped aside for.
+  GOT=$(prop "${PANEL}" _NET_WM_STRUT)
+  if [ "${GOT}" = "0,0,0,0" ]; then
+    pass "panel claims no strut while it has stepped aside"
+  else
+    fail "panel claims no strut while it has stepped aside (got '${GOT}')"
+  fi
+
+  kill "${GAME_PID}" 2>/dev/null
+  wait "${GAME_PID}" 2>/dev/null
+  unset GAME_PID
+  sleep 1.5
+  read -r PX PY PW PH <<<"$(geom "${PANEL}")"
+  if [ "${PX}" = "0" ] && [ "${PY}" = "0" ] && [ "${PW}" = "800" ]; then
+    pass "panel comes home when the full-screen window goes"
+  else
+    fail "panel comes home when the full-screen window goes (got ${PW}x${PH}+${PX}+${PY}, want 800xN+0+0)"
+  fi
+
+  GOT=$(prop "${PANEL}" _NET_WM_STRUT)
+  if [ "${GOT}" = "0,0,${PH},0" ]; then
+    pass "panel claims its strut again once home"
+  else
+    fail "panel claims its strut again once home (got '${GOT}', want '0,0,${PH},0')"
+  fi
+
+  # A big window that doesn't quite cover the monitor is just a big window -
+  # a maximised one, most likely - and is no reason to go anywhere.
+  xclock -geometry 700x500+0+0 >/dev/null 2>&1 &
+  GAME_PID=$!
+  sleep 1.5
+  read -r PX PY PW PH <<<"$(geom "${PANEL}")"
+  if [ "${PX}" = "0" ] && [ "${PY}" = "0" ] && [ "${PW}" = "800" ]; then
+    pass "panel stays put for a window that doesn't cover the monitor"
+  else
+    fail "panel stays put for a window that doesn't cover the monitor (got ${PW}x${PH}+${PX}+${PY})"
+  fi
+  kill "${GAME_PID}" 2>/dev/null
+  wait "${GAME_PID}" 2>/dev/null
+  unset GAME_PID
+  sleep 1
 fi
 
 # --- no errors along the way ------------------------------------------------

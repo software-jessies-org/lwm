@@ -1,5 +1,14 @@
 # Change Log for "lwm"
 
+## 2026-08-29 (pn, Basel)
+
+gummiband steps aside onto another monitor while a game runs full screen on
+the one it lives on, and comes back afterwards.
+
+In lwm, a window opened while another program runs full screen on the primary
+monitor is placed on a free monitor instead. The full-screen program's own
+windows still open with it.
+
 ## 2026-08-28 (pn, Basel)
 
 A window Windows+arrow raises drops back to where it was in the window stack

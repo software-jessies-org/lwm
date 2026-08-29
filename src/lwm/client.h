@@ -321,6 +321,28 @@ class Client {
   EWMHWindowState wstate = {};
   EWMHStrut strut = {};  // reserved areas
 
+  // Who this window belongs to, as far as it's possible to tell. Filled in by
+  // getProgramIdentity() when the window is adopted, and compared by
+  // SameProgramAs(). All of them are optional, and plenty of applications set
+  // none: a zero here means "didn't say", never "nobody".
+  Window client_leader = 0;      // WM_CLIENT_LEADER (ICCCM 5.1)
+  Window window_group = 0;       // WM_HINTS' window group (ICCCM 4.1.2.4)
+  unsigned long pid = 0;         // _NET_WM_PID
+  std::string client_machine;    // WM_CLIENT_MACHINE, which qualifies the pid
+
+  // True if this window and o belong to the same program, so far as anything
+  // they say about themselves can show it: one is a transient for the other,
+  // or they share a transient parent, a client leader, a window group, or a
+  // process.
+  //
+  // This is a "probably yes" rather than a proof. Nothing obliges a client to
+  // set any of these, and a program which sets none looks unrelated to all its
+  // own windows. That shapes where the question gets asked: the caller is
+  // deciding which monitor to open a window on (see LScr::PlacementAreaFor),
+  // where a false "yes" only means the old behaviour and a false "no" only
+  // means a window opens on the next monitor along.
+  bool SameProgramAs(const Client* o) const;
+
   // SetIcon sets the window's title bar icon. If called with null, it will do
   // nothing (and leave any previously-set icon in place).
   // Takes ownership of the icon, and releases any icon it replaces.

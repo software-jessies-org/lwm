@@ -33,6 +33,12 @@ class World {
   // Returns null if lwm declined to adopt it.
   Client* MapClientWindow(const Rect& rect);
 
+  // The same, in two halves, for a test which has to script properties or
+  // hints on the window before manage() reads them: AddClientWindow creates
+  // it, MapWindow sends the MapRequest.
+  Window AddClientWindow(const Rect& rect);
+  Client* MapWindow(Window w);
+
   // The text metrics the fake font reports. The frame geometry is derived
   // from these, so tests that assert on positions need them.
   static constexpr int kTextHeight = 16;

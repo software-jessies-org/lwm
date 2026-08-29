@@ -356,6 +356,43 @@ since the work-area case changes the size.
 `strut_test.sh` covers the work-area case end to end, since it already has a
 dock with a strut on screen; `csdclient.cc` plays the borderless game.
 
+### Which monitor a new window opens on
+
+`LScr::PlacementAreaFor(c)` answers it, and `LScr::NextAutoPosition` cascades
+within whatever it returns. Normally that's the primary monitor's work area,
+as it always was. The exception is a monitor another program has a full-screen
+window on: opening a window there would put it either behind the game or on
+top of it, so the free monitors are collected and `PrimaryArea` picks the best
+of those instead.
+
+Two things make that fall out simply. `PrimaryArea` applies the same rule to
+any set of areas it's given (largest, then topmost, then leftmost), so running
+it over the free subset returns the primary monitor whenever the primary is
+free — there is no separate "is the primary blocked?" test, and none is
+needed. And an empty free set means every monitor is taken, where the primary
+is as good an answer as any.
+
+`LScr::FullScreenOccupantOf(area)` decides what counts as taken, and covers
+both senses of full screen described under "Undecorated windows": a client
+which asked for `_NET_WM_STATE_FULLSCREEN` need only cover most of the
+monitor, while one which merely sized itself to it has to cover it completely.
+The second test is against `ContentRect()`, not `FrameRect()`, and that is
+what keeps a *maximised* window out of it: a maximised window's content sits
+inside lwm's furniture and inside any panel's strut, so it never covers the
+whole monitor, while a borderless-fullscreen one (which `SnapToMonitor` has
+put exactly on the monitor) does. Desktop and dock windows, and anything with
+a strut, are skipped: filling the screen is their job.
+
+`Client::SameProgramAs` is the exemption, so a game's own dialogs and second
+windows still open where the game is. It's a "probably yes" built from
+whatever the windows say about themselves — a transient-for link either way, a
+shared `WM_CLIENT_LEADER`, a shared `WM_HINTS` window group, or the same
+`_NET_WM_PID` on the same `WM_CLIENT_MACHINE` — and nothing obliges a client
+to say any of it. That's tolerable only because of where the question is
+asked: a wrong "yes" gives the behaviour lwm had before, and a wrong "no" only
+opens a window on the next monitor along. Don't reuse it for anything that
+can't shrug off both answers.
+
 On an xrandr change, `LScr::SetVisibleAreas` computes every client's new rect
 with `MapToNewAreas` *before* swapping in the new geometry, then applies the
 moves. `MapToNewAreas` handles, in order: height-maximised windows, windows

@@ -53,6 +53,7 @@ Atom wm_protocols;
 Atom wm_delete;
 Atom wm_take_focus;
 Atom compound_text;
+Atom wm_client_leader;
 
 // Netscape uses this to give information about the URL it's displaying.
 Atom _mozilla_url;
@@ -120,7 +121,7 @@ extern int main(int argc, char* argv[]) {
   sigemptyset(&sa.sa_mask);
   sigaction(SIGCHLD, &sa, 0);
 
-  // Internalize useful atoms, in one batch rather than eight round trips.
+  // Internalize useful atoms, in one batch rather than one round trip each.
   const std::vector<Atom> atoms = xlib::XInternAtoms({
       "WM_STATE",
       "WM_CHANGE_STATE",
@@ -130,6 +131,7 @@ extern int main(int argc, char* argv[]) {
       "COMPOUND_TEXT",
       "_MOZILLA_URL",
       "_MOTIF_WM_HINTS",
+      "WM_CLIENT_LEADER",
   });
   wm_state = atoms[0];
   wm_change_state = atoms[1];
@@ -139,6 +141,7 @@ extern int main(int argc, char* argv[]) {
   compound_text = atoms[5];
   _mozilla_url = atoms[6];
   motif_wm_hints = atoms[7];
+  wm_client_leader = atoms[8];
 
   ewmh_init();
 

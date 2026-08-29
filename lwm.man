@@ -183,6 +183,23 @@ the button being released, back to the one it came from, gets its old size
 back.  A window which was already too big for the monitor it was on - because
 the application asked to be that big - is left at the size it chose.
 .PP
+A window which arrives with no position of its own is placed on the primary
+monitor, cascading down and to the right of the last one.  The exception is a
+monitor another program is running full screen on - a game, in practice.  A
+window opened while that is up would be either hidden behind the game or
+popped up over it, so it goes to the best of the monitors that are free
+instead, and only stays on the primary if every monitor is taken or there is
+only the one.  The full-screen program's own further windows are not moved:
+they still open where it is.  Two windows count as one program's if either is
+transient for the other, or if they share a \fBWM_CLIENT_LEADER\fP, a
+\fBWM_HINTS\fP window group, or a \fB_NET_WM_PID\fP on the same
+\fBWM_CLIENT_MACHINE\fP.
+.PP
+Both senses of "full screen" count: a window which asked for
+\fB_NET_WM_STATE_FULLSCREEN\fP, and one which has simply sized itself to
+cover a monitor exactly, which is what the borderless-fullscreen setting in a
+game's display options produces.  A merely maximised window is neither.
+.PP
 It is possible to run commands when alt-clicking on a window's title bar.
 The configured command is run with the window id (in hex with 0x prefix)
 appended to it (separated by a space), so that the command run can be a script

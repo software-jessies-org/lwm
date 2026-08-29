@@ -531,6 +531,9 @@ class RealServer : public Server {
     if (hints.flags & XCB_ICCCM_WM_HINT_ICON_MASK) {
       res.icon_mask = hints.icon_mask;
     }
+    if (hints.flags & XCB_ICCCM_WM_HINT_WINDOW_GROUP) {
+      res.window_group = hints.window_group;
+    }
     return res;
   }
 

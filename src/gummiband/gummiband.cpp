@@ -65,6 +65,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <climits>
 #include <map>
 #include <string>
 #include <vector>
@@ -132,6 +134,12 @@ static int screen_num;
 // |______|__________|
 static int display_xmin;
 static int display_width;
+
+// display_ymin is the top of whichever monitor we're currently on. It is
+// normally the top of the display, and is only something else while we've
+// stepped aside onto a lower monitor to get out of the way of a full-screen
+// window: see "stepping out of the way" below.
+static int display_ymin;
 
 static xcb_window_t window;           // Main window.
 static xcb_window_t dropdown_window;  // Drop-down window.
@@ -707,7 +715,11 @@ class DropDownMenuAction : public Action {
     // coordinates. So we must apply the display_xmin so it appears at the right
     // location.
     x += display_xmin;
-    MoveResizeWindow(dropdown_window, x, y + Y_OFFSET, width, height);
+    // Likewise the vertical: y is measured from the top of the panel, which
+    // is at the top of the monitor we're on rather than the top of the
+    // display whenever we've stepped aside onto a lower one.
+    MoveResizeWindow(dropdown_window, x, y + display_ymin + Y_OFFSET, width,
+                     height);
     MapRaised(dropdown_window);
     dropdown = new DropDown(width, items, command_);
   }
@@ -1183,15 +1195,57 @@ static void ChangeAtomProperty(xcb_window_t w,
                       32, 1, &value);
 }
 
-static void SetWindowProps(xcb_window_t w, int height) {
-  const vector<xcb_atom_t> atoms =
-      InternAtoms({"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK",
-                   "_NET_WM_STATE", "_NET_WM_STATE_BELOW", "_NET_WM_STRUT"});
+// The atoms gummiband needs, interned once by InternAllAtoms before anything
+// uses them.
+static xcb_atom_t atom_net_wm_window_type;
+static xcb_atom_t atom_net_wm_window_type_dock;
+static xcb_atom_t atom_net_wm_window_type_menu;
+static xcb_atom_t atom_net_wm_state;
+static xcb_atom_t atom_net_wm_state_below;
+static xcb_atom_t atom_net_wm_state_fullscreen;
+static xcb_atom_t atom_net_wm_strut;
+static xcb_atom_t atom_net_client_list;
 
+static void InternAllAtoms() {
+  const vector<xcb_atom_t> atoms = InternAtoms(
+      {"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK",
+       "_NET_WM_WINDOW_TYPE_MENU", "_NET_WM_STATE", "_NET_WM_STATE_BELOW",
+       "_NET_WM_STATE_FULLSCREEN", "_NET_WM_STRUT", "_NET_CLIENT_LIST"});
+  atom_net_wm_window_type = atoms[0];
+  atom_net_wm_window_type_dock = atoms[1];
+  atom_net_wm_window_type_menu = atoms[2];
+  atom_net_wm_state = atoms[3];
+  atom_net_wm_state_below = atoms[4];
+  atom_net_wm_state_fullscreen = atoms[5];
+  atom_net_wm_strut = atoms[6];
+  atom_net_client_list = atoms[7];
+}
+
+// SetStrut publishes, or withdraws, the space we ask other windows to keep
+// clear for us.
+//
+// _NET_WM_STRUT gives left, right, top and bottom, each reserving a strip
+// along the whole of that edge of the display. It has no way of naming a
+// monitor - _NET_WM_STRUT_PARTIAL does, and lwm doesn't implement it - so we
+// only claim a strut while we're at home along the top. Once we've stepped
+// aside onto a lower monitor, a top strut would reserve a strip across the
+// top of the monitor we just got out of the way of, which is where the window
+// we stepped aside for is.
+static void SetStrut(bool reserve) {
+  // These are 32 bits each, and must be written as such. Xlib's
+  // XChangeProperty took an array of long and narrowed it for the wire; XCB
+  // sends what you give it, so an array of long here would put four 64-bit
+  // values into a property the server has been told holds four 32-bit ones.
+  const uint32_t val[4] = {0, 0, reserve ? uint32_t(window_height) : 0, 0};
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, atom_net_wm_strut,
+                      XCB_ATOM_CARDINAL, 32, 4, val);
+}
+
+static void SetWindowProps(xcb_window_t w) {
   // _NET_WM_WINDOW_TYPE describes that this is a kind of dock or panel window,
   // that should probably be kept on top, but that the window manager certainly
   // shouldn't decorate with frame, title bar etc.
-  ChangeAtomProperty(w, atoms[0], atoms[1]);
+  ChangeAtomProperty(w, atom_net_wm_window_type, atom_net_wm_window_type_dock);
 
   // We're setting struts to try to keep other windows out of our way, but if
   // the user really wants to move a window over us, we should err on the side
@@ -1199,46 +1253,93 @@ static void SetWindowProps(xcb_window_t w, int height) {
   // of the screen, so forcing ourselves on top (which is the usual default
   // for 'dock' windows) is more likely to get in the way of the user's ability
   // to move a window out of the way.
-  ChangeAtomProperty(w, atoms[2], atoms[3]);
-
-  // _NET_WM_STRUT provides left, right, top, bottom. As our window only appears
-  // at the top, we only set top to the height of the window.
-  //
-  // These are 32 bits each, and must be written as such. Xlib's
-  // XChangeProperty took an array of long and narrowed it for the wire; XCB
-  // sends what you give it, so an array of long here would put four 64-bit
-  // values into a property the server has been told holds four 32-bit ones.
-  const uint32_t val[4] = {0, 0, uint32_t(height), 0};
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, w, atoms[4],
-                      XCB_ATOM_CARDINAL, 32, 4, val);
+  ChangeAtomProperty(w, atom_net_wm_state, atom_net_wm_state_below);
 }
 
 static void SetDropDownWindowProps(xcb_window_t w) {
   // _NET_WM_WINDOW_TYPE describes that this is a kind of dock or panel window,
   // that should probably be kept on top, but that the window manager certainly
   // shouldn't decorate with frame, title bar etc.
-  const vector<xcb_atom_t> atoms =
-      InternAtoms({"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_MENU"});
-  ChangeAtomProperty(w, atoms[0], atoms[1]);
+  ChangeAtomProperty(w, atom_net_wm_window_type, atom_net_wm_window_type_menu);
 }
 
-static void SetSizeFromXRandR() {
-  Reply<xcb_randr_get_screen_resources_current_reply_t> res(
+// ---------------------------------------------------------------- monitors
+
+// Rect is a rectangle in root-window coordinates: what RandR reports a
+// monitor as, and what a window's geometry is turned into so the two can be
+// compared.
+struct Rect {
+  int x;
+  int y;
+  int width;
+  int height;
+
+  int xMax() const { return x + width; }
+  int yMax() const { return y + height; }
+  long Area() const { return long(width) * long(height); }
+
+  // True if this rectangle covers every pixel of o.
+  bool Contains(const Rect& o) const {
+    return x <= o.x && y <= o.y && xMax() >= o.xMax() && yMax() >= o.yMax();
+  }
+
+  // The number of pixels the two rectangles have in common.
+  long Overlap(const Rect& o) const {
+    const long w = min(xMax(), o.xMax()) - max(x, o.x);
+    const long h = min(yMax(), o.yMax()) - max(y, o.y);
+    return (w > 0 && h > 0) ? w * h : 0;
+  }
+};
+
+// The monitors making up the display. Set up before the first RandR query as
+// the whole screen, so that the code below works on a server with no RandR at
+// all.
+static vector<Rect> monitors;
+
+// MonitorsFromRandR asks RandR 1.5 for the monitor list: the one
+// 'xrandr --listmonitors' prints. That's one entry per monitor as the user
+// thinks of it, which is not the same as one per CRTC - two mirrored outputs
+// share a CRTC, and a tiled 4K panel needs two - and which the user can
+// override with 'xrandr --setmonitor'. When nobody has set any, the server
+// derives the list from the active outputs, so this is the right question to
+// ask whether or not anything has been configured by hand.
+//
+// On a server older than RandR 1.5 the request is an error, which comes back
+// as a null reply here (asking for the reply with a null error pointer
+// discards it rather than putting it on the event queue) and sends us to
+// MonitorsFromCrtcs instead.
+static vector<Rect> MonitorsFromRandR() {
+  vector<Rect> res;
+  Reply<xcb_randr_get_monitors_reply_t> reply(xcb_randr_get_monitors_reply(
+      conn, xcb_randr_get_monitors(conn, screen->root, 1), nullptr));
+  if (!reply) {
+    return res;
+  }
+  xcb_randr_monitor_info_iterator_t it =
+      xcb_randr_get_monitors_monitors_iterator(reply.get());
+  for (; it.rem; xcb_randr_monitor_info_next(&it)) {
+    res.push_back(
+        Rect{it.data->x, it.data->y, it.data->width, it.data->height});
+  }
+  return res;
+}
+
+// MonitorsFromCrtcs is the fallback for servers without RandR 1.5. A CRTC is
+// a scan-out engine rather than a monitor, so this gets mirrored outputs and
+// tiled panels wrong, but it is the best such a server can tell us.
+static vector<Rect> MonitorsFromCrtcs() {
+  vector<Rect> res;
+  Reply<xcb_randr_get_screen_resources_current_reply_t> screen_res(
       xcb_randr_get_screen_resources_current_reply(
           conn, xcb_randr_get_screen_resources_current(conn, screen->root),
           nullptr));
-  if (!res) {
-    LOGE() << "Failed to get RandR screen resources";
-    return;
+  if (!screen_res) {
+    return res;
   }
   const int ncrtc =
-      xcb_randr_get_screen_resources_current_crtcs_length(res.get());
-  if (!ncrtc) {
-    LOGE() << "Empty list of CRTs";
-    return;
-  }
+      xcb_randr_get_screen_resources_current_crtcs_length(screen_res.get());
   const xcb_randr_crtc_t* crtcs =
-      xcb_randr_get_screen_resources_current_crtcs(res.get());
+      xcb_randr_get_screen_resources_current_crtcs(screen_res.get());
   // Fire all the per-CRTC queries off before collecting any of them, so the
   // whole walk costs one round trip rather than one per monitor. Xlib's
   // XRRGetCrtcInfo blocked on each in turn.
@@ -1246,39 +1347,329 @@ static void SetSizeFromXRandR() {
   cookies.reserve(ncrtc);
   for (int i = 0; i < ncrtc; i++) {
     cookies.push_back(
-        xcb_randr_get_crtc_info(conn, crtcs[i], res->config_timestamp));
+        xcb_randr_get_crtc_info(conn, crtcs[i], screen_res->config_timestamp));
   }
-  // Ignore any CRT with mode==0.
-  // We always want to be displayed at the top of the topmost screen. So go
-  // through the screens, and collect together all X ranges with ymin==0.
-  std::map<int, int> x_ranges;
   for (int i = 0; i < ncrtc; i++) {
+    // A CRTC with no mode isn't driving anything.
     Reply<xcb_randr_get_crtc_info_reply_t> crt(
         xcb_randr_get_crtc_info_reply(conn, cookies[i], nullptr));
-    if (!crt || !crt->mode) {
-      continue;
+    if (crt && crt->mode) {
+      res.push_back(Rect{crt->x, crt->y, crt->width, crt->height});
     }
-    if (crt->y != 0) {
-      continue;
-    }
-    x_ranges[crt->x] = crt->x + crt->width;
   }
-  // Probably we just want the leftmost stretch of screen width, but we'll
-  // stitch multiple screens together if we can.
-  // Another possible choice would be to find the widest area.
-  if (x_ranges.empty()) {
-    LOGE() << "Xrandr reported no screen space at y=0";
+  return res;
+}
+
+static void RefreshMonitors() {
+  vector<Rect> found = MonitorsFromRandR();
+  if (found.empty()) {
+    found = MonitorsFromCrtcs();
+  }
+  if (found.empty()) {
+    // Better a stale layout than none at all.
+    LOGE() << "RandR reported no monitors";
     return;
   }
-  int min = x_ranges.begin()->first;
-  int max = 0;
-  for (int v = x_ranges[min]; v; v = x_ranges[v]) {
-    max = v;
+  monitors = found;
+}
+
+// HomeArea is where the panel belongs when nothing is in its way: spanning
+// the run of monitors along the top of the display, stitched together where
+// they abut. See the comment on display_xmin above for a picture of why that
+// isn't simply the whole width of the display.
+static Rect HomeArea() {
+  int top = INT_MAX;
+  for (const Rect& m : monitors) {
+    top = min(top, m.y);
   }
-  display_xmin = min;
-  display_width = max - min;
-  MoveResizeWindow(window, min, Y_OFFSET, display_width, window_height);
-  menu->SizeChanged();
+  // Each monitor along that top edge, keyed by its left edge and holding its
+  // right one.
+  map<int, int> x_ranges;
+  for (const Rect& m : monitors) {
+    if (m.y == top) {
+      x_ranges[m.x] = m.xMax();
+    }
+  }
+  if (x_ranges.empty()) {
+    LOGE() << "No screen space along the top of the display";
+    return Rect{display_xmin, display_ymin, display_width, window_height};
+  }
+  // Walk rightwards from the leftmost, following each monitor to whichever
+  // one starts exactly where it ends, so that a gap between two monitors
+  // stops us.
+  const int xmin = x_ranges.begin()->first;
+  int xmax = xmin;
+  for (auto it = x_ranges.begin(); it != x_ranges.end() && it->second > xmax;
+       it = x_ranges.find(xmax)) {
+    xmax = it->second;
+  }
+  return Rect{xmin, top, xmax - xmin, window_height};
+}
+
+// ------------------------------------------------- stepping out of the way
+//
+// A game run full screen on the monitor the panel lives on leaves the panel
+// either sitting on top of the game or, since we ask to be stacked below,
+// hidden underneath it. Neither is any use, and with more than one monitor
+// there's somewhere better to be, so while such a window is up we move to
+// another monitor, and come back when it goes.
+//
+// "Full screen" means two different things here, because games mean two
+// different things by it. One is _NET_WM_STATE_FULLSCREEN, which is what a
+// toolkit asks for. The other is a window simply sized and placed to cover a
+// monitor exactly: that's what 'borderless fullscreen' in a game's display
+// settings produces, and what Steam titles under Proton generally do. No
+// state is set and nothing is asked for - the window is just that big - so
+// the only way to notice is to measure it.
+
+// Whether the panel is currently somewhere other than HomeArea().
+static bool displaced;
+
+// WindowListProperty reads a property holding a list of window ids, and says
+// whether the property was there at all. That isn't the same as whether it
+// held anything, and is how we tell "no window manager is running" from "the
+// window manager is running and nothing is open".
+static bool WindowListProperty(xcb_window_t w,
+                               xcb_atom_t prop,
+                               vector<xcb_window_t>* into) {
+  Reply<xcb_get_property_reply_t> reply(xcb_get_property_reply(
+      conn, xcb_get_property(conn, 0, w, prop, XCB_ATOM_WINDOW, 0, 1024),
+      nullptr));
+  if (!reply || reply->type != XCB_ATOM_WINDOW || reply->format != 32) {
+    return false;
+  }
+  const xcb_window_t* data =
+      (const xcb_window_t*)xcb_get_property_value(reply.get());
+  into->assign(data, data + xcb_get_property_value_length(reply.get()) /
+                                sizeof(xcb_window_t));
+  return true;
+}
+
+// WindowsToExamine returns the windows which might be covering a monitor.
+//
+// _NET_CLIENT_LIST is the right answer wherever it exists, because it names
+// the clients' own windows rather than the frames the window manager wrapped
+// them in. The distinction matters: a merely *maximised* window's frame does
+// fill its monitor, while the window inside the frame doesn't, and a
+// maximised window is no reason to go anywhere.
+//
+// With no window manager running there is no such property, and the clients
+// are root's own children, so ask for those instead.
+static vector<xcb_window_t> WindowsToExamine() {
+  vector<xcb_window_t> res;
+  if (WindowListProperty(screen->root, atom_net_client_list, &res)) {
+    return res;
+  }
+  Reply<xcb_query_tree_reply_t> tree(
+      xcb_query_tree_reply(conn, xcb_query_tree(conn, screen->root), nullptr));
+  if (!tree) {
+    return res;
+  }
+  const xcb_window_t* children = xcb_query_tree_children(tree.get());
+  res.assign(children, children + xcb_query_tree_children_length(tree.get()));
+  return res;
+}
+
+// PropertyHasAtom says whether a property holding a list of atoms contains a
+// particular one.
+static bool PropertyHasAtom(const xcb_get_property_reply_t* reply,
+                            xcb_atom_t atom) {
+  if (!reply || reply->type != XCB_ATOM_ATOM || reply->format != 32) {
+    return false;
+  }
+  const xcb_atom_t* data = (const xcb_atom_t*)xcb_get_property_value(reply);
+  const int n = xcb_get_property_value_length(reply) / sizeof(xcb_atom_t);
+  for (int i = 0; i < n; i++) {
+    if (data[i] == atom) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// CoveredMonitors says, for each entry in `monitors`, whether some window is
+// filling it.
+//
+// Four questions about each window, all fired off before any reply is
+// collected, so the scan costs two round trips however many windows there
+// are. Errors are discarded rather than reported: a window can be destroyed
+// between being listed and being asked about, which is normal rather than a
+// fault.
+static vector<bool> CoveredMonitors() {
+  vector<bool> res(monitors.size(), false);
+  const vector<xcb_window_t> windows = WindowsToExamine();
+  struct Queries {
+    xcb_get_window_attributes_cookie_t attrs;
+    xcb_get_geometry_cookie_t geometry;
+    xcb_translate_coordinates_cookie_t position;
+    xcb_get_property_cookie_t state;
+  };
+  vector<Queries> queries;
+  queries.reserve(windows.size());
+  for (xcb_window_t w : windows) {
+    queries.push_back(Queries{
+        xcb_get_window_attributes(conn, w),
+        xcb_get_geometry(conn, w),
+        // A window's own geometry is relative to its parent, which under a
+        // window manager is the frame rather than the root, so the position
+        // has to be asked for separately.
+        xcb_translate_coordinates(conn, w, screen->root, 0, 0),
+        xcb_get_property(conn, 0, w, atom_net_wm_state, XCB_ATOM_ATOM, 0, 64),
+    });
+  }
+  for (size_t i = 0; i < queries.size(); i++) {
+    // Every reply has to be collected, even for a window we've already
+    // decided we don't care about: one left uncollected sits in the
+    // connection's buffer for ever.
+    Reply<xcb_get_window_attributes_reply_t> attrs(
+        xcb_get_window_attributes_reply(conn, queries[i].attrs, nullptr));
+    Reply<xcb_get_geometry_reply_t> geometry(
+        xcb_get_geometry_reply(conn, queries[i].geometry, nullptr));
+    Reply<xcb_translate_coordinates_reply_t> position(
+        xcb_translate_coordinates_reply(conn, queries[i].position, nullptr));
+    Reply<xcb_get_property_reply_t> state(
+        xcb_get_property_reply(conn, queries[i].state, nullptr));
+    // Our own windows are never in our way, and an unmapped window - which is
+    // what a hidden or iconified one is - isn't covering anything.
+    if (windows[i] == window || windows[i] == dropdown_window) {
+      continue;
+    }
+    if (!attrs || attrs->map_state != XCB_MAP_STATE_VIEWABLE) {
+      continue;
+    }
+    if (!geometry || !position) {
+      continue;
+    }
+    // The window's footprint, border included: the border is painted, so it
+    // covers what's under it. TranslateCoordinates reports where the window's
+    // origin is, which is *inside* the border, so the border has to be added
+    // back on both sides - without which a window drawn exactly over a
+    // monitor looks a border-width short of covering it.
+    const int bw = geometry->border_width;
+    const Rect r{position->dst_x - bw, position->dst_y - bw,
+                 geometry->width + 2 * bw, geometry->height + 2 * bw};
+    const bool asked_for_it =
+        PropertyHasAtom(state.get(), atom_net_wm_state_fullscreen);
+    for (size_t m = 0; m < monitors.size(); m++) {
+      // A window which says it is full screen is taken at its word as long as
+      // it covers most of the monitor; one which says nothing has to cover
+      // the monitor exactly, or better.
+      if (r.Contains(monitors[m]) ||
+          (asked_for_it && r.Overlap(monitors[m]) * 2 >= monitors[m].Area())) {
+        res[m] = true;
+      }
+    }
+  }
+  return res;
+}
+
+// PlacePanel puts the panel where it's told, and says whether that was
+// anywhere new.
+static bool PlacePanel(const Rect& target) {
+  if (target.x == display_xmin && target.y == display_ymin &&
+      target.width == display_width) {
+    return false;
+  }
+  const bool width_changed = target.width != display_width;
+  display_xmin = target.x;
+  display_ymin = target.y;
+  display_width = target.width;
+  MoveResizeWindow(window, target.x, target.y + Y_OFFSET, target.width,
+                   window_height);
+  if (width_changed) {
+    // The pixmap the panel is painted into is as wide as the panel, so it has
+    // to be thrown away and made again at the new width.
+    menu->SizeChanged();
+  }
+  return true;
+}
+
+// ReconsiderPlacement works out which monitor the panel should be on, and
+// moves it there if that isn't where it already is.
+static void ReconsiderPlacement() {
+  const Rect home = HomeArea();
+  const vector<bool> covered = CoveredMonitors();
+
+  // Is anything filling a monitor we're at home on? Home can span several
+  // monitors, and any one of them being covered is enough: half a panel under
+  // a game is no better than all of it.
+  bool must_move = false;
+  for (size_t i = 0; i < monitors.size(); i++) {
+    if (covered[i] && monitors[i].Overlap(home) > 0) {
+      must_move = true;
+    }
+  }
+
+  // Somewhere to go: the monitor nearest the top of the display that nothing
+  // is filling, ties broken by the leftmost. If everything is covered then
+  // there is nowhere better than home.
+  const Rect* refuge = nullptr;
+  if (must_move) {
+    for (size_t i = 0; i < monitors.size(); i++) {
+      if (covered[i]) {
+        continue;
+      }
+      const Rect& m = monitors[i];
+      if (!refuge || m.y < refuge->y || (m.y == refuge->y && m.x < refuge->x)) {
+        refuge = &m;
+      }
+    }
+  }
+
+  const bool away = refuge != nullptr;
+  const Rect target =
+      away ? Rect{refuge->x, refuge->y, refuge->width, window_height} : home;
+  const bool moved = PlacePanel(target);
+  if (away != displaced) {
+    displaced = away;
+    SetStrut(!away);
+  }
+  if (moved && away) {
+    // Come to the top of the stack on arrival: we ask to be stacked below
+    // other windows, which on the monitor we've just fled to would leave us
+    // underneath whatever was already there.
+    MapRaised(window);
+  }
+}
+
+// RefreshLayout re-reads the monitor layout and puts the panel where the new
+// one says it belongs.
+static void RefreshLayout() {
+  RefreshMonitors();
+  ReconsiderPlacement();
+}
+
+// Rescans are deferred rather than done as the events which prompt them
+// arrive: dragging a window produces a ConfigureNotify per pointer motion,
+// and there is no point asking about every window on the display sixty times
+// a second to be told that nothing has gone full screen. The first event of a
+// burst starts the clock, and one scan happens kRescanDelayMs later, however
+// many more events arrive in the meantime.
+static const int kRescanDelayMs = 100;
+static bool rescan_pending;
+static struct timespec rescan_due;
+
+static void RequestRescan() {
+  if (rescan_pending) {
+    return;  // The clock is already running; don't restart it.
+  }
+  rescan_pending = true;
+  clock_gettime(CLOCK_MONOTONIC, &rescan_due);
+  rescan_due.tv_nsec += kRescanDelayMs * 1000000L;
+  if (rescan_due.tv_nsec >= 1000000000L) {
+    rescan_due.tv_nsec -= 1000000000L;
+    rescan_due.tv_sec++;
+  }
+}
+
+// MillisUntilRescan is how long a pending rescan still has to wait, or zero if
+// the wait is over. Only meaningful while rescan_pending.
+static int MillisUntilRescan() {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  const long ms = (rescan_due.tv_sec - now.tv_sec) * 1000L +
+                  (rescan_due.tv_nsec - now.tv_nsec) / 1000000L;
+  return ms > 0 ? int(ms) : 0;
 }
 
 static void RRScreenChange(const xcb_randr_screen_change_notify_event_t* ev) {
@@ -1295,7 +1686,7 @@ static void RRScreenChange(const xcb_randr_screen_change_notify_event_t* ev) {
     return;  // Drop duplicate message (we get lots of these).
   }
   last_config_timestamp = ev->config_timestamp;
-  SetSizeFromXRandR();
+  RefreshLayout();
 }
 
 // Parses an X11 hexadecimal colour specification into 16-bit components.
@@ -1447,11 +1838,18 @@ int main(int, char* argv[]) {
   screen = it.data;
   LOGF_IF(!screen) << "no screen " << screen_num;
 
+  InternAllAtoms();
+
   map<string, string> x_resources = GetResources();
 
-  // Find the screen's dimensions.
+  // Find the screen's dimensions. This is the whole display, treated as one
+  // monitor; RefreshMonitors replaces it with what RandR says as soon as we
+  // know whether we have RandR at all.
   display_xmin = 0;
+  display_ymin = 0;
   display_width = screen->width_in_pixels;
+  monitors.push_back(
+      Rect{0, 0, screen->width_in_pixels, screen->height_in_pixels});
 
   // Get font.
   g_font = XftFontOpenName(dpy, screen_num, x_resources[XRES_FONT].c_str());
@@ -1476,7 +1874,8 @@ int main(int, char* argv[]) {
 
   // Set struts on the window, so the window manager knows where not to place
   // other windows.
-  SetWindowProps(window, window_height);
+  SetWindowProps(window);
+  SetStrut(true);
 
   // Create the objects needed to render text in the window.
   AllocFontColour(x_resources[XRES_FG], &g_font_color);
@@ -1529,8 +1928,29 @@ int main(int, char* argv[]) {
   if (have_rr) {
     xcb_randr_select_input(conn, screen->root,
                            XCB_RANDR_NOTIFY_MASK_SCREEN_CHANGE);
-    SetSizeFromXRandR();
+    RefreshMonitors();
   }
+
+  // Watch the root window, so that we hear about other clients' windows
+  // appearing, vanishing, moving and resizing. That's how we find out that
+  // something has gone full screen over us. PropertyChange is for
+  // _NET_CLIENT_LIST, which is how we hear about a window worth measuring
+  // under a window manager which reparents its clients out of root.
+  //
+  // This sets gummiband's own event mask on root, and so takes nothing away
+  // from the window manager: the masks which only one client may hold
+  // (SubstructureRedirect and friends) aren't among these.
+  {
+    ValueList attrs;
+    attrs.Add(XCB_CW_EVENT_MASK, XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+                                     XCB_EVENT_MASK_PROPERTY_CHANGE);
+    xcb_change_window_attributes(conn, screen->root, attrs.Mask(),
+                                 attrs.Values());
+  }
+
+  // Where the panel goes, and whether anything is already in its way: a game
+  // may well have been running before we started.
+  ReconsiderPlacement();
 
   // Bring up the window.
   MapRaised(window);
@@ -1539,6 +1959,8 @@ int main(int, char* argv[]) {
   Sync();
 
   // The main event loop.
+  static const int kRescanEveryIdleTicks = 5;
+  int idle_ticks = 0;
   while (!forceRestart) {
     xcb_generic_event_t* ev = GetEvent();
     // Errors arrive on the event queue under XCB, rather than through a
@@ -1559,12 +1981,26 @@ int main(int, char* argv[]) {
       free(ev);
       continue;
     }
+    if (rescan_pending && MillisUntilRescan() == 0) {
+      rescan_pending = false;
+      ReconsiderPlacement();
+    }
     if (updaters->Update()) {
       DoExpose(nullptr);
     }
     switch (type) {
       case -1:  // Null event: repaint, in case the clock has ticked.
         DoExpose(nullptr);
+        // Every so often, look again although nothing asked us to. This is
+        // only a backstop: a window could in principle acquire
+        // _NET_WM_STATE_FULLSCREEN without changing size, and none of the
+        // events we watch would report that. Idle ticks are a second apart
+        // and only happen when nothing else is going on, which is exactly
+        // when the extra questions cost nothing.
+        if (++idle_ticks >= kRescanEveryIdleTicks) {
+          idle_ticks = 0;
+          RequestRescan();
+        }
         break;
       case XCB_BUTTON_PRESS:
         DoButtonPress((const xcb_button_press_event_t*)ev);
@@ -1580,6 +2016,27 @@ int main(int, char* argv[]) {
         break;
       case XCB_LEAVE_NOTIFY:
         DoLeave((const xcb_leave_notify_event_t*)ev);
+        break;
+      // Something in the window tree changed: a window was mapped, unmapped,
+      // moved, resized, reparented or destroyed. Any of those could be a game
+      // going full screen, or coming back out of it. Which window it was
+      // doesn't matter, because the rescan looks at all of them anyway - and
+      // it costs less to leave that to the rescan than to pick the field out
+      // of five different event structures here.
+      case XCB_MAP_NOTIFY:
+      case XCB_UNMAP_NOTIFY:
+      case XCB_DESTROY_NOTIFY:
+      case XCB_REPARENT_NOTIFY:
+      case XCB_CONFIGURE_NOTIFY:
+        RequestRescan();
+        break;
+      case XCB_PROPERTY_NOTIFY:
+        // The set of managed windows changed, so there may be a new one to
+        // measure - or one we were measuring may have gone.
+        if (((const xcb_property_notify_event_t*)ev)->atom ==
+            atom_net_client_list) {
+          RequestRescan();
+        }
         break;
     }
     free(ev);
@@ -1618,9 +2075,14 @@ static xcb_generic_event_t* GetEvent() {
   fd_set readfds;
   FD_ZERO(&readfds);
   FD_SET(fd, &readfds);
+  // Wait a second, or until a deferred rescan falls due, whichever is sooner.
+  int wait_ms = 1000;
+  if (rescan_pending) {
+    wait_ms = min(wait_ms, MillisUntilRescan());
+  }
   struct timeval tv;
-  tv.tv_sec = 1;
-  tv.tv_usec = 0;
+  tv.tv_sec = wait_ms / 1000;
+  tv.tv_usec = (wait_ms % 1000) * 1000;
   if (select(fd + 1, &readfds, 0, 0, &tv) == 1) {
     // This can still come back empty: what woke us might have been a reply
     // rather than an event. That's harmless - a null return is a null event,

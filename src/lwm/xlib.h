@@ -538,6 +538,10 @@ struct WMHints {
   int initial_state = 0;
   Pixmap icon_pixmap = 0;
   Pixmap icon_mask = 0;
+  // The window naming this window's group - one window of the application,
+  // which every window of it points at. lwm uses it to tell whose window a
+  // new one is: see Client::SameProgramAs.
+  Window window_group = 0;
 };
 extern WMHints XGetWMHints(Window w);
 
