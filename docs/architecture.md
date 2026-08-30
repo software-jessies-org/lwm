@@ -266,20 +266,56 @@ The gestures themselves reuse the existing `WindowMover`/`WindowResizer` (the
 button held is now a constructor argument, rather than always being
 `MOVING_BUTTON_MASK`, so that a drag on any button can keep a drag alive) and
 `WindowHider` for the button 3 click, and add `WindowExpander` for the double
-clicks and `WindowMoverRaiser` for button 1. The maths - which of the window's 3x3 grid cells was clicked, how far
+clicks. The maths - which of the window's 3x3 grid cells was clicked, how far
 an edge may expand, and what counts as a double click, which X has no notion
 of - is pure, and lives in `gesture.{h,cc}`.
 
-`getSuperDragHandler` (`drag.cc`) is where the buttons are assigned: 1 drags
-to move and clicks to raise, 2 drags to resize the edge the grid picks out, a
+`getSuperDragHandler` (`drag.cc`) is where the buttons are assigned: 1 raises
+and then drags to move, 2 drags to resize the edge the grid picks out, a
 double click on either expands (button 2's ignoring the other windows), and 3
 hides. From the centre cell the expansion is a toggle: a window with nowhere
 left to grow shrinks back instead, via `Client::Unexpand` — see
 [Un-expanding](concepts.md#un-expanding). Button 3 is handled before anything
 else in there, because hiding cares about neither the grid nor double clicks.
-Button 1's two meanings can't be told apart until the release, so they're one
-handler (`WindowMoverRaiser`) which decides then: a press that went nowhere
-raises, and anything else has already moved the window.
+Button 1 raises on the press, which covers both of its meanings at once: a
+press that goes nowhere has raised the window and moved it by nothing.
+
+The centre cell names no edge, so there is nothing there for button 2 to
+resize; that cell moves the window instead, and is the move which *doesn't*
+raise. The pair mirrors the frame's own buttons, where 1 reshapes and raises
+and 2 moves without raising.
+
+### Chords
+
+The two button 2 drags — the resize and the centre-cell move — also take
+*chords*: a click of button 1 or button 3 with button 2 still held, meaning
+what those buttons mean on their own. Button 1 raises the window and the drag
+carries on; button 3 hides it and ends the drag. The resize is the case that
+wants this, since the edge being dragged is easily behind another window, and
+finding that out ought not to cost the drag.
+
+This needs two things of the dispatcher, both in `disp.cc`. A press arriving
+mid-drag used to be logged and dropped, and is now offered to
+`DragHandler::ChordPress` first; a release used to end the drag whatever
+button it was on, and is now offered to `DragHandler::ChordRelease`, which
+returns true to say "that was my chord, the drag goes on". Both default to
+false, so every other handler behaves exactly as before. Returning false from
+`ChordRelease` is also how the hide chord ends the drag: the normal
+`stopDragging` path then runs, so the handler's `End` and the pointer grab are
+dealt with in the one place that does that.
+
+lwm sees these presses at all only because of the `XChangeActivePointerGrab`
+the gesture already does: without it the second button would go to the
+application. The passive grabs in `Client::GrabSuperButtons` can't help, since
+X matches those only when no other button is already down.
+
+`ChordedDrag<Base>` (`drag.cc`) is the implementation, a mixin rather than a
+base class because `WindowMover` and `WindowResizer` have no ancestor of their
+own below `WindowDragger`, which the frame drags and `_NET_WM_MOVERESIZE` use
+too — and those deliberately have no chords, since there the button is the
+client's choice rather than lwm's. A chord is a click in the same sense as
+everywhere else in lwm: the pointer must stay where the chord button went
+down, so resting a finger on another button mid-drag does nothing.
 
 Holding Control as well takes an early exit from `getSuperDragHandler` into a
 second, one-gesture set: button 1 turns the furniture on or off

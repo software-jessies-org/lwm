@@ -333,28 +333,6 @@ class WindowMover : public WindowDragger {
   const FilledAxes kept_;
 };
 
-// The Windows-key move gesture doubles as a click: a press which goes nowhere
-// hasn't moved the window anywhere either, and raises it instead. That's what
-// a button 1 press on the frame does, and the point of these gestures is that
-// the whole window acts like the frame.
-class WindowMoverRaiser : public WindowMover {
- public:
-  WindowMoverRaiser(Client* c, unsigned int button_mask)
-      : WindowMover(c, button_mask) {}
-
-  virtual void End(xcb_generic_event_t* ev) {
-    WindowMover::End(ev);
-    if (!isClick(startPos(), getMousePosition())) {
-      return;  // A real drag: the window has already gone where it was put.
-    }
-    Client* c = LScr::I->GetClient(window());
-    if (c) {
-      LOGD(c) << "Raising (user action)";
-      c->Raise();
-    }
-  }
-};
-
 class WindowResizer : public WindowDragger {
  public:
   WindowResizer(Client* c, Edge edge, unsigned int button_mask)
@@ -390,6 +368,74 @@ class WindowResizer : public WindowDragger {
  private:
   const Edge edge_;
   const Rect start_content_rect_;
+};
+
+// ChordedDrag adds the two chords to a drag: with the drag's own button still
+// held, a click of button 1 raises the window and carries on, and a click of
+// button 3 iconises it and abandons the drag. They're the meanings those two
+// buttons have on their own, offered without having to let go first - which
+// matters most for the resize, where the edge being dragged can easily be
+// behind something else, and where finding that out ought not to cost the
+// drag.
+//
+// Both are clicks in the same sense as everywhere else in lwm: the pointer
+// has to stay where the chord button went down, so a chord the user thinks
+// better of costs nothing, and simply resting a finger on another button
+// while dragging on doesn't quietly do something.
+//
+// It's a mixin because the two drags that have chords - the resize and the
+// centre-square move - have no ancestor of their own below WindowDragger,
+// which the frame drags and _NET_WM_MOVERESIZE use too, and those have no
+// chords.
+template <class Base>
+class ChordedDrag : public Base {
+ public:
+  using Base::Base;
+
+  virtual bool ChordPress(const xcb_button_press_event_t* e) {
+    if (e->detail != SUPER_CHORD_RAISE_BUTTON &&
+        e->detail != SUPER_CHORD_HIDE_BUTTON) {
+      return false;
+    }
+    chord_button_ = e->detail;
+    chord_pos_ = getMousePosition();
+    return true;
+  }
+
+  virtual bool ChordRelease(const xcb_button_release_event_t* e) {
+    if (e->detail != chord_button_) {
+      // Not a button this drag took the press of, so it's the one the drag
+      // itself is running on: this release is the end of the drag.
+      return false;
+    }
+    const unsigned int button = chord_button_;
+    chord_button_ = 0;
+    if (!isClick(chord_pos_, getMousePosition())) {
+      return true;  // The pointer wandered off: a change of mind. Drag on.
+    }
+    Client* c = LScr::I->GetClient(this->window());
+    if (!c) {
+      return true;
+    }
+    if (button == SUPER_CHORD_RAISE_BUTTON) {
+      LOGD(c) << "Raising (user action, chord)";
+      c->Raise();
+      return true;
+    }
+    LOGD(c) << "Hiding (user action, chord)";
+    c->Hide();
+    // Returning false ends the drag, which is the point: there's nothing left
+    // on screen to go on dragging. The window keeps whatever the drag had
+    // done to it by now, and comes back that way when it's unhidden.
+    return false;
+  }
+
+ private:
+  // The chord button currently held, or 0. Button numbers start at 1, so 0
+  // matches no release.
+  unsigned int chord_button_ = 0;
+  // Where the pointer was when that button went down.
+  MousePos chord_pos_ = {};
 };
 
 // WindowExpander is the double-click half of the Windows-key gestures: it
@@ -574,16 +620,23 @@ DoubleClickTracker super_clicks;
 // The gestures the user gets by holding the Windows key and clicking on the
 // window itself, rather than on lwm's furniture:
 //
-//   button 1 drag          move the window
-//   button 2 drag          resize the nearest edge or corner
-//   button 1 click         raise the window, as a button 1 press on the
+//   button 1 press         raise the window, as a button 1 press on the
 //                          furniture does
+//   button 1 drag          raise the window and move it
+//   button 2 drag          resize the nearest edge or corner, or, from the
+//                          centre square, move the window without raising it
 //   button 1 double click  expand the nearest edge or corner up to whatever
 //                          is in the way
 //   button 2 double click  the same, but ignoring other windows, so it
 //                          expands to the monitor
 //   button 3 click         hide the window, as a button 3 click on the
 //                          furniture does
+//
+// and, while a button 2 drag is running, with button 2 still held (see
+// ChordedDrag):
+//
+//   button 1 click         raise the window, and go on dragging
+//   button 3 click         hide the window, which ends the drag
 //
 // Holding Control as well switches to a second, much smaller set, which so
 // far has one gesture in it:
@@ -594,13 +647,14 @@ DoubleClickTracker super_clicks;
 // when the window is already as big as it goes - which is when it shrinks the
 // window back to its pre-expansion size instead.
 //
-// A click is a drag that went nowhere, so the move and raise gestures are one
-// handler which decides between them on the button release.
+// The two ways of moving a window differ only in the stacking order: button 1
+// brings it to the front, and button 2's centre square doesn't, which is the
+// same pair of choices the frame offers with its reshape and move buttons.
 //
 // "Nearest edge or corner" means the 3x3 grid in gesture.h, laid over the
 // part of the window the gesture works on - the client's own window, not the
 // frame, since that's the whole area a press can arrive from. Its centre
-// square resizes nothing, but expands everything.
+// square resizes nothing, so that's the square that moves.
 DragHandler* getSuperDragHandler(Client* c,
                                  const xcb_button_press_event_t* e) {
   if (e->state & SUPER_CTRL_MASK) {
@@ -627,23 +681,36 @@ DragHandler* getSuperDragHandler(Client* c,
     return new WindowExpander(c, edge, e->detail == SUPER_RESIZE_BUTTON);
   }
   const bool moving = e->detail == SUPER_MOVE_BUTTON;
-  if (!moving && edge == ENone) {
-    return nullptr;  // Middle of the grid: no edge to resize.
-  }
+  // The centre of the grid names no edge, so there's nothing there for button
+  // 2 to resize. It moves the window instead - the one thing the grid's
+  // middle can mean - and, unlike button 1, leaves the stacking order alone,
+  // so that a window can be nudged into place without coming to the front.
+  const bool centre_moving = !moving && edge == ENone;
   // The press may have come through any of several passive grabs, whose event
   // masks are none of this code's business - click-to-focus installs one of
   // its own on the same window, and it asks for no motion events at all.
   // Restate what this drag needs on the active grab, which is also how the
-  // pointer gets the right shape while the drag is going on.
+  // pointer gets the right shape while the drag is going on. It is also what
+  // makes the chords possible: the presses of the other buttons arrive
+  // through this grab, and would otherwise go to the application.
   xlib::XChangeActivePointerGrab(
       ButtonMask | XCB_EVENT_MASK_POINTER_MOTION_HINT |
           XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_OWNER_GRAB_BUTTON,
-      LScr::I->Cursors()->ForEdge(moving ? ENone : edge), XCB_CURRENT_TIME);
+      LScr::I->Cursors()->ForEdge((moving || centre_moving) ? ENone : edge),
+      XCB_CURRENT_TIME);
   const unsigned int mask = buttonStateMask(e->detail);
   if (moving) {
-    return new WindowMoverRaiser(c, mask);
+    // Raised here rather than at the end of the gesture, so that the window
+    // the user is dragging is in front of the others while they do it, and so
+    // that a press which turns out to be a click has already done its work.
+    LOGD(c) << "Raising (user action)";
+    c->Raise();
+    return new WindowMover(c, mask);
   }
-  return new WindowResizer(c, edge, mask);
+  if (centre_moving) {
+    return new ChordedDrag<WindowMover>(c, mask);
+  }
+  return new ChordedDrag<WindowResizer>(c, edge, mask);
 }
 
 void RunConfiguredAltCommand(Window w, Edge edge, int button) {
@@ -679,9 +746,11 @@ DragHandler* getMoveResizeHandler(Client* c, Edge edge, int button) {
   if (!mask) {
     return nullptr;
   }
-  // Deliberately WindowMover and not WindowMoverRaiser: the raise-on-click half
-  // of that gesture belongs to the Windows-key bindings, and the caller has
-  // already raised this window on the client's behalf.
+  // Deliberately the plain WindowMover and WindowResizer: the raise and the
+  // chords belong to the Windows-key bindings, where the user is holding a
+  // button lwm chose. Here the button is the client's choice, the caller has
+  // already raised the window on the client's behalf, and a click of another
+  // button is the application's business.
   if (edge == ENone) {
     return new WindowMover(c, mask);
   }

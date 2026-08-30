@@ -107,6 +107,12 @@ void stopDragging(xcb_generic_event_t* ev) {
 
 void EvButtonPress(xcb_generic_event_t* ev) {
   if (current_dragger) {
+    // A press of a second button while a drag is running. Some drags read
+    // that as a chord; the rest want nothing to do with it, and lwm never
+    // starts a second drag on top of the first.
+    if (current_dragger->ChordPress((const xcb_button_press_event_t*)ev)) {
+      return;
+    }
     LOGI() << "Already doing something";
     return;  // Already doing something.
   }
@@ -114,6 +120,13 @@ void EvButtonPress(xcb_generic_event_t* ev) {
 }
 
 void EvButtonRelease(xcb_generic_event_t* ev) {
+  // A release normally ends the drag, but a handler which took the press of
+  // this button as a chord gets to say that this one was only the end of the
+  // chord, and that the drag goes on.
+  if (current_dragger &&
+      current_dragger->ChordRelease((const xcb_button_release_event_t*)ev)) {
+    return;
+  }
   stopDragging(ev);
 }
 

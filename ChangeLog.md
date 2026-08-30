@@ -9,6 +9,15 @@ In lwm, a window opened while another program runs full screen on the primary
 monitor is placed on a free monitor instead. The full-screen program's own
 windows still open with it.
 
+A Windows+button 1 drag now raises the window as well as moving it, and
+Windows+button 2 in the middle of a window moves it without raising it.
+
+While a Windows+button 2 drag is running, clicking button 1 raises the window
+and clicking button 3 hides it and abandons the drag.
+
+A gummiband item's command can now print a line of colours and then a tooltip,
+after the line it is drawn from.
+
 ## 2026-08-28 (pn, Basel)
 
 A window Windows+arrow raises drops back to where it was in the window stack

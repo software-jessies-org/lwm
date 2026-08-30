@@ -71,14 +71,25 @@ own background, and \fIlwm\fP swallows the clicks so that they never reach the
 application.
 .PP
 Dragging button 1 with the Windows key held moves the window, wherever in it
-the drag started.  Clicking button 1 without moving the pointer raises the
-window instead, just as a button 1 press on its frame does.
+the drag started, and raises it to the front, just as a button 1 press on its
+frame does.  Clicking button 1 without moving the pointer raises the window
+without moving it.
 .PP
 Dragging button 2 with the Windows key held resizes the window: which edge or
 corner moves depends on where in the window the drag started, taking the
 window to be divided into a 3x3 grid.  The corners of the grid drag the
 corresponding corner of the window, the sides drag the corresponding edge,
-and the middle square resizes nothing.
+and the middle square, which names no edge, moves the window instead.  That
+move leaves the window where it is in the stacking order, so a window can be
+nudged into place from behind another one; button 1's move is the one that
+brings it to the front.
+.PP
+While a button 2 drag is going on, and with button 2 still held down, the
+other two buttons still mean what they mean on their own.  Clicking button 1
+raises the window, and the drag carries on; clicking button 3 hides the
+window and abandons the drag, leaving the window as the drag had it so far.
+As with every other click, moving the pointer away before releasing the
+button abandons the click, and the drag simply goes on.
 .PP
 Double-clicking button 1 with the Windows key held expands the window instead:
 the edge or corner picked out by the same 3x3 grid grows until it meets the

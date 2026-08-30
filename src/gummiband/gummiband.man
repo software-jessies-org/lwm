@@ -28,7 +28,8 @@ gummiband \- Simple launcher for the X Window System
 configured to show machine status (eg battery %, or the time), and to provide
 launch buttons (eg a button to run xterm). It provides simple drop-down menus
 (eg a button can show the current wifi access point, and clicking on the button
-opens a menu allowing a different access point to be selected).
+opens a menu allowing a different access point to be selected). An item can
+also choose its own colours and offer a tooltip: see \fBTHE NAME PROTOCOL\fP.
 .PP
 All dynamic content should be provided by shell scripts, which Gummiband will
 run according to its configuration.
@@ -49,7 +50,8 @@ The following are the valid key types:
 .TP 12
 .B name
 The name to display inside the button, or if the value starts with 'exec ', the
-program to run, whose output should be shown in the button.
+program to run, whose output should be shown in the button. Such a program may
+print more than one line: see \fBTHE NAME PROTOCOL\fP.
 
 .TP 12
 .B updatesecs
@@ -60,7 +62,7 @@ negative number, the name will be evaluated only once.
 .TP 12
 .B click
 The program to run when the user clicks on the button. Should start with
-'exec '. Cannot be used in a menu.
+\&'exec '. Cannot be used in a menu.
 
 .TP 12
 .B position
@@ -82,6 +84,47 @@ Program to run when the user clicks on an item in the drop-down menu. This
 string must include the text \fI<item>\fP, which will be substituted with the
 string clicked on. Note that if menu items may contain spaces, you should
 include quotes around \fI<item>\fP.
+
+.SH "THE NAME PROTOCOL"
+A program run for a \fIname=\fP may print more than the line the item is drawn
+from. The lines are:
+.TP 5
+1.
+The text to display.
+.TP 5
+2.
+The colours to display it in: one or two colour specifications of the form
+\fI#rrggbb\fP, separated by whitespace. The first is the text foreground and
+the second the background, so '#ff0000 #0000ff' is red text on blue. A blank
+line means the panel's usual colours.
+.TP 5
+3+.
+The text of a tooltip, which appears in a small window below the item while
+the pointer rests on it. One line of the tooltip per line of output.
+.PP
+Any line after the first may be left out, so a program that prints one line
+behaves exactly as it always did. The shorter forms of X colour specification
+(\fI#rgb\fP, \fI#rrrgggbbb\fP, \fI#rrrrggggbbbb\fP) work as well.
+.PP
+An item chooses its colours to be noticed, so hovering over it does not take
+them away: the highlight replaces the item's background, but the text keeps
+the colour the program asked for. The tooltip is drawn in the panel's own
+colours whatever the item chose.
+.PP
+Only \fIname=\fP reads its command's output this way. \fImenuitems=\fP takes
+one drop-down entry per line, as it always has.
+.PP
+A battery script printing
+.nf
+
+    17%
+    #ffffff #ff0000
+    Discharging at 21W
+    48 minutes remaining
+
+.fi
+draws '17%' in white on red, with the detail there for whoever hovers over it.
+An item needs no click action to have a tooltip.
 
 .SH EXAMPLES
 The following entry denotes a simple button for launching xterm, on the left
@@ -130,6 +173,8 @@ every 30s, but has no click action:
     updatesecs=30
 
 .fi
+That script can colour itself and explain itself at the same time, by printing
+a colour line and then some detail; see \fBTHE NAME PROTOCOL\fP.
 Hopefully the above examples should give a reasonable indication as to what's
 possible.
 

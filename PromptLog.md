@@ -171,14 +171,18 @@ I often run in a multi-monitor setup (like now), with gummiband shown only on th
 
 ---
 
-## Not yet started
-
 I want the following changes to the windows-key-drag handling in lwm:
 * windows+left drag (move window) should also raise the window.
 * windows+middle drag in the central of the 3x3 grid should move the window without raising it.
 * While using windows+middle drag for any purpose, if the user briefly clicks the left button (in a chord) it should raise the window; briefly clicking the right button should iconise it and cancel the drag action.
 
 ---
+
+I want a change in the protocol gummiband uses for the 'name=exec <cmd>' case. Currently the string output by the executed command is shown in gummiband. I want to augment this with two things: the program may output a second line beginning with '#' which will be interpreted as a colour (eg '#ff0000' is red) to be used as the text foreground. If the line contains two such colours (eg '#ff0000 #0000ff'), the second colour is considered the background (so that example would yield red text on a blue background). If the second line is blank, the default colours are used. If further lines are present (3 or more), then the latter lines will be displayed as a tooltip when the user hovers the mouse over the corresponding item in the gummiband window.
+
+---
+
+## Not yet started
 
 **TDB** Add support for colours in gummiband (possibly support the i3blocks protocol, but not sure).
 

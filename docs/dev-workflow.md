@@ -210,8 +210,9 @@ X server — so this runs the real binary under `Xvfb` with a generated
 `.gummiband` in a temp directory, and checks the panel's geometry, its EWMH
 properties, the pixels it paints, what its items do when clicked, the
 drop-down menu's position, highlighting and `<item>` substitution, the
-`updatesecs` repaint, the SIGHUP restart that reloads the config, and the
-step aside onto another monitor when something goes full screen.
+`updatesecs` repaint, the colours and tooltip an item's own output asks for,
+the SIGHUP restart that reloads the config, and the step aside onto another
+monitor when something goes full screen.
 
 No window manager runs: gummiband maps itself and nothing here needs framing,
 so leaving lwm out keeps the test independent of it. `strut_test.sh` covers

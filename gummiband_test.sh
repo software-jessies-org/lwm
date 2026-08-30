@@ -430,6 +430,159 @@ if [ "${HAVE_PIXELS}" = "yes" ]; then
   fi
 fi
 
+# --- colours and tooltips from an item's own output --------------------------
+#
+# The name protocol: a 'name=exec' command's second line names one or two
+# colours, and its third line onwards is a tooltip. All three states go
+# through one item, whose output comes from a file this script rewrites, so
+# that the checks don't depend on how wide the font renders anything: the
+# first right-hand item always covers display_width-15, whatever is in it.
+#
+# The item deliberately has no click action. An item that only reports
+# something is exactly the kind that has more to say on hovering, and
+# 'selected' used to mean "an item you can click", so this is the case that
+# would go quietly wrong.
+
+cat >"${WORKDIR}/.gummiband" <<EOF
+name=Launch
+click=exec touch ${WORKDIR}/clicked
+
+name=exec cat ${WORKDIR}/status.txt
+position=right
+updatesecs=1
+EOF
+
+# Text, then a foreground and a background, then two lines of tooltip.
+# Neither colour is one the panel uses of its own accord, so any pixel of
+# either came from this item.
+printf 'MMMM\n#00ff00 #ffff00\nfirst tooltip line\nsecond tooltip line\n' \
+  >"${WORKDIR}/status.txt"
+
+kill -HUP "${GB_PID}"
+sleep 1.5
+PANEL=$(window_of_type _NET_WM_WINDOW_TYPE_DOCK)
+read -r PX PY PW PH <<<"$(geom "${PANEL}")"
+MID_Y=$((PH / 2))
+STATUS_X=$((SCREEN_W - 15))
+
+if [ -z "${PANEL}" ]; then
+  fail "gummiband restarted with the colour and tooltip config"
+else
+  pass "gummiband restarted with the colour and tooltip config"
+
+  if [ "${HAVE_PIXELS}" = "yes" ]; then
+    xdotool mousemove $((SCREEN_W / 2)) $((SCREEN_H / 2))
+    sleep 1
+    SNAP=$(snap "${PANEL}" colours)
+    N=$(count_colour "${SNAP}" '#FFFF00')
+    if [ "${N}" -gt 20 ]; then
+      pass "the second colour on an item's colour line is its background"
+    else
+      fail "the second colour on an item's colour line is its background (${N} pixels)"
+    fi
+    N=$(count_colour "${SNAP}" '#00FF00')
+    if [ "${N}" -gt 0 ]; then
+      pass "the first colour on an item's colour line is its foreground"
+    else
+      fail "the first colour on an item's colour line is its foreground (${N} pixels)"
+    fi
+  fi
+
+  # Hovering the item opens the tooltip, after the settling delay.
+  TOOLTIP=$(window_of_type _NET_WM_WINDOW_TYPE_TOOLTIP)
+  if [ -z "${TOOLTIP}" ]; then
+    fail "gummiband created a tooltip window"
+  else
+    pass "gummiband created a tooltip window"
+
+    if mapped "${TOOLTIP}"; then
+      fail "the tooltip stays hidden until something is hovered"
+    else
+      pass "the tooltip stays hidden until something is hovered"
+    fi
+
+    xdotool mousemove "${STATUS_X}" "${MID_Y}"
+    sleep 1
+    if mapped "${TOOLTIP}"; then
+      pass "hovering an item with extra lines opens its tooltip"
+    else
+      fail "hovering an item with extra lines opens its tooltip"
+    fi
+
+    # Two lines of tooltip, each the panel's own line height, hung directly
+    # below the panel and kept on screen.
+    read -r TX TY TW TH <<<"$(geom "${TOOLTIP}")"
+    if [ "${TY}" = "${PH}" ] && [ "${TH}" = "$((2 * PH))" ] &&
+      [ "${TX}" -ge 0 ] && [ "$((TX + TW))" -le "${SCREEN_W}" ]; then
+      pass "tooltip is sized to its lines and sits below the panel (${TW}x${TH}+${TX}+${TY})"
+    else
+      fail "tooltip is sized to its lines and sits below the panel (got ${TW}x${TH}+${TX}+${TY}, want Nx$((2 * PH))+N+${PH}, on screen)"
+    fi
+
+    if [ "${HAVE_PIXELS}" = "yes" ]; then
+      SNAP=$(snap "${TOOLTIP}" tooltip)
+      INK=$(count_not_colour "${SNAP}" '#FFFFFF')
+      if [ "${INK}" -gt 100 ]; then
+        pass "tooltip text and border are drawn (${INK} non-background pixels)"
+      else
+        fail "tooltip text and border are drawn (only ${INK} non-background pixels)"
+      fi
+    fi
+
+    xdotool mousemove $((SCREEN_W / 2)) $((SCREEN_H / 2))
+    sleep 1
+    if mapped "${TOOLTIP}"; then
+      fail "leaving the panel takes the tooltip away"
+    else
+      pass "leaving the panel takes the tooltip away"
+    fi
+
+    # A blank colour line means the panel's own colours, and leaves the lines
+    # after it as a tooltip of one line.
+    printf 'MMMM\n\nonly tooltip line\n' >"${WORKDIR}/status.txt"
+    sleep 2.5
+    if [ "${HAVE_PIXELS}" = "yes" ]; then
+      SNAP=$(snap "${PANEL}" blankcolours)
+      N=$(($(count_colour "${SNAP}" '#FFFF00') + $(count_colour "${SNAP}" '#00FF00')))
+      if [ "${N}" -eq 0 ]; then
+        pass "a blank colour line leaves the item in the default colours"
+      else
+        fail "a blank colour line leaves the item in the default colours (${N} coloured pixels)"
+      fi
+    fi
+
+    xdotool mousemove "${STATUS_X}" "${MID_Y}"
+    sleep 1
+    read -r TX TY TW TH <<<"$(geom "${TOOLTIP}")"
+    if mapped "${TOOLTIP}" && [ "${TH}" = "${PH}" ]; then
+      pass "an item with a blank colour line still gets its tooltip (${TW}x${TH})"
+    else
+      fail "an item with a blank colour line still gets its tooltip (mapped? sized ${TW}x${TH}, want Nx${PH})"
+    fi
+
+    # One line of output is one line of output, as it always was: no tooltip.
+    printf 'MMMM\n' >"${WORKDIR}/status.txt"
+    sleep 2.5
+    if mapped "${TOOLTIP}"; then
+      fail "an item that stops printing extra lines loses its tooltip"
+    else
+      pass "an item that stops printing extra lines loses its tooltip"
+    fi
+
+    xdotool mousemove $((SCREEN_W / 2)) $((SCREEN_H / 2))
+    sleep 0.5
+    xdotool mousemove "${STATUS_X}" "${MID_Y}"
+    sleep 1
+    if mapped "${TOOLTIP}"; then
+      fail "an item with a single line of output has no tooltip"
+    else
+      pass "an item with a single line of output has no tooltip"
+    fi
+    xdotool mousemove $((SCREEN_W / 2)) $((SCREEN_H / 2))
+    sleep 0.5
+  fi
+fi
+
 # --- X resources, and the SIGHUP restart that reloads them ------------------
 #
 # SIGHUP makes gummiband execvp() itself, which is how a configuration change

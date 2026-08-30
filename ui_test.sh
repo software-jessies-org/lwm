@@ -9,15 +9,22 @@
 # Everything here is about the 'Windows' key (Super/Mod4) gestures on a
 # window's own background:
 #
-#   button 1 drag          move the window
+#   button 1 drag          raise the window and move it
 #   button 2 drag          resize the nearest edge or corner, chosen from the
-#                          3x3 grid over the window
+#                          3x3 grid over the window - or, from the middle of
+#                          the grid, move the window without raising it
 #   button 1 click         raise the window
 #   button 1 double click  expand that edge (or all of them, from the middle)
 #                          up to the nearest window or the monitor, or, from
 #                          the middle with no room left, un-expand instead
 #   button 2 double click  the same, but ignoring other windows
 #   button 3 click         hide the window
+#
+# ...plus the chords, clicked while a button 2 drag is running and button 2 is
+# still held:
+#
+#   button 1 click         raise the window, and go on dragging
+#   button 3 click         hide the window, which ends the drag
 #
 # ...plus the one Super+Control gesture:
 #
@@ -286,6 +293,26 @@ super_drag() {
   sleep 0.3
 }
 
+# super_chord_drag <drag-button> <chord-button> <x1> <y1> <x2> <y2>
+# A Super drag which stops half way to click a second button - the chord -
+# with the first still held, then carries on to the end point and lets go.
+super_chord_drag() {
+  local drag="$1" chord="$2" x1="$3" y1="$4" x2="$5" y2="$6"
+  xdotool keydown super
+  xdotool mousemove "${x1}" "${y1}"
+  xdotool mousedown "${drag}"
+  sleep 0.2
+  xdotool mousemove $(((x1 + x2) / 2)) $(((y1 + y2) / 2))
+  sleep 0.2
+  xdotool click "${chord}"
+  sleep 0.3
+  xdotool mousemove "${x2}" "${y2}"
+  sleep 0.2
+  xdotool mouseup "${drag}"
+  xdotool keyup super
+  sleep 0.3
+}
+
 # super_double_click <button> <x> <y>
 super_double_click() {
   local button="$1" x="$2" y="$3"
@@ -483,8 +510,10 @@ resize_check "Super+button 2 drag on the top left corner resizes both" \
   0 0 -60 -40 "-60 -40 60 40"
 resize_check "Super+button 2 drag on the top right corner resizes both" \
   2 0 60 -40 "0 -40 60 40"
-resize_check "Super+button 2 drag in the middle of the window does nothing" \
-  1 1 60 40 "0 0 0 0"
+# The middle of the grid names no edge, so there's nothing there to resize:
+# that's the cell which moves the window instead.
+resize_check "Super+button 2 drag in the middle of the window moves it" \
+  1 1 60 40 "60 40 0 0"
 
 # --- expand, with nothing else on screen ------------------------------------
 
@@ -578,9 +607,9 @@ else
   check_eq "expanding one window doesn't disturb the other" \
     "$(geom "${OTHER_FRAME}")" "${OFX} ${OFY} ${OFW} ${OFH}"
 
-  # Stacking: a Super+button 1 press that goes nowhere is a click, and raises
-  # the window; one that drags is a move, and leaves the stacking order alone
-  # (as the middle button on the frame does).
+  # Stacking: everything button 1 does brings the window to the front, whether
+  # the press turns out to be a click or a drag. The move which leaves the
+  # stacking order alone is button 2's, from the middle of the grid.
   place "${CLIENT}" 200 300 200 200
 
   # Put the second window in front, so the first has something to be raised
@@ -590,15 +619,55 @@ else
   check "a Super+button 1 click raises the window" \
     in_front "${OTHER_FRAME}" "${FRAME}"
 
+  read -r FX FY FW FH <<<"$(geom "${FRAME}")"
   read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
   super_drag 1 "${CX}" "${CY}" $((CX + 30)) $((CY + 20))
-  check "a Super+button 1 drag moves the window without raising it" \
-    in_front "${OTHER_FRAME}" "${FRAME}"
+  check "a Super+button 1 drag raises the window as well as moving it" \
+    in_front "${FRAME}" "${OTHER_FRAME}"
+  check_eq "and the drag still moves it" \
+    "$(geom "${FRAME}")" "$((FX + 30)) $((FY + 20)) ${FW} ${FH}"
 
+  read -r OCX OCY <<<"$(cell "${OTHER}" 1 1)"
+  super_click 1 "${OCX}" "${OCY}"
   read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
   super_click 1 "${CX}" "${CY}"
   check "a Super+button 1 click raises the window past another one" \
     in_front "${FRAME}" "${OTHER_FRAME}"
+
+  # Button 2 from the middle of the grid is the move which doesn't raise, so
+  # a window can be nudged into place from behind another one.
+  place "${CLIENT}" 200 300 200 200
+  read -r OCX OCY <<<"$(cell "${OTHER}" 1 1)"
+  super_click 1 "${OCX}" "${OCY}"
+  read -r FX FY FW FH <<<"$(geom "${FRAME}")"
+  read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+  super_drag 2 "${CX}" "${CY}" $((CX + 40)) $((CY + 20))
+  check_eq "a Super+button 2 drag in the middle moves the window" \
+    "$(geom "${FRAME}")" "$((FX + 40)) $((FY + 20)) ${FW} ${FH}"
+  check "and leaves it where it was in the stack" \
+    in_front "${OTHER_FRAME}" "${FRAME}"
+
+  # The chords. Button 1 clicked during that drag raises the window, and the
+  # drag carries on to the end.
+  place "${CLIENT}" 200 300 200 200
+  read -r FX FY FW FH <<<"$(geom "${FRAME}")"
+  read -r CX CY <<<"$(cell "${CLIENT}" 1 1)"
+  super_chord_drag 2 1 "${CX}" "${CY}" $((CX + 60)) $((CY + 40))
+  check "a button 1 chord raises the window being dragged" \
+    in_front "${FRAME}" "${OTHER_FRAME}"
+  check_eq "and the drag runs on to where it was going" \
+    "$(geom "${FRAME}")" "$((FX + 60)) $((FY + 40)) ${FW} ${FH}"
+
+  # Button 3 clicked during a drag hides the window and abandons the drag, so
+  # the window stops following the pointer at the moment of the click rather
+  # than at the release. It's the second window that gets hidden: there's no
+  # way to unhide one from here, and the first is needed by later checks.
+  read -r OFX OFY OFW OFH <<<"$(geom "${OTHER_FRAME}")"
+  read -r OCX OCY <<<"$(cell "${OTHER}" 1 1)"
+  super_chord_drag 2 3 "${OCX}" "${OCY}" $((OCX + 80)) $((OCY + 60))
+  check_eq "a button 3 chord hides the window and abandons the drag" \
+    "$(map_state "${OTHER_FRAME}") $(geom "${OTHER_FRAME}")" \
+    "IsUnMapped $((OFX + 40)) $((OFY + 30)) ${OFW} ${OFH}"
 
   kill "${OTHER_PID}" >/dev/null 2>&1
   sleep 0.5

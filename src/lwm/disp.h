@@ -16,6 +16,14 @@
 #define SUPER_RESIZE_BUTTON XCB_BUTTON_INDEX_2
 #define SUPER_HIDE_BUTTON XCB_BUTTON_INDEX_3
 
+// The chords: the buttons which mean something while a button 2 gesture drag
+// is already running, clicked with button 2 still held down. They're the same
+// two buttons as the raise and the hide above, and they mean the same two
+// things, so that a drag doesn't have to be finished before the window can be
+// brought to the front or put away.
+#define SUPER_CHORD_RAISE_BUTTON XCB_BUTTON_INDEX_1
+#define SUPER_CHORD_HIDE_BUTTON XCB_BUTTON_INDEX_3
+
 // Holding Control as well as the Windows key selects a different gesture set
 // altogether. There's only one of them so far: a click turns lwm's furniture
 // on or off for the window under the pointer. It's a separate modifier rather
@@ -70,6 +78,19 @@ class DragHandler {
   // Return false to cancel the action immediately.
   virtual bool Move(xcb_generic_event_t* ev) = 0;
   virtual void End(xcb_generic_event_t* ev) = 0;
+
+  // A press of another button while this drag is running: half of a chord.
+  // Return true to take it, or false to have it ignored, which is what a drag
+  // with no chords in it wants - lwm never starts a second drag while one is
+  // in progress.
+  virtual bool ChordPress(const xcb_button_press_event_t*) { return false; }
+
+  // A button release while this drag is running. Return true to consume it
+  // and carry on dragging, which only makes sense for a button the handler
+  // took the press of; returning false ends the drag, as every release did
+  // before chords existed, and so is the right answer for the button the drag
+  // itself started with.
+  virtual bool ChordRelease(const xcb_button_release_event_t*) { return false; }
 };
 
 #endif  // LWM_DISP_H_included

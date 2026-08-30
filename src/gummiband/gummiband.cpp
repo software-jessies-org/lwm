@@ -40,6 +40,29 @@
 //
 // End of examples.
 //
+// The name protocol.
+//
+// A command run for a 'name=' may print more than the line the item is drawn
+// from. The lines are:
+//
+//   1. the text to display.
+//   2. the colours to display it in: one or two '#rrggbb' specifications, the
+//      first the foreground and the second the background. A blank line means
+//      the panel's usual colours.
+//   3. onwards: the text of a tooltip, shown while the pointer rests on the
+//      item.
+//
+// Any line after the first may be left out. A battery script printing
+//
+// 17%
+// #ffffff #ff0000
+// Discharging at 21W
+// 48 minutes remaining
+//
+// draws '17%' in white on red, with the detail there for whoever hovers over
+// it. Only 'name=' reads its command's output this way: 'menuitems=' takes
+// one drop-down entry per line, as it always has.
+//
 // In general, if a value begins with 'exec ', it will be treated as a command
 // to execute, and anything printed out by that command on stdout will be used
 // as the value. For the name, for example, the following entries would look
@@ -143,13 +166,16 @@ static int display_ymin;
 
 static xcb_window_t window;           // Main window.
 static xcb_window_t dropdown_window;  // Drop-down window.
+static xcb_window_t tooltip_window;   // Tooltip window.
 static int window_height;
 static xcb_gcontext_t dropdown_gc;
 static xcb_gcontext_t dropdown_highlight_gc;
+static xcb_gcontext_t tooltip_gc;
 
 // Font stuff.
 static XftFont* g_font;
 static XftDraw* g_dropdown_font_draw;
+static XftDraw* g_tooltip_font_draw;
 static XftColor g_font_color;
 static XftColor g_selected_font_color;
 static int g_font_height;
@@ -345,25 +371,92 @@ class StringsSource {
   virtual vector<string> Get() = 0;
 };
 
-// StringSource adapts the list-containing StringsSource to return a single
-// string, with multiple values separated by spaces.
-class StringSource {
- public:
-  explicit StringSource(StringsSource* ss) : ss_(ss) {}
-  string Get() {
-    string res;
-    vector<string> vals = ss_->Get();
-    for (int i = 0; i < vals.size(); i++) {
-      if (i > 0) {
-        res += " ";
-      }
-      res += vals[i];
+static const char* const kWhitespace = " \t\n\r";
+
+// SplitWhitespace splits on runs of whitespace, keeping none of it.
+static vector<string> SplitWhitespace(const string& in) {
+  vector<string> res;
+  size_t i = 0;
+  while (i < in.size()) {
+    const size_t begin = in.find_first_not_of(kWhitespace, i);
+    if (begin == string::npos) {
+      break;
     }
+    size_t end = in.find_first_of(kWhitespace, begin);
+    if (end == string::npos) {
+      end = in.size();
+    }
+    res.push_back(in.substr(begin, end - begin));
+    i = end;
+  }
+  return res;
+}
+
+// ItemDisplay is how a menu item should look right now: the text to draw, the
+// colours to draw it in, and what to say if the pointer settles on it.
+// Everything but the text is optional; see "the name protocol" at the top of
+// this file.
+struct ItemDisplay {
+  string text;
+  string fg;  // Colour specification, or empty for the panel's own.
+  string bg;  // Ditto.
+  vector<string> tooltip;
+};
+
+// ParseItemDisplay reads the lines a name source produced.
+static ItemDisplay ParseItemDisplay(const vector<string>& lines) {
+  ItemDisplay res;
+  if (lines.empty()) {
     return res;
+  }
+  res.text = lines[0];
+  if (lines.size() > 1) {
+    // A blank colour line means "the usual colours", and is how a program
+    // says it has a tooltip but nothing to say about how it should look.
+    const vector<string> colours = SplitWhitespace(lines[1]);
+    for (int i = 0; i < colours.size() && i < 2; i++) {
+      if (colours[i][0] != '#') {
+        LOGE() << "Item '" << res.text << "': colour line '" << lines[1]
+               << "' has '" << colours[i] << "' where a #rrggbb colour "
+               << "should be";
+        break;
+      }
+      (i == 0 ? res.fg : res.bg) = colours[i];
+    }
+  }
+  for (int i = 2; i < lines.size(); i++) {
+    res.tooltip.push_back(lines[i]);
+  }
+  // Nothing is gained by a tooltip with blank rows along the bottom, which is
+  // what a program that pads its output would otherwise get.
+  while (!res.tooltip.empty() && res.tooltip.back().empty()) {
+    res.tooltip.pop_back();
+  }
+  return res;
+}
+
+// ItemDisplaySource is the name source of a single menu item, parsed. It
+// re-parses only when the lines underneath it change: Get() is called on every
+// repaint, which on a panel with a clock on it is once a second.
+class ItemDisplaySource {
+ public:
+  explicit ItemDisplaySource(StringsSource* ss) : ss_(ss), parsed_(false) {}
+
+  const ItemDisplay& Get() {
+    vector<string> lines = ss_->Get();
+    if (!parsed_ || lines != lines_) {
+      lines_ = lines;
+      display_ = ParseItemDisplay(lines_);
+      parsed_ = true;
+    }
+    return display_;
   }
 
  private:
   StringsSource* ss_;
+  vector<string> lines_;
+  ItemDisplay display_;
+  bool parsed_;
 };
 
 // StaticStringsSource is a StringsSource that has a pre-defined set of
@@ -381,9 +474,13 @@ class StaticStringsSource : public StringsSource {
 // TrimTrailingWhitespace removes all newlines, tabs, spaces etc from the right-
 // -hand side of the string.
 static string TrimTrailingWhitespace(const string& s) {
-  const int pos = s.find_last_not_of("\t\n\r ");
+  const size_t pos = s.find_last_not_of("\t\n\r ");
   if (pos == string::npos) {
-    return s;
+    // Nothing but whitespace: the whole string goes. This used to return the
+    // string untouched, which meant a program's blank line came back as the
+    // "\n" fgets read rather than as the empty string - and a blank line is
+    // how the name protocol says "no colours of my own".
+    return string();
   }
   return s.substr(0, pos + 1);
 }
@@ -548,6 +645,13 @@ static XftColor* FontColour(bool selected) {
   return selected ? &g_selected_font_color : &g_font_color;
 }
 
+// The colours an item named for itself, looked up when first seen and then
+// kept. Allocating a colour is a round trip to the server and the panel
+// repaints every second, so asking each time would put a stall in every
+// repaint. Both are defined further down, beside the allocation they wrap.
+static uint32_t ItemColour(const string& name);
+static XftColor* ItemFontColour(const string& name);
+
 // FillRectangle and DrawSegments are thin wrappers over the XCB drawing
 // requests, whose parameters arrive as arrays of structs rather than as the
 // loose arguments Xlib took.
@@ -560,6 +664,14 @@ static void FillRectangle(xcb_drawable_t target,
   const xcb_rectangle_t rect = {int16_t(x), int16_t(y), uint16_t(width),
                                 uint16_t(height)};
   xcb_poly_fill_rectangle(conn, target, gc, 1, &rect);
+}
+
+// ChangeGCForeground repoints a GC at another colour, which is how the one
+// spare GC paints as many different item backgrounds as the items ask for.
+static void ChangeGCForeground(xcb_gcontext_t gc, uint32_t colour) {
+  ValueList values;
+  values.Add(XCB_GC_FOREGROUND, colour);
+  xcb_change_gc(conn, gc, values.Mask(), values.Values());
 }
 
 static void DrawSegments(xcb_drawable_t target,
@@ -736,10 +848,10 @@ class DropDownMenuAction : public Action {
 // that out - MenuItem itself has no concept of updating things.
 class MenuItem {
  public:
-  MenuItem(StringSource* name_source, Action* action)
-      : name_source_(name_source), action_(action) {}
+  MenuItem(ItemDisplaySource* source, Action* action)
+      : source_(source), action_(action) {}
 
-  string Name() { return name_source_->Get(); }
+  const ItemDisplay& Display() { return source_->Get(); }
 
   bool HasAction() { return action_; }
 
@@ -757,8 +869,11 @@ class MenuItem {
 
   bool ContainsX(int x) { return x >= x_ && x < x_ + width_; }
 
+  // Where the item was last drawn, which is where its tooltip goes.
+  int X() const { return x_; }
+
  private:
-  StringSource* name_source_;
+  ItemDisplaySource* source_;
   Action* action_;
   int x_;
   int width_;
@@ -777,31 +892,45 @@ class MenuSet {
 
   void Paint(xcb_drawable_t target,
              xcb_gcontext_t highlight_gc,
+             xcb_gcontext_t bg_gc,
              XftDraw* g_font_draw) {
     int x = rtl_ ? (display_width - 5) : 5;
     for (MenuItem* mi : items_) {
-      const string name = mi->Name();
-      const int width = 20 + TextWidth(name);
+      const ItemDisplay& item = mi->Display();
+      const int width = 20 + TextWidth(item.text);
       if (rtl_) {
         x -= width;
       }
       mi->SetPosition(x, width);
-      if (mi == selected) {
+      // Only an item you can click on is highlighted, so that the highlight
+      // goes on meaning "this does something". An item's own background gives
+      // way to the highlight, but its own foreground does not: the colour a
+      // status item picked is usually saying something (red for a flat
+      // battery) that a moment's hovering has no business hiding.
+      const bool is_selected = mi == selected && mi->HasAction();
+      if (is_selected) {
         FillRectangle(target, highlight_gc, x + 5, 0, width - 10,
                       window_height);
+      } else if (!item.bg.empty()) {
+        ChangeGCForeground(bg_gc, ItemColour(item.bg));
+        FillRectangle(target, bg_gc, x + 5, 0, width - 10, window_height);
       }
-      XftDrawStringUtf8(
-          g_font_draw, FontColour(mi == selected), g_font, x + 10, g_font_yoff,
-          reinterpret_cast<const FcChar8*>(name.data()), name.size());
+      XftColor* colour =
+          item.fg.empty() ? FontColour(is_selected) : ItemFontColour(item.fg);
+      XftDrawStringUtf8(g_font_draw, colour, g_font, x + 10, g_font_yoff,
+                        reinterpret_cast<const FcChar8*>(item.text.data()),
+                        item.text.size());
       if (!rtl_) {
         x += width;
       }
     }
   }
 
+  // The item under the pointer, whether or not clicking it would do anything:
+  // an item with no action still has a tooltip to show.
   MenuItem* ItemAt(int mouseX) {
     for (MenuItem* mi : items_) {
-      if (mi->ContainsX(mouseX) && mi->HasAction()) {
+      if (mi->ContainsX(mouseX)) {
         return mi;
       }
     }
@@ -829,8 +958,8 @@ class Menu {
   void Paint() {
     EnsureDrawBufferExists();
     FillRectangle(buffer_, clear_gc_, 0, 0, display_width, window_height);
-    left_->Paint(buffer_, highlight_gc_, g_font_draw_);
-    right_->Paint(buffer_, highlight_gc_, g_font_draw_);
+    left_->Paint(buffer_, highlight_gc_, item_bg_gc_, g_font_draw_);
+    right_->Paint(buffer_, highlight_gc_, item_bg_gc_, g_font_draw_);
     // XCopyArea took the source and destination positions on either side of
     // the size; xcb_copy_area takes both positions first, then the size. This
     // is one of the argument reorderings that compiles perfectly happily and
@@ -854,6 +983,7 @@ class Menu {
       xcb_free_pixmap(conn, buffer_);
       xcb_free_gc(conn, clear_gc_);
       xcb_free_gc(conn, highlight_gc_);
+      xcb_free_gc(conn, item_bg_gc_);
       xcb_free_gc(conn, cp_gc_);
       buffer_ = XCB_NONE;
     }
@@ -882,6 +1012,14 @@ class Menu {
       xcb_create_gc(conn, highlight_gc_, buffer_, values.Mask(),
                     values.Values());
     }
+    // No colour of its own: ChangeGCForeground points this at whichever one
+    // the item being painted asked for.
+    item_bg_gc_ = xcb_generate_id(conn);
+    {
+      ValueList values;
+      values.Add(XCB_GC_FOREGROUND, colour_bg);
+      xcb_create_gc(conn, item_bg_gc_, buffer_, values.Mask(), values.Values());
+    }
     cp_gc_ = xcb_generate_id(conn);
     {
       ValueList values;
@@ -902,9 +1040,127 @@ class Menu {
   xcb_pixmap_t buffer_;
   xcb_gcontext_t clear_gc_;
   xcb_gcontext_t highlight_gc_;
+  xcb_gcontext_t item_bg_gc_;
   xcb_gcontext_t cp_gc_;
   XftDraw* g_font_draw_;
 };
+
+// SetDeadline puts a moment `ms` milliseconds from now into *when, and
+// MillisUntil says how long that moment still has to wait, or zero if it has
+// been and gone. The monotonic clock, because these are all "shortly": a
+// wall clock that ntpd has just stepped would otherwise make "in 100ms" mean
+// anything at all.
+static void SetDeadline(struct timespec* when, int ms) {
+  clock_gettime(CLOCK_MONOTONIC, when);
+  when->tv_sec += ms / 1000;
+  when->tv_nsec += (ms % 1000) * 1000000L;
+  if (when->tv_nsec >= 1000000000L) {
+    when->tv_nsec -= 1000000000L;
+    when->tv_sec++;
+  }
+}
+
+static int MillisUntil(const struct timespec& when) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  const long ms = (when.tv_sec - now.tv_sec) * 1000L +
+                  (when.tv_nsec - now.tv_nsec) / 1000000L;
+  return ms > 0 ? int(ms) : 0;
+}
+
+// ---------------------------------------------------------------- tooltips
+//
+// An item whose command printed more than a line of text and a line of
+// colours has something further to say, and says it in a small window hung
+// under the item while the pointer rests there. The pause before it appears
+// is deliberate: sweeping the pointer along the panel on the way to a button
+// shouldn't leave a trail of tooltips behind it.
+
+static const int kTooltipDelayMs = 500;
+
+// Whether a tooltip is waiting to appear, and when it is due. tooltip_due is
+// only meaningful while tooltip_pending.
+static bool tooltip_pending;
+static struct timespec tooltip_due;
+
+// Whether the tooltip window is up, what is written in it, and how wide
+// ShowTooltip made it. The width is remembered rather than measured again
+// because the border has to be drawn at the window's edge, and a repaint has
+// no other way of knowing where that is.
+static bool tooltip_shown;
+static vector<string> tooltip_lines;
+static int tooltip_width;
+
+static void HideTooltip() {
+  tooltip_pending = false;
+  if (!tooltip_shown) {
+    return;
+  }
+  tooltip_shown = false;
+  tooltip_lines.clear();
+  xcb_unmap_window(conn, tooltip_window);
+}
+
+static void PaintTooltip() {
+  xcb_clear_area(conn, 0, tooltip_window, 0, 0, 0, 0);
+  const int y_max = tooltip_lines.size() * g_font_height - 1;
+  const int x_max = tooltip_width - 1;
+  // Left, bottom and right edges, as the drop-down does: the top edge is
+  // where the panel is, so a line there would only thicken the panel's own.
+  DrawSegments(tooltip_window, tooltip_gc,
+               {{0, 0, 0, int16_t(y_max)},
+                {0, int16_t(y_max), int16_t(x_max), int16_t(y_max)},
+                {int16_t(x_max), 0, int16_t(x_max), int16_t(y_max)}});
+  for (int i = 0; i < tooltip_lines.size(); i++) {
+    const string& line = tooltip_lines[i];
+    XftDrawStringUtf8(g_tooltip_font_draw, FontColour(false), g_font, 10,
+                      i * g_font_height + g_font_yoff,
+                      reinterpret_cast<const FcChar8*>(line.data()),
+                      line.size());
+  }
+}
+
+// ShowTooltip puts the tooltip under an item, or takes it away again if that
+// item has nothing to say. The panel's own colours, whatever the item chose
+// for itself: an item picks its colours to be noticed across the room, which
+// is not what a paragraph of text wants.
+static void ShowTooltip(MenuItem* item) {
+  const vector<string>& lines = item->Display().tooltip;
+  if (lines.empty()) {
+    HideTooltip();
+    return;
+  }
+  tooltip_lines = lines;
+  tooltip_width = 0;
+  for (const string& line : tooltip_lines) {
+    tooltip_width = max(tooltip_width, TextWidth(line) + 20);
+  }
+  const int height = tooltip_lines.size() * g_font_height;
+  // The item's x is measured across the panel; the window goes at a position
+  // on the display, so it needs the same display_xmin and display_ymin
+  // corrections the drop-down needs. See DropDownMenuAction::Act.
+  int x = item->X() + display_xmin;
+  x = min(x, display_xmin + display_width - tooltip_width);
+  x = max(x, display_xmin);
+  MoveResizeWindow(tooltip_window, x, display_ymin + window_height + Y_OFFSET,
+                   tooltip_width, height);
+  MapRaised(tooltip_window);
+  tooltip_shown = true;
+  PaintTooltip();
+}
+
+// RequestTooltip starts the clock for whatever the pointer has just moved
+// onto, and takes down the tooltip of whatever it moved off. Whether the new
+// item has a tooltip at all is a question for kTooltipDelayMs later: asking
+// now would mean running the item's command on every sweep of the pointer.
+static void RequestTooltip() {
+  HideTooltip();
+  if (!selected || dropdown) {
+    return;
+  }
+  tooltip_pending = true;
+  SetDeadline(&tooltip_due, kTooltipDelayMs);
+}
 
 // GetEvent returns the next event, or null if a second went by without one.
 static xcb_generic_event_t* GetEvent();
@@ -961,7 +1217,7 @@ struct ItemState {
       }
       action = new DropDownMenuAction(items, menu_click);
     }
-    MenuItem* item = new MenuItem(new StringSource(name_src), action);
+    MenuItem* item = new MenuItem(new ItemDisplaySource(name_src), action);
     menu->Add(item, is_right);
   }
 
@@ -1028,6 +1284,9 @@ static void DoExpose(const xcb_expose_event_t* ev) {
   if (dropdown) {
     dropdown->Paint();
   }
+  if (tooltip_shown) {
+    PaintTooltip();
+  }
 }
 
 // An event pulled off the XCB queue by DropQueuedMotionEvents but not handled
@@ -1072,6 +1331,7 @@ static void DoMouseMoved(const xcb_motion_notify_event_t* ev) {
   selected = menu->ItemAt(pointer->win_x);
   if (old_selected != selected) {
     DoExpose(nullptr);
+    RequestTooltip();
   }
 }
 
@@ -1080,12 +1340,16 @@ static void DoButtonPress(const xcb_button_press_event_t* ev) {
     dropdown->MouseClick(ev->event_x, ev->event_y);
     return;
   }
+  HideTooltip();
   selected = menu->ItemAt(ev->event_x);
   DoExpose(nullptr);
 }
 
 static void DoButtonRelease() {
-  if (selected != 0) {
+  // An item with no action is still selected, because it may have a tooltip;
+  // clicking one is a click on nothing, which is how an open drop-down gets
+  // dismissed by clicking beside it.
+  if (selected && selected->HasAction()) {
     selected->Act();
   } else if (dropdown) {
     dropdown->Close();
@@ -1098,6 +1362,7 @@ static void DoLeave(const xcb_leave_notify_event_t* ev) {
     dropdown->MouseLeft();
   } else {
     selected = nullptr;
+    HideTooltip();
     DoExpose(nullptr);
   }
 }
@@ -1200,6 +1465,7 @@ static void ChangeAtomProperty(xcb_window_t w,
 static xcb_atom_t atom_net_wm_window_type;
 static xcb_atom_t atom_net_wm_window_type_dock;
 static xcb_atom_t atom_net_wm_window_type_menu;
+static xcb_atom_t atom_net_wm_window_type_tooltip;
 static xcb_atom_t atom_net_wm_state;
 static xcb_atom_t atom_net_wm_state_below;
 static xcb_atom_t atom_net_wm_state_fullscreen;
@@ -1209,16 +1475,18 @@ static xcb_atom_t atom_net_client_list;
 static void InternAllAtoms() {
   const vector<xcb_atom_t> atoms = InternAtoms(
       {"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK",
-       "_NET_WM_WINDOW_TYPE_MENU", "_NET_WM_STATE", "_NET_WM_STATE_BELOW",
-       "_NET_WM_STATE_FULLSCREEN", "_NET_WM_STRUT", "_NET_CLIENT_LIST"});
+       "_NET_WM_WINDOW_TYPE_MENU", "_NET_WM_WINDOW_TYPE_TOOLTIP",
+       "_NET_WM_STATE", "_NET_WM_STATE_BELOW", "_NET_WM_STATE_FULLSCREEN",
+       "_NET_WM_STRUT", "_NET_CLIENT_LIST"});
   atom_net_wm_window_type = atoms[0];
   atom_net_wm_window_type_dock = atoms[1];
   atom_net_wm_window_type_menu = atoms[2];
-  atom_net_wm_state = atoms[3];
-  atom_net_wm_state_below = atoms[4];
-  atom_net_wm_state_fullscreen = atoms[5];
-  atom_net_wm_strut = atoms[6];
-  atom_net_client_list = atoms[7];
+  atom_net_wm_window_type_tooltip = atoms[3];
+  atom_net_wm_state = atoms[4];
+  atom_net_wm_state_below = atoms[5];
+  atom_net_wm_state_fullscreen = atoms[6];
+  atom_net_wm_strut = atoms[7];
+  atom_net_client_list = atoms[8];
 }
 
 // SetStrut publishes, or withdraws, the space we ask other windows to keep
@@ -1531,7 +1799,8 @@ static vector<bool> CoveredMonitors() {
         xcb_get_property_reply(conn, queries[i].state, nullptr));
     // Our own windows are never in our way, and an unmapped window - which is
     // what a hidden or iconified one is - isn't covering anything.
-    if (windows[i] == window || windows[i] == dropdown_window) {
+    if (windows[i] == window || windows[i] == dropdown_window ||
+        windows[i] == tooltip_window) {
       continue;
     }
     if (!attrs || attrs->map_state != XCB_MAP_STATE_VIEWABLE) {
@@ -1570,6 +1839,8 @@ static bool PlacePanel(const Rect& target) {
       target.width == display_width) {
     return false;
   }
+  // Whatever the tooltip was pointing at is about to be somewhere else.
+  HideTooltip();
   const bool width_changed = target.width != display_width;
   display_xmin = target.x;
   display_ymin = target.y;
@@ -1654,22 +1925,7 @@ static void RequestRescan() {
     return;  // The clock is already running; don't restart it.
   }
   rescan_pending = true;
-  clock_gettime(CLOCK_MONOTONIC, &rescan_due);
-  rescan_due.tv_nsec += kRescanDelayMs * 1000000L;
-  if (rescan_due.tv_nsec >= 1000000000L) {
-    rescan_due.tv_nsec -= 1000000000L;
-    rescan_due.tv_sec++;
-  }
-}
-
-// MillisUntilRescan is how long a pending rescan still has to wait, or zero if
-// the wait is over. Only meaningful while rescan_pending.
-static int MillisUntilRescan() {
-  struct timespec now;
-  clock_gettime(CLOCK_MONOTONIC, &now);
-  const long ms = (rescan_due.tv_sec - now.tv_sec) * 1000L +
-                  (rescan_due.tv_nsec - now.tv_nsec) / 1000000L;
-  return ms > 0 ? int(ms) : 0;
+  SetDeadline(&rescan_due, kRescanDelayMs);
 }
 
 static void RRScreenChange(const xcb_randr_screen_change_notify_event_t* ev) {
@@ -1783,8 +2039,33 @@ static void AllocFontColour(const string& name, XftColor* into) {
                      DefaultColormap(dpy, screen_num), &xrc, into);
 }
 
-// CreatePanelWindow makes one of our two windows: they differ only in size and
-// position, both being undecorated, both wanting the same events.
+// ItemColour and ItemFontColour are the cached lookups declared right at the
+// top of the drawing code. What they cache is the round trip: an item naming
+// the same colour every second would otherwise allocate it every second, and
+// a colour nobody can allocate would log its complaint every second too.
+static uint32_t ItemColour(const string& name) {
+  static map<string, uint32_t> cache;
+  const auto it = cache.find(name);
+  if (it != cache.end()) {
+    return it->second;
+  }
+  return cache[name] = GetColour(name);
+}
+
+static XftColor* ItemFontColour(const string& name) {
+  static map<string, XftColor> cache;
+  auto it = cache.find(name);
+  if (it == cache.end()) {
+    XftColor colour;
+    AllocFontColour(name, &colour);
+    it = cache.emplace(name, colour).first;
+  }
+  return &it->second;
+}
+
+// CreatePanelWindow makes one of our two panel-ish windows: they differ only
+// in size and position, both being undecorated, both wanting the same
+// events.
 static xcb_window_t CreatePanelWindow(int x, int y, int width, int height) {
   ValueList attrs;
   attrs.Add(XCB_CW_BACK_PIXEL, colour_bg);
@@ -1803,6 +2084,25 @@ static xcb_window_t CreatePanelWindow(int x, int y, int width, int height) {
   xcb_create_window(conn, XCB_COPY_FROM_PARENT, w, screen->root, x, y, width,
                     height, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                     XCB_COPY_FROM_PARENT, attrs.Mask(), attrs.Values());
+  return w;
+}
+
+// CreateTooltipWindow makes the tooltip's window, which differs from the other
+// two in both the ways a window can. It is override-redirect, because no
+// window manager should ever decorate, stack or focus a tooltip; and it asks
+// for nothing but Expose, because pointer events arriving from it would be
+// reported in its coordinates, and DoMouseMoved would read those as a
+// position along the panel.
+static xcb_window_t CreateTooltipWindow() {
+  ValueList attrs;
+  attrs.Add(XCB_CW_BACK_PIXEL, colour_bg);
+  attrs.Add(XCB_CW_BORDER_PIXEL, screen->black_pixel);
+  attrs.Add(XCB_CW_OVERRIDE_REDIRECT, 1);
+  attrs.Add(XCB_CW_EVENT_MASK, XCB_EVENT_MASK_EXPOSURE);
+  const xcb_window_t w = xcb_generate_id(conn);
+  xcb_create_window(conn, XCB_COPY_FROM_PARENT, w, screen->root, 0, 0, 100, 100,
+                    0, XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT,
+                    attrs.Mask(), attrs.Values());
   return w;
 }
 
@@ -1887,6 +2187,13 @@ int main(int, char* argv[]) {
       XftDrawCreate(dpy, dropdown_window, DefaultVisual(dpy, screen_num),
                     DefaultColormap(dpy, screen_num));
 
+  tooltip_window = CreateTooltipWindow();
+  ChangeAtomProperty(tooltip_window, atom_net_wm_window_type,
+                     atom_net_wm_window_type_tooltip);
+  g_tooltip_font_draw =
+      XftDrawCreate(dpy, tooltip_window, DefaultVisual(dpy, screen_num),
+                    DefaultColormap(dpy, screen_num));
+
   // Create GCs (note: the GCs for the main menu window are created in the Menu
   // class, as we use a pixmap for drawing so as to avoid flickering when the
   // clock updates.
@@ -1908,6 +2215,16 @@ int main(int, char* argv[]) {
     values.Add(XCB_GC_FOREGROUND, colour_sel_bg);
     values.Add(XCB_GC_BACKGROUND, colour_bg);
     xcb_create_gc(conn, dropdown_highlight_gc, dropdown_window, values.Mask(),
+                  values.Values());
+  }
+  // tooltip_gc draws the tooltip's border, in the same way and for the same
+  // reason as dropdown_gc draws the drop-down's.
+  tooltip_gc = xcb_generate_id(conn);
+  {
+    ValueList values;
+    values.Add(XCB_GC_FOREGROUND, colour_fg);
+    values.Add(XCB_GC_BACKGROUND, colour_bg);
+    xcb_create_gc(conn, tooltip_gc, tooltip_window, values.Mask(),
                   values.Values());
   }
 
@@ -1981,12 +2298,23 @@ int main(int, char* argv[]) {
       free(ev);
       continue;
     }
-    if (rescan_pending && MillisUntilRescan() == 0) {
+    if (rescan_pending && MillisUntil(rescan_due) == 0) {
       rescan_pending = false;
       ReconsiderPlacement();
     }
     if (updaters->Update()) {
       DoExpose(nullptr);
+      // The item being hovered over may have just changed what it has to say,
+      // and its tooltip is still showing what it said before.
+      if (tooltip_shown && selected) {
+        ShowTooltip(selected);
+      }
+    }
+    if (tooltip_pending && MillisUntil(tooltip_due) == 0) {
+      tooltip_pending = false;
+      if (selected) {
+        ShowTooltip(selected);
+      }
     }
     switch (type) {
       case -1:  // Null event: repaint, in case the clock has ticked.
@@ -2075,10 +2403,14 @@ static xcb_generic_event_t* GetEvent() {
   fd_set readfds;
   FD_ZERO(&readfds);
   FD_SET(fd, &readfds);
-  // Wait a second, or until a deferred rescan falls due, whichever is sooner.
+  // Wait a second, or until a deferred rescan or a tooltip falls due,
+  // whichever is soonest.
   int wait_ms = 1000;
   if (rescan_pending) {
-    wait_ms = min(wait_ms, MillisUntilRescan());
+    wait_ms = min(wait_ms, MillisUntil(rescan_due));
+  }
+  if (tooltip_pending) {
+    wait_ms = min(wait_ms, MillisUntil(tooltip_due));
   }
   struct timeval tv;
   tv.tv_sec = wait_ms / 1000;

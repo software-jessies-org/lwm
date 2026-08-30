@@ -263,6 +263,61 @@ void releaseAt(wmtest::World& world, const Client* c, Point p, int button) {
   ProcessPendingEvents();
 }
 
+// Presses button at p with the Windows key held, and leaves the drag running.
+void startDrag(wmtest::World& world,
+               const Client* c,
+               int button,
+               Point p,
+               uint32_t time) {
+  world.server().SetMousePosition(p.x, p.y, SUPER_MASK);
+  world.server().PushEvent(
+      buttonEvent(XCB_BUTTON_PRESS, c, button, SUPER_MASK, p, time));
+  ProcessPendingEvents();
+}
+
+// The press half of a chord: a second button goes down at p while a drag with
+// drag_button is already running. The drag's own button stays held throughout,
+// which is what the drag handlers check to know they're still wanted.
+void chordPress(wmtest::World& world,
+                const Client* c,
+                int drag_button,
+                int chord_button,
+                Point p,
+                uint32_t time) {
+  const uint16_t held = SUPER_MASK | heldMask(drag_button);
+  world.server().SetMousePosition(p.x, p.y, held | heldMask(chord_button));
+  world.server().PushEvent(
+      buttonEvent(XCB_BUTTON_PRESS, c, chord_button, held, p, time));
+  ProcessPendingEvents();
+}
+
+// The release half.
+void chordRelease(wmtest::World& world,
+                  const Client* c,
+                  int drag_button,
+                  int chord_button,
+                  Point p,
+                  uint32_t time) {
+  const uint16_t held = SUPER_MASK | heldMask(drag_button);
+  world.server().SetMousePosition(p.x, p.y, held);
+  world.server().PushEvent(buttonEvent(XCB_BUTTON_RELEASE, c, chord_button,
+                                       held | heldMask(chord_button), p,
+                                       time));
+  ProcessPendingEvents();
+}
+
+// A whole chord: the second button pressed and released at p, without the
+// pointer moving in between.
+void chordClick(wmtest::World& world,
+                const Client* c,
+                int drag_button,
+                int chord_button,
+                Point p,
+                uint32_t time) {
+  chordPress(world, c, drag_button, chord_button, p, time);
+  chordRelease(world, c, drag_button, chord_button, p, time + 10);
+}
+
 }  // namespace
 
 TEST(SuperGestures, ClicksOnTheClientWindowAreGrabbed) {
@@ -362,7 +417,9 @@ TEST(SuperGestures, MiddleDragResizesTheEdgeUnderThePointer) {
   }
 }
 
-TEST(SuperGestures, MiddleDragInTheCentreCellDoesNothing) {
+TEST(SuperGestures, MiddleDragInTheCentreCellMovesTheWindow) {
+  // The centre square names no edge, so there's nothing there to resize. It
+  // moves the window instead.
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);
   ASSERT_TRUE(c != nullptr);
@@ -372,8 +429,27 @@ TEST(SuperGestures, MiddleDragInTheCentreCellDoesNothing) {
   drag(world, c, SUPER_RESIZE_BUTTON, SUPER_MASK, from,
        Point{from.x + 50, from.y + 30}, 12 * kSlowly);
 
-  EXPECT_EQ(c->ContentRect(), before)
-      << "the centre square of the grid is not an edge to resize";
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{50, 30}))
+      << "the window should have followed the mouse exactly";
+}
+
+TEST(SuperGestures, MiddleDragInTheCentreCellDoesNotRaiseTheWindow) {
+  // The difference between the two ways of moving a window: button 1 brings it
+  // to the front, and this one leaves the stack alone, so a window can be
+  // nudged into place from behind another.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  Client* above = world.MapClientWindow(Rect::FromXYWH(800, 350, 200, 200));
+  ASSERT_TRUE(above != nullptr);
+  const int before = stackIndex(world, c);
+
+  const Point from = gridCell(c, 1, 1);
+  drag(world, c, SUPER_RESIZE_BUTTON, SUPER_MASK, from,
+       Point{from.x + 40, from.y + 25}, 130 * kSlowly);
+
+  EXPECT_EQ(stackIndex(world, c), before);
+  EXPECT_TRUE(stackIndex(world, c) < stackIndex(world, above));
 }
 
 TEST(SuperGestures, LeftDoubleClickInTheMiddleFillsTheScreen) {
@@ -631,23 +707,165 @@ TEST(SuperGestures, LeftClickRaisesTheWindow) {
   EXPECT_EQ(c->ContentRect(), before) << "and not moved it";
 }
 
-TEST(SuperGestures, LeftDragDoesNotRaiseTheWindow) {
-  // Moving a window without bringing it to the front is deliberate: it's what
-  // the middle button on the frame is for, and the whole point of these
-  // gestures is that the window behaves like its own furniture.
+TEST(SuperGestures, LeftDragRaisesTheWindowAsWellAsMovingIt) {
+  // Button 1 on the frame raises, and the point of these gestures is that the
+  // whole window acts like the frame: a window being dragged is a window
+  // being placed, and it's placed in front. The move which leaves the stack
+  // alone is button 2's, from the centre square.
   wmtest::World world;
   Client* c = world.MapClientWindow(kClientRect);
   ASSERT_TRUE(c != nullptr);
   Client* above = world.MapClientWindow(Rect::FromXYWH(800, 350, 200, 200));
   ASSERT_TRUE(above != nullptr);
-  const int before = stackIndex(world, c);
+  ASSERT_TRUE(stackIndex(world, c) < stackIndex(world, above));
+  const Rect before = c->ContentRect();
 
   const Point from = gridCell(c, 1, 1);
   drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, from,
        Point{from.x + 40, from.y + 25}, 35 * kSlowly);
 
-  EXPECT_TRUE(stackIndex(world, c) < stackIndex(world, above));
-  EXPECT_EQ(stackIndex(world, c), before);
+  EXPECT_TRUE(stackIndex(world, c) > stackIndex(world, above));
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{40, 25}))
+      << "and it should still have moved";
+}
+
+// ---------------------------------------------------------------------------
+// The chords: what the other buttons mean while a button 2 drag is running.
+// ---------------------------------------------------------------------------
+
+TEST(Chords, LeftClickRaisesTheWindowAndTheDragGoesOn) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  Client* above = world.MapClientWindow(Rect::FromXYWH(800, 350, 200, 200));
+  ASSERT_TRUE(above != nullptr);
+  ASSERT_TRUE(stackIndex(world, c) < stackIndex(world, above));
+  const Rect before = c->ContentRect();
+
+  // A resize of the right edge, which is the case the chord is for: the edge
+  // being dragged is easily behind something else.
+  const Point from = gridCell(c, 2, 1);
+  startDrag(world, c, SUPER_RESIZE_BUTTON, from, 140 * kSlowly);
+  dragTo(world, Point{from.x + 30, from.y}, SUPER_RESIZE_BUTTON);
+  ASSERT_EQ(c->ContentRect().xMax, before.xMax + 30);
+
+  chordClick(world, c, SUPER_RESIZE_BUTTON, SUPER_CHORD_RAISE_BUTTON,
+             Point{from.x + 30, from.y}, 140 * kSlowly + 100);
+
+  EXPECT_TRUE(stackIndex(world, c) > stackIndex(world, above))
+      << "the chord should have raised the window";
+
+  // And the drag is still the one in charge: more motion, more resizing.
+  dragTo(world, Point{from.x + 80, from.y}, SUPER_RESIZE_BUTTON);
+  EXPECT_EQ(c->ContentRect().xMax, before.xMax + 80)
+      << "the chord ended the drag it was supposed to leave running";
+
+  releaseAt(world, c, Point{from.x + 80, from.y}, SUPER_RESIZE_BUTTON);
+  EXPECT_EQ(c->ContentRect().xMax, before.xMax + 80);
+}
+
+TEST(Chords, LeftClickRaisesDuringACentreMoveToo) {
+  // The centre-square move is the drag which deliberately doesn't raise, so
+  // the chord is the way to ask for it part way through.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  Client* above = world.MapClientWindow(Rect::FromXYWH(800, 350, 200, 200));
+  ASSERT_TRUE(above != nullptr);
+  const Rect before = c->ContentRect();
+
+  const Point from = gridCell(c, 1, 1);
+  startDrag(world, c, SUPER_RESIZE_BUTTON, from, 141 * kSlowly);
+  dragTo(world, Point{from.x + 40, from.y}, SUPER_RESIZE_BUTTON);
+  chordClick(world, c, SUPER_RESIZE_BUTTON, SUPER_CHORD_RAISE_BUTTON,
+             Point{from.x + 40, from.y}, 141 * kSlowly + 100);
+
+  EXPECT_TRUE(stackIndex(world, c) > stackIndex(world, above));
+
+  dragTo(world, Point{from.x + 60, from.y + 20}, SUPER_RESIZE_BUTTON);
+  releaseAt(world, c, Point{from.x + 60, from.y + 20}, SUPER_RESIZE_BUTTON);
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{60, 20}))
+      << "the move should have carried on across the chord";
+}
+
+TEST(Chords, RightClickHidesTheWindowAndEndsTheDrag) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+
+  const Point from = gridCell(c, 2, 1);
+  startDrag(world, c, SUPER_RESIZE_BUTTON, from, 142 * kSlowly);
+  dragTo(world, Point{from.x + 30, from.y}, SUPER_RESIZE_BUTTON);
+  const Rect resized = c->ContentRect();
+
+  chordClick(world, c, SUPER_RESIZE_BUTTON, SUPER_CHORD_HIDE_BUTTON,
+             Point{from.x + 30, from.y}, 142 * kSlowly + 100);
+
+  EXPECT_TRUE(c->hidden) << "the chord should have hidden the window";
+
+  // The drag is over: the window is no longer following the mouse, even
+  // though button 2 is still held.
+  dragTo(world, Point{from.x + 200, from.y}, SUPER_RESIZE_BUTTON);
+  EXPECT_EQ(c->ContentRect(), resized) << "the drag outlived its cancellation";
+
+  // And the release of the drag's own button, when it comes, is harmless: the
+  // next gesture still works.
+  releaseAt(world, c, Point{from.x + 200, from.y}, SUPER_RESIZE_BUTTON);
+  c->Unhide();
+  const Rect before = c->ContentRect();
+  drag(world, c, SUPER_MOVE_BUTTON, SUPER_MASK, gridCell(c, 1, 1),
+       Point{gridCell(c, 1, 1).x + 10, gridCell(c, 1, 1).y}, 143 * kSlowly);
+  EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{10, 0}));
+}
+
+TEST(Chords, AChordThePointerMovesAwayFromDoesNothing) {
+  // The same change of mind the other clicks allow: the chord button goes
+  // down, the user drags on, and by the time it comes up it means nothing.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+  Client* above = world.MapClientWindow(Rect::FromXYWH(800, 350, 200, 200));
+  ASSERT_TRUE(above != nullptr);
+  const Rect before = c->ContentRect();
+
+  const Point from = gridCell(c, 1, 1);
+  startDrag(world, c, SUPER_RESIZE_BUTTON, from, 144 * kSlowly);
+  for (int chord_button :
+       {SUPER_CHORD_HIDE_BUTTON, SUPER_CHORD_RAISE_BUTTON}) {
+    testing::Context ctx("button " + std::to_string(chord_button));
+    chordPress(world, c, SUPER_RESIZE_BUTTON, chord_button,
+               Point{from.x + 10, from.y}, 144 * kSlowly + 100);
+    dragTo(world, Point{from.x + 90, from.y}, SUPER_RESIZE_BUTTON);
+    chordRelease(world, c, SUPER_RESIZE_BUTTON, chord_button,
+                 Point{from.x + 90, from.y}, 144 * kSlowly + 200);
+
+    EXPECT_FALSE(c->hidden);
+    EXPECT_TRUE(stackIndex(world, c) < stackIndex(world, above));
+    // And in both cases the drag is still running.
+    dragTo(world, Point{from.x + 90, from.y}, SUPER_RESIZE_BUTTON);
+    EXPECT_EQ(c->ContentRect(), Rect::Translate(before, Point{90, 0}));
+  }
+
+  releaseAt(world, c, Point{from.x + 90, from.y}, SUPER_RESIZE_BUTTON);
+}
+
+TEST(Chords, ADragWithNoChordsIsUnaffectedByAnotherButton) {
+  // Only the button 2 gestures have chords. A press of another button during
+  // any other drag is ignored, exactly as it was before chords existed - what
+  // it must not do is hide the window.
+  wmtest::World world;
+  Client* c = world.MapClientWindow(kClientRect);
+  ASSERT_TRUE(c != nullptr);
+
+  const Point from = gridCell(c, 1, 1);
+  startDrag(world, c, SUPER_MOVE_BUTTON, from, 145 * kSlowly);
+  dragTo(world, Point{from.x + 30, from.y}, SUPER_MOVE_BUTTON);
+  chordClick(world, c, SUPER_MOVE_BUTTON, SUPER_CHORD_HIDE_BUTTON,
+             Point{from.x + 30, from.y}, 145 * kSlowly + 100);
+
+  EXPECT_FALSE(c->hidden);
+
+  releaseAt(world, c, Point{from.x + 30, from.y}, SUPER_MOVE_BUTTON);
 }
 
 TEST(SuperGestures, RightClickHidesTheWindow) {
