@@ -284,18 +284,21 @@ void rrScreenChangeNotify(xcb_generic_event_t* ev) {
   }
 
   // We get lots of these - the server sends one notification per output
-  // affected by a single reconfiguration - so drop the duplicates. This used
-  // to key on Xlib's per-event serial number, which XCB's event doesn't
-  // carry; config_timestamp is the better key anyway, being the server's own
-  // "when was this screen configuration set" stamp, so every notification
-  // arising from one reconfiguration shares it.
-  static xcb_timestamp_t lastConfigTimestamp;
-  if (rrev->config_timestamp == lastConfigTimestamp) {
-    LOGI() << "Dropping duplicate event for screen config timestamp "
-           << lastConfigTimestamp;
-    return;
-  }
-  lastConfigTimestamp = rrev->config_timestamp;
+  // affected by a single reconfiguration - and rearranging every window on
+  // the display for each one in turn is worth avoiding. The duplicates used
+  // to be dropped by key: any event whose config_timestamp matched the last
+  // one's was thrown away. That looks like an identifier for the
+  // reconfiguration and isn't one. config_timestamp is the server's
+  // lastConfigTime, which moves only when the set of available outputs and
+  // modes changes - not when a CRTC is actually reconfigured. So plugging a
+  // monitor into a laptop advanced it, and the event we acted on was the one
+  // where the monitor was connected but not yet switched on; the CRTC change
+  // that actually altered the layout came next, carrying the same stamp, and
+  // was discarded. The layout then stayed wrong until lwm was sent a SIGHUP.
+  //
+  // So compare the answer rather than the question: read the areas, and do the
+  // work only if they aren't the ones we already have. That drops every
+  // duplicate, by construction, and can't drop a real change.
   setScreenAreasFromXRandR();
 }
 
@@ -310,6 +313,9 @@ void setScreenAreasFromXRandR() {
       xlib::XRRGetVisibleAreas(LScr::I->Root());
   if (visible.empty()) {
     return;  // The shim has already logged why.
+  }
+  if (visible == LScr::I->VisibleAreas(false)) {
+    return;  // Nothing moved; don't disturb the windows.
   }
   LScr::I->SetVisibleAreas(visible);
 }

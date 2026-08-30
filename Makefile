@@ -98,6 +98,7 @@ LWM_SRCS = $(addprefix $(SRCDIR)/lwm/, \
 	keyboard_test.cc \
 	log.cc \
 	lwm.cc \
+	lwm_test.cc \
 	manage.cc \
 	menulayout.cc \
 	menulayout_test.cc \

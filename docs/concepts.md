@@ -217,6 +217,37 @@ A *strut* is an EWMH reservation along a screen edge (panels, launchers).
 clips every visible area by it. Clients that set struts are skipped during
 xrandr re-layout — they're expected to reposition themselves.
 
+### Screen-change notifications, and what `config_timestamp` isn't
+
+One reconfiguration produces a burst of `RRScreenChangeNotify`, so something
+has to drop the repeats before every window on the display is rearranged once
+per notification. The tempting key is the event's `config_timestamp`, and both
+lwm and gummiband used it. It does not identify the reconfiguration.
+`config_timestamp` is the server's `lastConfigTime`, which advances only when
+the set of *available* outputs and modes changes — a cable being plugged in,
+a mode being added — and not when a CRTC is actually reconfigured, which is
+what changes the layout. So on a laptop the sequence was: plug the monitor in,
+`lastConfigTime` moves, act on that notification and find nothing has changed
+yet (the monitor is connected but not switched on); the CRTC change follows
+under the same stamp and is thrown away. Both programs then held the old layout
+until they were sent a SIGHUP, which makes them re-exec.
+
+The rule that replaces it: **de-duplicate by the answer, not the question.**
+Re-read the layout and compare it with the one already held —
+`setScreenAreasFromXRandR` in lwm, `RefreshMonitors` plus `ReconsiderPlacement`
+in gummiband. That drops every duplicate by construction and cannot drop a real
+change. Neither program keys on anything in the event but its size, and that
+only for lwm's nonsense-size guard: told the screen is now 320x200 — which is
+what a laptop reports when asked to switch to an external monitor that isn't
+there — lwm would crush every window on the display into the corner, and
+getting them back afterwards is worse than ignoring the notification.
+
+gummiband re-reads the layout on an idle backstop as well, every few idle
+seconds, so that a screen change nobody manages to tell it about costs a few
+seconds rather than lasting until a restart. lwm has no equivalent, and
+shouldn't get one lightly: re-reading the layout there means moving every
+window on the display, which is not something to do speculatively on a timer.
+
 ### Maximisation
 
 `_NET_WM_STATE_MAXIMIZED_VERT` and `_HORZ` are two independent states, and

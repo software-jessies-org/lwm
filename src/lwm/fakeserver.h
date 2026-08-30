@@ -126,6 +126,12 @@ class FakeServer : public Server {
   // Screen size. Must be set before LScr is constructed to have any effect.
   void SetScreenSize(int width, int height);
 
+  // What RandRGetVisibleAreas() answers: the monitors making up the display.
+  // Unset, it reports one monitor covering the whole screen, which is what a
+  // server with no RandR at all looks like. Set it to stand a monitor being
+  // plugged in or unplugged up in front of the RandR event handler.
+  void SetVisibleAreas(std::vector<Rect> areas);
+
   // Where QueryPointer() says the mouse is.
   void SetMousePosition(int x, int y, unsigned int mod_mask);
 
@@ -379,6 +385,7 @@ class FakeServer : public Server {
   Window root_ = 0;
   int width_ = 1280;
   int height_ = 1024;
+  std::vector<Rect> visible_areas_;  // Empty means "the whole screen".
   Window focused_ = 0;
   MousePos mouse_{};
   int pointer_grab_status_ = XCB_GRAB_STATUS_SUCCESS;

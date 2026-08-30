@@ -247,8 +247,19 @@ Four things worth knowing before adding a check:
   hand. That's a RandR 1.5 feature, and it's why gummiband reads the RandR
   monitor list rather than the CRTCs — asking the question the way `xrandr
   --listmonitors` does is what makes the multi-monitor behaviour testable at
-  all. Setting a monitor list fires no RandR event, so gummiband has to be
-  restarted (SIGHUP, which keeps the pid) to see it.
+  all. Setting a monitor list fires no RandR event at all, so those checks are
+  also the test of gummiband's idle backstop: nothing sends a SIGHUP, and the
+  panel is expected to notice on its own within a few seconds.
+* The *event* path is tested separately, by resizing the screen — the checks
+  that the panel follows the display shrinking and growing. Getting an
+  interesting event out of `Xvfb` takes two steps, because the case that broke
+  (see `concepts.md`) is a notification whose `config_timestamp` repeats one
+  already seen: `xrandr --newmode`/`--addmode` changes the output's mode list
+  and advances the stamp, and switching the output to that mode then changes
+  the layout without advancing it. Those checks have a deliberately short
+  deadline — about two seconds — because the idle backstop would otherwise
+  cover for a broken event path five seconds later and the check would pass
+  anyway.
 * What stands in for a game is `xclock -geometry`, which honours the geometry
   to the pixel. Mind the *border*: a window with a border width of 1 covers a
   monitor when its own size is two pixels short of it, which is enough to turn

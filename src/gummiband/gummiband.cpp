@@ -1564,6 +1564,12 @@ struct Rect {
 // all.
 static vector<Rect> monitors;
 
+// Whether the server has RandR at all, and we've done the version handshake
+// with it. Set once, in main. Everything which asks the server about monitors
+// checks this first: without RandR there is nothing to ask, the display is the
+// single monitor set up above, and asking anyway would only log an error.
+static bool have_rr;
+
 // MonitorsFromRandR asks RandR 1.5 for the monitor list: the one
 // 'xrandr --listmonitors' prints. That's one entry per monitor as the user
 // thinks of it, which is not the same as one per CRTC - two mirrored outputs
@@ -1629,6 +1635,9 @@ static vector<Rect> MonitorsFromCrtcs() {
 }
 
 static void RefreshMonitors() {
+  if (!have_rr) {
+    return;  // Nothing to ask: the display is one monitor and always was.
+  }
   vector<Rect> found = MonitorsFromRandR();
   if (found.empty()) {
     found = MonitorsFromCrtcs();
@@ -1903,13 +1912,6 @@ static void ReconsiderPlacement() {
   }
 }
 
-// RefreshLayout re-reads the monitor layout and puts the panel where the new
-// one says it belongs.
-static void RefreshLayout() {
-  RefreshMonitors();
-  ReconsiderPlacement();
-}
-
 // Rescans are deferred rather than done as the events which prompt them
 // arrive: dragging a window produces a ConfigureNotify per pointer motion,
 // and there is no point asking about every window on the display sixty times
@@ -1920,6 +1922,10 @@ static const int kRescanDelayMs = 100;
 static bool rescan_pending;
 static struct timespec rescan_due;
 
+// Whether that scan should re-read the monitor layout before deciding where
+// the panel goes, rather than reusing the list it already has.
+static bool monitors_stale;
+
 static void RequestRescan() {
   if (rescan_pending) {
     return;  // The clock is already running; don't restart it.
@@ -1928,21 +1934,27 @@ static void RequestRescan() {
   SetDeadline(&rescan_due, kRescanDelayMs);
 }
 
-static void RRScreenChange(const xcb_randr_screen_change_notify_event_t* ev) {
-  // We get lots of these - one per output affected by a single reconfiguration
-  // - so drop the duplicates. This used to key on Xlib's per-event serial
-  // number, which XCB's event doesn't carry; config_timestamp is the better
-  // key anyway, being the server's own "when was this screen configuration
-  // set" stamp, so every notification arising from one reconfiguration shares
-  // it.
-  static xcb_timestamp_t last_config_timestamp;
-  if (ev->config_timestamp == last_config_timestamp) {
-    LOGI() << "Dropping duplicate event for screen config timestamp "
-           << std::hex << last_config_timestamp;
-    return;  // Drop duplicate message (we get lots of these).
+// RequestLayoutRefresh asks for a rescan which re-reads the monitor layout
+// first: a monitor has been plugged in or unplugged, or one has changed size
+// or moved, so the answer to "where does the panel belong" has changed for
+// reasons no amount of looking at windows would reveal.
+static void RequestLayoutRefresh() {
+  // Set this before the deferral check: a burst may already have started the
+  // clock for a plain window rescan, and that scan has to be upgraded rather
+  // than left to run on a monitor list we now know to be out of date.
+  monitors_stale = true;
+  RequestRescan();
+}
+
+// DoRescan is the deferred scan itself, run from the main loop when the clock
+// set above falls due.
+static void DoRescan() {
+  rescan_pending = false;
+  if (monitors_stale) {
+    monitors_stale = false;
+    RefreshMonitors();
   }
-  last_config_timestamp = ev->config_timestamp;
-  RefreshLayout();
+  ReconsiderPlacement();
 }
 
 // Parses an X11 hexadecimal colour specification into 16-bit components.
@@ -2235,7 +2247,7 @@ int main(int, char* argv[]) {
   // rejects every other request until it has happened.
   const xcb_query_extension_reply_t* rr_ext =
       xcb_get_extension_data(conn, &xcb_randr_id);
-  bool have_rr = rr_ext && rr_ext->present;
+  have_rr = rr_ext && rr_ext->present;
   if (have_rr) {
     Reply<xcb_randr_query_version_reply_t> version(xcb_randr_query_version_reply(
         conn, xcb_randr_query_version(conn, 1, 5), nullptr));
@@ -2294,13 +2306,29 @@ int main(int, char* argv[]) {
     // second - is spelled -1 here, as it was under Xlib.
     const int type = ev ? (ev->response_type & 0x7f) : -1;
     if (have_rr && type == rr_event_base + XCB_RANDR_SCREEN_CHANGE_NOTIFY) {
-      RRScreenChange((const xcb_randr_screen_change_notify_event_t*)ev);
+      // The monitor layout has changed. One reconfiguration produces several
+      // of these - the server sends one per client-visible change, and a
+      // single 'xrandr' invocation makes several - so this is deferred and
+      // coalesced like any other rescan, rather than acted on here.
+      //
+      // Note what we deliberately don't do: pick some field out of the event
+      // and skip the ones that look like repeats. This used to drop any event
+      // whose config_timestamp matched the last one's, which sounds like it
+      // identifies the reconfiguration but doesn't. config_timestamp is the
+      // server's lastConfigTime, and that only moves when the set of available
+      // outputs and modes changes - not when a CRTC is actually reconfigured.
+      // So plugging a monitor in bumped it (and we handled that event, at
+      // which point the new monitor was connected but not yet enabled), and
+      // then the CRTC change which actually altered the layout arrived
+      // carrying the same stamp and was thrown away. Nothing else re-reads the
+      // layout, so the panel stayed the size of the old display until the
+      // process was sent a SIGHUP.
+      RequestLayoutRefresh();
       free(ev);
       continue;
     }
     if (rescan_pending && MillisUntil(rescan_due) == 0) {
-      rescan_pending = false;
-      ReconsiderPlacement();
+      DoRescan();
     }
     if (updaters->Update()) {
       DoExpose(nullptr);
@@ -2325,9 +2353,15 @@ int main(int, char* argv[]) {
         // events we watch would report that. Idle ticks are a second apart
         // and only happen when nothing else is going on, which is exactly
         // when the extra questions cost nothing.
+        //
+        // The monitor layout gets the same treatment, which is why this asks
+        // for a layout refresh rather than a plain rescan. There is no known
+        // screen change we fail to hear about, but this is the difference
+        // between missing one and being wrong about the shape of the display
+        // until someone restarts the panel.
         if (++idle_ticks >= kRescanEveryIdleTicks) {
           idle_ticks = 0;
-          RequestRescan();
+          RequestLayoutRefresh();
         }
         break;
       case XCB_BUTTON_PRESS:

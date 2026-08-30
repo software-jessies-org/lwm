@@ -65,6 +65,12 @@ extern int shape_event;
 // one. Like shapeEvent(), this can't live in DispatchXEvent's switch, because
 // extension event numbers are only known at run time.
 extern bool randrEvent(xcb_generic_event_t* ev);
+
+// Acts on a RandR ScreenChangeNotify which randrEvent has already identified.
+// Exposed for lwm_test.cc, which can't go through randrEvent: whether we have
+// RandR, and the event number its notifications arrive as, are settled in
+// main() against the real server.
+extern void rrScreenChangeNotify(xcb_generic_event_t* ev);
 extern char* argv0;
 extern bool forceRestart;
 extern void shell(int button);

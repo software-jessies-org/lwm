@@ -129,6 +129,22 @@ geom() { # geom <window> -> "x y w h"
      s/.*Height: *\(.*\)/\1/p' | tr '\n' ' '
 }
 
+# wait_geom polls until the panel has arrived at a geometry, so a check is as
+# quick as the panel is and only takes its full time when something is wrong.
+# It leaves PX/PY/PW/PH set to whatever it last saw, for the failure message.
+# The width is checked and the height isn't: the height is the font's.
+wait_geom() { # wait_geom <window> <tries, 0.1s apart> <x> <y> <width>
+  local win="$1" tries="$2" wx="$3" wy="$4" ww="$5" i
+  for ((i = 0; i < tries; i++)); do
+    read -r PX PY PW PH <<<"$(geom "${win}")"
+    if [ "${PX}" = "${wx}" ] && [ "${PY}" = "${wy}" ] && [ "${PW}" = "${ww}" ]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 mapped() { # mapped <window> -> true if viewable
   xwininfo -id "$1" 2>/dev/null | grep -q 'Map State: IsViewable'
 }
@@ -633,6 +649,95 @@ else
   pass "the restarted gummiband recreated its dock window"
 fi
 
+# --- following a change in the monitor layout ---------------------------------
+#
+# The bug this guards against: plugging an external monitor into a laptop (or
+# unplugging one) left the panel the size and shape of the display it had
+# started with. Only 'kill -HUP', which makes gummiband re-exec itself, put it
+# right.
+#
+# gummiband selects RandR's ScreenChangeNotify and re-reads the monitor list
+# when one arrives, so the events were being delivered; what was wrong was the
+# de-duplication in front of that. One reconfiguration produces several events,
+# and the code dropped any whose config_timestamp matched the last one it had
+# seen. That reads like an identifier for the reconfiguration and is not one:
+# config_timestamp is the server's lastConfigTime, which moves only when the
+# set of available outputs and modes changes. So plugging the monitor in
+# advanced it and gummiband handled that event - at which point the monitor was
+# connected but not yet switched on - and the CRTC change a moment later, the
+# one that actually altered the layout, carried the same stamp and was thrown
+# away. Nothing else re-read the layout, so the panel stayed wrong.
+#
+# Reproducing that needs the same two steps: something that advances
+# config_timestamp, and then a layout change that does not. 'xrandr --addmode'
+# is the first, because it changes an output's list of modes, and switching the
+# output to that mode is the second. Xvfb is happy to do both, and the screen
+# resize that results is a monitor layout changing under the panel in exactly
+# the way that matters here.
+#
+# There are three sizes rather than two so that no check can pass by accident.
+# Going out to a size and straight back would leave the return leg asserting
+# the width the panel would still have if it had ignored the outward leg too;
+# each step here moves to a width the panel is not already at.
+#
+# The deadline matters as much as the check does. gummiband re-reads the layout
+# on an idle backstop as well, every five seconds or so, which would eventually
+# paper over a broken event path - so these wait about two seconds: far longer
+# than the event needs, and too short for the backstop to rescue it.
+
+OUTPUT=$(xrandr --query 2>/dev/null | awk '/ connected/ {print $1; exit}')
+MODE_SMALL=800x600lwmtest
+MODE_MID=1024x768lwmtest
+add_mode() { # add_mode <name> <modeline...>
+  local name="$1"
+  shift
+  xrandr --newmode "${name}" "$@" >/dev/null 2>&1 &&
+    xrandr --addmode "${OUTPUT}" "${name}" >/dev/null 2>&1
+}
+if [ -z "${OUTPUT}" ] ||
+  ! add_mode "${MODE_SMALL}" 38.25 800 832 912 1024 600 603 607 624 \
+    -hsync +vsync ||
+  ! add_mode "${MODE_MID}" 63.50 1024 1072 1176 1328 768 771 775 798 \
+    -hsync +vsync; then
+  echo "SKIP: screen-resize checks (need an xrandr output that takes a new mode)"
+  xrandr --rmmode "${MODE_SMALL}" >/dev/null 2>&1
+  xrandr --rmmode "${MODE_MID}" >/dev/null 2>&1
+else
+  # Those addmodes are what advances config_timestamp. Let gummiband see them,
+  # so that each screen change below is an event carrying a stamp it has
+  # already seen - which is the case that used to be discarded.
+  sleep 1
+
+  xrandr --output "${OUTPUT}" --mode "${MODE_SMALL}" >/dev/null 2>&1
+  if wait_geom "${PANEL}" 20 0 0 800; then
+    pass "panel follows the display shrinking (${PW}x${PH}+${PX}+${PY})"
+  else
+    fail "panel follows the display shrinking (got ${PW}x${PH}+${PX}+${PY}, want 800xN+0+0; a screen change was ignored)"
+  fi
+
+  # Growing is the direction that matters on a laptop, being what plugging the
+  # external monitor in does.
+  xrandr --output "${OUTPUT}" --mode "${MODE_MID}" >/dev/null 2>&1
+  if wait_geom "${PANEL}" 20 0 0 1024; then
+    pass "panel follows the display growing (${PW}x${PH}+${PX}+${PY})"
+  else
+    fail "panel follows the display growing (got ${PW}x${PH}+${PX}+${PY}, want 1024xN+0+0; a screen change was ignored)"
+  fi
+
+  # Back to the size the rest of the script expects.
+  xrandr --output "${OUTPUT}" --mode "${SCREEN_W}x${SCREEN_H}" >/dev/null 2>&1
+  if wait_geom "${PANEL}" 20 0 0 "${SCREEN_W}"; then
+    pass "panel follows the display back to its original size (${PW}x${PH}+${PX}+${PY})"
+  else
+    fail "panel follows the display back to its original size (got ${PW}x${PH}+${PX}+${PY}, want ${SCREEN_W}xN+0+0; a screen change was ignored)"
+  fi
+
+  xrandr --delmode "${OUTPUT}" "${MODE_SMALL}" >/dev/null 2>&1
+  xrandr --delmode "${OUTPUT}" "${MODE_MID}" >/dev/null 2>&1
+  xrandr --rmmode "${MODE_SMALL}" >/dev/null 2>&1
+  xrandr --rmmode "${MODE_MID}" >/dev/null 2>&1
+fi
+
 # --- stepping aside for a full-screen window ---------------------------------
 #
 # The panel gets out of the way of a game running full screen on its own
@@ -645,30 +750,29 @@ fi
 # it.
 #
 # Note that a monitor list set this way is a client-side override, and setting
-# it fires no RandR event, so gummiband has to be restarted to see it. SIGHUP
-# does that, and keeps the same pid, so the checks after this one still apply
-# to the same process.
+# it fires no RandR event at all - so this doubles as the check on the other
+# half of noticing a monitor come and go: the idle backstop, which re-reads the
+# layout every few seconds whether or not anything has said it changed. It is
+# what stops a screen change nobody told us about from lasting until the
+# process is restarted, so nothing here sends a SIGHUP; the panel is expected
+# to work it out on its own. That takes a few seconds rather than the fraction
+# of one an event takes, hence the longer wait.
 #
 # What stands in for the game is xclock, which honours -geometry exactly and
 # so can be told to cover a monitor to the pixel. That's the case worth
 # testing: it is what "borderless fullscreen" produces, and unlike
 # _NET_WM_STATE_FULLSCREEN it can only be spotted by measuring the window.
 
-OUTPUT=$(xrandr --query 2>/dev/null | awk '/ connected/ {print $1; exit}')
 if [ -z "${OUTPUT}" ] || ! command -v xclock >/dev/null 2>&1; then
   echo "SKIP: two-monitor checks (need xrandr with an output, and xclock)"
 else
   xrandr --setmonitor main 800/212x600/159+0+0 "${OUTPUT}" >/dev/null 2>&1
   xrandr --setmonitor side 400/106x300/79+800+600 none >/dev/null 2>&1
 
-  kill -HUP "${GB_PID}"
-  sleep 1.5
-  PANEL=$(window_of_type _NET_WM_WINDOW_TYPE_DOCK)
-  read -r PX PY PW PH <<<"$(geom "${PANEL}")"
-  if [ "${PX}" = "0" ] && [ "${PY}" = "0" ] && [ "${PW}" = "800" ]; then
+  if wait_geom "${PANEL}" 150 0 0 800; then
     pass "panel spans only the top monitor (${PW}x${PH}+${PX}+${PY})"
   else
-    fail "panel spans only the top monitor (got ${PW}x${PH}+${PX}+${PY}, want 800xN+0+0)"
+    fail "panel spans only the top monitor (got ${PW}x${PH}+${PX}+${PY}, want 800xN+0+0; no SIGHUP was sent, so the backstop rescan should have caught this)"
   fi
 
   # A window that covers the main monitor exactly: the panel should move to

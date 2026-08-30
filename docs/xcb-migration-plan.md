@@ -182,6 +182,13 @@ route all of them through it. Do not hand-write the arrays.
   says "we get lots of these", so this dedup is load-bearing — verify with
   `-debugcli` and real monitor hotplug, not just the fake xrandr.
 
+  **This one bit, and the advice above was wrong.** `config_timestamp` isn't a
+  key for the reconfiguration, and the hotplug test it says to do wasn't done:
+  plugging a monitor into a laptop left both lwm and gummiband holding the old
+  layout until they were sent a SIGHUP. The dedup is now by the layout read
+  back rather than by anything in the event. See `concepts.md`, "Screen-change
+  notifications, and what `config_timestamp` isn't".
+
 ## Phases
 
 ### Phase 0 — Prerequisites, all still on Xlib
@@ -346,8 +353,9 @@ Everything in `refactoring-plan.md`'s list still applies, and re-reading
 * **Value-list ordering** (hazard 3). Silent misconfiguration. One builder,
   used everywhere.
 * **`response_type & 0x7f`**, and bit 0x80 as `send_event` (hazard 4).
-* **RandR duplicate suppression** needs re-deriving from `config_timestamp`
-  (hazard 4). Test against real hotplug, not just `-debugcli xrandr`.
+* **RandR duplicate suppression** must not key on `config_timestamp`
+  (hazard 4) — that was tried and was wrong; de-duplicate by the layout read
+  back instead. Test against real hotplug, not just `-debugcli xrandr`.
 * **Don't adopt `xcb-ewmh`.** It's tempting, but `ewmh.cc`'s hand-rolled table
   encodes specific behaviour (`fix_stack`'s stacking policy, `ewmh_hasframe`'s
   window-type rules, the recursion guard) that a library swap would quietly

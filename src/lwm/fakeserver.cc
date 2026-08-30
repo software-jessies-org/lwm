@@ -1008,7 +1008,14 @@ void FakeServer::RandRSelectInput(Window w) {
 
 std::vector<Rect> FakeServer::RandRGetVisibleAreas(Window root) {
   (void)root;
+  if (!visible_areas_.empty()) {
+    return visible_areas_;
+  }
   return {Rect::FromXYWH(0, 0, width_, height_)};
+}
+
+void FakeServer::SetVisibleAreas(std::vector<Rect> areas) {
+  visible_areas_ = std::move(areas);
 }
 
 #ifdef SHAPE

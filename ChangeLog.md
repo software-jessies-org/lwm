@@ -2,6 +2,9 @@
 
 ## 2026-08-30 (pn, Basel)
 
+Plugging a monitor in or unplugging one now works without a SIGHUP: gummiband
+resizes to the new display, and lwm re-lays out the windows.
+
 lwm no longer dies on start-up when a client window goes away while it is
 still starting; only errors from start-up's own requests are fatal now.
 
