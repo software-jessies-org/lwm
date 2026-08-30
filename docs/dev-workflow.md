@@ -54,7 +54,8 @@ There are two kinds of test:
   `framegeometry_test.cc`, `menulayout_test.cc`, `gesture_test.cc`) call pure
   functions. Nothing to set up.
 * **Tests that need a server** (`disp_test.cc`, `focus_test.cc`,
-  `client_test.cc`, `ewmh_test.cc`, `drag_test.cc`, `screen_test.cc`) start
+  `client_test.cc`, `ewmh_test.cc`, `drag_test.cc`, `screen_test.cc`,
+  `error_test.cc`) start
   with a `wmtest::World` on the stack.
   That installs an `xlib::FakeServer` and stands up `Resources`, the atoms, a
   fixed-metric font and `LScr` in the same order `main()` does, then puts it

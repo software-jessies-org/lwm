@@ -631,9 +631,16 @@ void EvReparentNotify(xcb_generic_event_t* ev) {
     return;
   }
 
+  // Null when somebody else has reparented a window we don't manage, which is
+  // nothing to do with us. The log line used to come first and read c->parent,
+  // so lwm dereferenced the null it had just been given: the arguments to <<
+  // are evaluated whether or not the client has debugging switched on.
   Client* c = LScr::I->GetClient(e->window);
+  if (c == nullptr) {
+    return;
+  }
   LOGD(c) << "ReparentNotify to " << WinID(c->parent);
-  if (c != 0 && (c->parent == LScr::I->Root() || c->IsWithdrawn())) {
+  if (c->parent == LScr::I->Root() || c->IsWithdrawn()) {
     c->Remove();
   }
 }

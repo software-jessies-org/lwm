@@ -183,6 +183,30 @@ std::vector<std::string> FakeServer::CallsMatching(
   return res;
 }
 
+uint32_t FakeServer::SequenceOfCall(const std::string& prefix) const {
+  for (size_t i = 0; i < calls_.size(); i++) {
+    if (calls_[i].compare(0, prefix.size(), prefix) == 0) {
+      return call_sequences_[i];
+    }
+  }
+  return 0;
+}
+
+void FakeServer::PushError(uint8_t error_code,
+                           uint32_t sequence,
+                           uint32_t resource_id) {
+  xcb_generic_error_t err{};
+  err.response_type = 0;  // Not an event type at all: this is an error.
+  err.error_code = error_code;
+  err.sequence = uint16_t(sequence);
+  err.full_sequence = sequence;
+  err.resource_id = resource_id;
+  // Not PushEvent: an error is the one thing on the queue that is bigger than
+  // an event's 32 bytes on the wire, because libxcb has already widened its
+  // sequence number into the full_sequence field this fills in.
+  PushEventRaw(&err, sizeof(err));
+}
+
 bool FakeServer::DidCall(const std::string& prefix) const {
   return !CallsMatching(prefix).empty();
 }

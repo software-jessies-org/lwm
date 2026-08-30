@@ -1,5 +1,13 @@
 # Change Log for "lwm"
 
+## 2026-08-30 (pn, Basel)
+
+lwm no longer dies on start-up when a client window goes away while it is
+still starting; only errors from start-up's own requests are fatal now.
+
+Closing a window no longer logs four errors about the window that has just
+been destroyed.
+
 ## 2026-08-29 (pn, Basel)
 
 gummiband steps aside onto another monitor while a game runs full screen on

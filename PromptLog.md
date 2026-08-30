@@ -182,9 +182,26 @@ I want a change in the protocol gummiband uses for the 'name=exec <cmd>' case. C
 
 ---
 
+## 2026-08-30
+
+Bugs in lwm: I tried the current version of lwm on my laptop, with one external monitor connected. I saw two errors, and I've taken lwm's log of the two events.
+
+* In file bad-logs/lwm-crash.log - lwm crashed on startup. It later ran successfully when I started it manually from a terminal. The only open window at this point was gummiband.
+* In file bad-logs/lwm-log-on-window-close.txt - errors logged when I closed a window. In at least one case when I did this, the window furniture was left around (although the client window itself had closed). The client in this case was grezvany.
+
+Figure out why these errors are happening, and fix them. Write regression tests to ensure these failures don't happen again.
+
+Two separate faults. The crash: every X error arriving while is_initialising
+was set counted as "start-up failed", including those from requests the event
+handlers made while the queue was being drained. The close-time spam:
+withdraw()'s ScopedIgnoreBadWindow was opened after the requests it was meant
+to cover. The leftover furniture I could not reproduce.
+
+---
+
 ## Not yet started
 
-**TDB** Add support for colours in gummiband (possibly support the i3blocks protocol, but not sure).
+When I try gummiband on my laptop, it doesn't respond properly to adding/removing an external monitor. I have to 'kill -HUP' the gummiband process to make it realise the monitor setup has changed. Diagnose and fix this, and add a regression test to ensure it doesn't happen again.
 
 ---
 

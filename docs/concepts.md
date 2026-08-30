@@ -193,6 +193,17 @@ never reparented, so the root is the *only* place its unmap can come from, and
 the test has to be on whether this particular client was reparented rather than
 on where the event came from.
 
+Both ends of the lifecycle talk to a window that may already have been
+destroyed, and both are wrapped in a `ScopedIgnoreBadWindow` for it. Coming in,
+an application can exit at any point between the `MapRequest` and the last
+request `manage()` makes. Going out, it usually *has*: X sends the
+`UnmapNotify` before the `DestroyNotify`, so `withdraw()` is normally talking
+about a window that has gone, and its `ChangeSaveSet` plus `SetState`'s three
+properties all come back `BadWindow`. Mind where the scope starts —
+`ScopedIgnoreErrors` suppresses errors from the requests issued *inside* it, so
+one opened after the requests it is named for covers nothing, which is exactly
+how those four errors used to reach the log on every window close.
+
 ## Visible areas and struts
 
 `LScr::VisibleAreas(withStruts)` returns one `Rect` per active xrandr CRTC.

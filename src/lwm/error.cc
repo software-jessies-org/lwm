@@ -42,6 +42,17 @@ struct IgnoredRange {
 // RetireIgnoredSequences drops them as soon as the server has moved past.
 std::vector<IgnoredRange> ignored_ranges;
 
+// The sequence number the request after start-up's last one will get, once
+// MarkEndOfStartupRequests has said so. Zero until then, which reads as "we
+// are still in start-up, so everything is start-up's".
+uint32_t end_of_startup_sequence;
+
+// See ReportedErrorCount.
+uint64_t reported_errors;
+
+// See SetPanicHandlerForTest. Null in a real lwm, which panics by dying.
+void (*panic_handler)(const char*);
+
 // The 17 core protocol error codes. Extension errors get numbers above these,
 // which we print numerically; lwm uses few enough extensions that a table for
 // them would be more maintenance than it's worth.
@@ -161,7 +172,35 @@ void RetireIgnoredSequences(uint32_t sequence) {
   }
 }
 
+void MarkEndOfStartupRequests() {
+  // A NoOp, whose sequence number is one past everything start-up asked for.
+  end_of_startup_sequence = xlib::NextRequestSequence();
+}
+
+bool IsStartupError(const xcb_generic_error_t* err) {
+  return !end_of_startup_sequence ||
+         err->full_sequence < end_of_startup_sequence;
+}
+
+uint64_t ReportedErrorCount() {
+  return reported_errors;
+}
+
+void ForgetErrorState() {
+  ignored_ranges.clear();
+  end_of_startup_sequence = 0;
+  reported_errors = 0;
+}
+
+void SetPanicHandlerForTest(void (*handler)(const char*)) {
+  panic_handler = handler;
+}
+
 void panic(const char* s) {
+  if (panic_handler) {
+    panic_handler(s);
+    return;
+  }
   fprintf(stderr, "%s: %s\n", argv0, s);
   exit(EXIT_FAILURE);
 }
@@ -172,6 +211,7 @@ void HandleXError(const xcb_generic_error_t* err) {
   if (isIgnored(err)) {
     return;
   }
+  reported_errors++;
 
   const char* code_name = errorCodeName(err->error_code);
   const char* req_name = requestName(err->major_code);
@@ -198,7 +238,12 @@ void HandleXError(const xcb_generic_error_t* err) {
   backtrace_symbols_fd(stack, depth, STDERR_FILENO);
 #endif
 
-  if (is_initialising) {
+  // Only start-up's own requests are worth giving up over. An error from a
+  // request an event handler made while we were draining the queue is an
+  // ordinary error which happens to have arrived early - most often a client
+  // window that has gone away - and lwm used to die on start-up because of
+  // one. See MarkEndOfStartupRequests.
+  if (is_initialising && IsStartupError(err)) {
     panic("can't initialise.");
   }
 }

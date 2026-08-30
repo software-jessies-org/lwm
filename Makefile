@@ -80,6 +80,7 @@ LWM_SRCS = $(addprefix $(SRCDIR)/lwm/, \
 	drag_test.cc \
 	edge.cc \
 	error.cc \
+	error_test.cc \
 	ewmh.cc \
 	ewmh_test.cc \
 	fakeserver.cc \

@@ -171,6 +171,16 @@ extern int main(int argc, char* argv[]) {
   // before deciding that start-up went well. Sync() waits for the server to
   // have processed everything issued so far, which guarantees any errors are
   // already queued by the time we drain.
+  //
+  // Draining, though, means dispatching every other event that has turned up
+  // too, and those handlers issue requests of their own whose errors land in
+  // the same drain. Marking the end of start-up's requests first is what keeps
+  // the two apart: without it, an XRandR notification arriving while lwm was
+  // still starting - which is normal on a machine whose monitors X is still
+  // sorting out - would send lwm off to reconfigure a client window that had
+  // closed in the meantime, and the BadWindow that came back killed lwm on
+  // start-up. See MarkEndOfStartupRequests.
+  MarkEndOfStartupRequests();
   xlib::Sync();
   ProcessPendingEvents();
 

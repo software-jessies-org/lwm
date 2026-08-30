@@ -302,6 +302,32 @@ TEST(EvUnmapNotify, UnmapOfSomethingOtherThanTheClientWindowIsIgnored) {
   EXPECT_TRUE(world.server().CallsMatching("RemoveFromSaveSet(").empty());
 }
 
+TEST(EvReparentNotify, AWindowWeDoNotManageIsIgnored) {
+  wmtest::World world;
+  Client* c = world.MapClientWindow(Rect::FromXYWH(kX, kY, kW, kH));
+  ASSERT_TRUE(c != nullptr);
+
+  // Somebody else has taken a window of their own, which lwm has never seen,
+  // and reparented it into a window of theirs. Nothing to do with us - but
+  // lwm's log line named the client's frame before checking there was a
+  // client, so it dereferenced the null it had just been handed. There is no
+  // asserting on a segfault: if this comes back, the test binary dies here.
+  const Window stranger = world.server().AddClientWindow(
+      Rect::FromXYWH(0, 0, 10, 10));
+  const Window into = world.server().AddClientWindow(
+      Rect::FromXYWH(0, 0, 100, 100));
+  xcb_reparent_notify_event_t e{};
+  e.response_type = XCB_REPARENT_NOTIFY;
+  e.event = LScr::I->Root();
+  e.window = stranger;
+  e.parent = into;
+  world.server().PushEvent(e);
+  ProcessPendingEvents();
+
+  EXPECT_EQ(LScr::I->Clients().size(), size_t(1))
+      << "the client we do manage must be left alone";
+}
+
 namespace {
 
 // The layout the SnapToMonitor tests use: a large primary that doesn't start

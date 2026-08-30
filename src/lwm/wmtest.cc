@@ -2,6 +2,7 @@
 
 #include "client.h"
 #include "disp.h"
+#include "error.h"
 #include "ewmh.h"
 #include "keyboard.h"
 #include "lwm.h"
@@ -26,6 +27,11 @@ World::World(int width, int height)
   // Same reason: the note the arrow keys keep of where a window came from in
   // the stacking order names a window id the next test will hand out again.
   ForgetNavigationState();
+  // And the same again for the error-suppression ranges, which are made of
+  // request sequence numbers - and the new FakeServer starts counting those
+  // from the beginning too, so a range left over from the last test would
+  // swallow this one's errors.
+  ForgetErrorState();
 
   // From here on the order matches main()'s, because the dependencies are the
   // same ones: Resources before anything that reads a colour, the atoms before

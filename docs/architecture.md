@@ -33,9 +33,20 @@
 9. XRandR: `xcb_randr_query_version` (mandatory before any other RandR
    request), select screen-change notifications, take the initial layout via
    `setScreenAreasFromXRandR()`.
-10. `xlib::Sync()` then `ProcessPendingEvents()`, so that errors provoked by
-    start-up are collected while `is_initialising` still makes them fatal.
-    Only then is `is_initialising` cleared.
+10. `MarkEndOfStartupRequests()`, then `xlib::Sync()` and
+    `ProcessPendingEvents()`, so that errors provoked by start-up are collected
+    while `is_initialising` still makes them fatal. Only then is
+    `is_initialising` cleared.
+
+    The mark is what makes "fatal" mean the right thing. That drain dispatches
+    everything *else* on the queue too, and those handlers issue requests of
+    their own whose errors land in the same drain — a client window that has
+    closed is enough. Only requests issued before the mark are start-up's, and
+    only those are worth dying over: `HandleXError` tests `IsStartupError()`
+    alongside `is_initialising`. Without it, an XRandR notification arriving
+    during start-up (normal on a machine whose monitors X is still sorting out)
+    sent lwm off to move a window that had gone, and the `BadWindow` that came
+    back killed lwm before it ever reached the event loop.
 
 ## Event loop (`lwm.cc:191`)
 

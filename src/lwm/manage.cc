@@ -78,6 +78,17 @@ std::optional<bool> motifWouldDecorate(Client* c) {
 /*ARGSUSED*/
 void manage(Client* c) {
   LOGD(c) << ">>> manage";
+  // Adopting a window is a conversation with a window that may not be there
+  // any more. It can go at any point between the MapRequest (or the
+  // start-up scan) that brought us here and the last request below, and every
+  // request in this function is either about the client window - which is the
+  // one that can vanish - or about the frame, which we create ourselves a few
+  // lines down and which therefore can't. So a BadWindow here means exactly
+  // one thing, "the application has closed the window we were in the middle of
+  // taking on", and there is nothing to say about it. lwm used to say it very
+  // loudly indeed: during the start-up scan the same race killed lwm outright,
+  // because errors arriving while is_initialising is set are fatal.
+  ScopedIgnoreBadWindow ignorer;
   // get the EWMH window type, as this might overrule some hints
   c->wtype = ewmh_get_window_type(c->window);
   // get in the initial EWMH state
@@ -302,6 +313,21 @@ void getProgramIdentity(Client* c) {
 }
 
 void withdraw(Client* c) {
+  // Before the requests, not after them. X11 sends us an UnmapNotify before it
+  // sends us a DestroyNotify, so we get here without knowing whether the
+  // window still exists, and the two requests below are then answered with
+  // BadWindow - four of them, in fact, because SetState writes three
+  // properties. Those are the errors this scope exists to swallow, and a scope
+  // opened underneath them covered none of them: ScopedIgnoreErrors suppresses
+  // errors from requests issued *during* its lifetime, so the requests it is
+  // meant to cover have to be inside it.
+  //
+  // There's no Sync to go with it, either. That belonged to the Xlib-era
+  // global "ignore errors now" flag, which had to be held on until the errors
+  // turned up; a suppression range is remembered by sequence number and is
+  // retired only once an event from later than the end of it arrives, which
+  // an error from inside it never is. See RetireIgnoredSequences.
+  ScopedIgnoreBadWindow ignorer;
   if (c->parent != LScr::I->Root()) {
     xlib::XUnmapWindow(c->parent);
     // This seems to make no sense. Surely we just want to unmap our frame,
@@ -313,14 +339,6 @@ void withdraw(Client* c) {
 
   xlib::XRemoveFromSaveSet(c->window);
   c->SetState(WithdrawnState);
-
-  // Sync, and ignore any errors the requests above provoked. X11 sends us an
-  // UnmapNotify before it sends us a DestroyNotify, so we can get here without
-  // knowing whether the relevant window still exists. The Sync matters: it's
-  // what guarantees those errors have arrived (and so are still inside this
-  // scope's sequence range) before we stop ignoring them.
-  ScopedIgnoreBadWindow ignorer;
-  xlib::Sync();
 }
 
 /*ARGSUSED*/

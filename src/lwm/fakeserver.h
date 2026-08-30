@@ -139,7 +139,26 @@ class FakeServer : public Server {
   // ---------------------------------------------------------------------
 
   const std::vector<std::string>& Calls() const { return calls_; }
-  void ClearCalls() { calls_.clear(); }
+  void ClearCalls() {
+    calls_.clear();
+    call_sequences_.clear();
+  }
+
+  // The sequence number given to the first recorded call starting with the
+  // given prefix, or 0 if there is no such call.
+  //
+  // A test needs this to talk about errors at all: an X error names the
+  // request that failed by its sequence number, and that is also what the
+  // ScopedIgnore* suppression ranges are made of. Pair it with PushError to
+  // ask "if the server had refused this particular request, would lwm have
+  // reported it or swallowed it?".
+  uint32_t SequenceOfCall(const std::string& prefix) const;
+
+  // Queues an X error against the request that was given this sequence
+  // number, as the server would if that request had named a window which had
+  // since been destroyed. It arrives through the event queue, because that is
+  // where XCB delivers errors.
+  void PushError(uint8_t error_code, uint32_t sequence, uint32_t resource_id);
 
   // The recorded calls whose text starts with the given prefix, which is
   // usually a method name - "ConfigureWindow(" to get every reconfiguration,
@@ -332,7 +351,13 @@ class FakeServer : public Server {
 
  private:
   void PushEventRaw(const void* event, size_t len);
-  void Record(const std::string& call) { calls_.push_back(call); }
+  // Every recorded call takes the next sequence number, as a real server's
+  // requests do. That's what lets SequenceOfCall hand a test the number it
+  // needs to send an error back for one particular request.
+  void Record(const std::string& call) {
+    calls_.push_back(call);
+    call_sequences_.push_back(sequence_++);
+  }
   Window NewWindow(Window parent, const Rect& rect, bool lwm_owned);
   void Restack(FakeWindow* win, uint32_t stack_mode, Window sibling);
   void Unlink(FakeWindow* win);
@@ -362,6 +387,7 @@ class FakeServer : public Server {
   uint32_t sequence_ = 1;
 
   std::vector<std::string> calls_;
+  std::vector<uint32_t> call_sequences_;  // Parallel to calls_.
 };
 
 }  // namespace xlib
