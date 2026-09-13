@@ -700,6 +700,22 @@ void XUngrabPointer(Time time) {
   server->UngrabPointer(time);
 }
 
+bool XGrabKeyboard(Window grab_window,
+                   bool owner_events,
+                   int pointer_mode,
+                   int keyboard_mode,
+                   Time time) {
+  const int status = server->GrabKeyboard(grab_window, owner_events,
+                                          pointer_mode, keyboard_mode, time);
+  LOGD(grab_window) << "XGrabKeyboard(" << WinID(grab_window)
+                    << ") status=" << status;
+  return status == XCB_GRAB_STATUS_SUCCESS;
+}
+
+void XUngrabKeyboard(Time time) {
+  server->UngrabKeyboard(time);
+}
+
 void XWarpPointer(Point to) {
   // No LOGD here: the debug log is keyed to a window, and a warp names none.
   // The caller which moves a window and takes the pointer with it logs both

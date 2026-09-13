@@ -199,6 +199,18 @@ class Server {
                           Time time) = 0;
   virtual void UngrabPointer(Time time) = 0;
 
+  // Takes an active keyboard grab, returning XCB_GRAB_STATUS_SUCCESS or one of
+  // the other xcb_grab_status_t values. Waits for its reply for the same
+  // reason GrabPointer does: the keyboard-driven unhide menu has no other way
+  // to hear the keys which drive it, so there is no point putting it up at all
+  // if the grab was refused.
+  virtual int GrabKeyboard(Window grab_window,
+                           bool owner_events,
+                           int pointer_mode,
+                           int keyboard_mode,
+                           Time time) = 0;
+  virtual void UngrabKeyboard(Time time) = 0;
+
   // The pointer's position right now, straight from the server rather than
   // from the coordinates in the most recent event.
   virtual MousePos QueryPointer() = 0;

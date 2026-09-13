@@ -4,6 +4,7 @@
 
 #include "client.h"
 #include "ewmh.h"
+#include "log.h"
 #include "lwm.h"
 #include "menulayout.h"
 #include "resource.h"
@@ -129,6 +130,10 @@ void Hider::showHighlightBox(int itemIndex) {
   mapAndRaise(highlightR, r.xMax, r.yMin, 1, r.height());
   mapAndRaise(highlightT, r.xMin, r.yMin, r.width(), 1);
   mapAndRaise(highlightB, r.xMin, r.yMax, r.width(), 1);
+  // Force the menu window on top. If the red box windows were to appear on top
+  // of the menu, it'd not only look ugly, but could cause a 'mouse leave'
+  // event, which would close the menu if it had been opened from the keyboard.
+  xlib::XRaiseWindow(LScr::I->Menu());
 }
 
 void Hider::hideHighlightBox() {
@@ -179,8 +184,7 @@ void Hider::Unhide(Client* c) {
   LScr::I->GetFocuser()->FocusClient(c);
 }
 
-void Hider::OpenMenu(const xcb_button_press_event_t* e) {
-  Client_ResetAllCursors();
+void Hider::buildMenuContent() {
   open_content_.clear();
   width_ = 0;
 
@@ -252,6 +256,11 @@ void Hider::OpenMenu(const xcb_button_press_event_t* e) {
   }
 
   height_ = open_content_.size() * menuItemHeight();
+}
+
+void Hider::OpenMenu(const xcb_button_press_event_t* e) {
+  Client_ResetAllCursors();
+  buildMenuContent();
 
   // Arrange for centre of first menu item to be under pointer,
   // unless that would put the menu off-screen.
@@ -268,6 +277,102 @@ void Hider::OpenMenu(const xcb_button_press_event_t* e) {
   xlib::XChangeActivePointerGrab(ButtonMask | XCB_EVENT_MASK_BUTTON_MOTION |
                                      XCB_EVENT_MASK_OWNER_GRAB_BUTTON,
                                  XCB_NONE, XCB_CURRENT_TIME);
+}
+
+void Hider::OpenMenuForKeyboard() {
+  if (keyboard_menu_open_) {
+    return;  // Already up; a second Super+Tab is a no-op, not a reopen.
+  }
+  Client_ResetAllCursors();
+  buildMenuContent();
+  if (open_content_.empty()) {
+    return;  // Nothing to offer, so nothing to put on screen.
+  }
+
+  // The monitor the pointer is on, which is the one the user is looking at.
+  const MousePos mouse = getMousePosition();
+  const Rect scr = visibleAreaAt(mouse.x, mouse.y);
+  x_min_ = clamp(scr.xMin + (scr.width() - width_) / 2, scr.xMin,
+                 scr.xMax - width_);
+  y_min_ = clamp(scr.yMin + (scr.height() - height_) / 2, scr.yMin,
+                 scr.yMax - height_);
+
+  // The grab comes before anything the user can see. It's the only route the
+  // keys have to us - the menu is not a client and never holds the input focus,
+  // and the keys we want (Escape, Return, the arrows on their own) are ones
+  // applications use - so if it fails there would be no way to drive the menu,
+  // and Escape would not even close it.
+  if (!xlib::XGrabKeyboard(LScr::I->Root(), false, XCB_GRAB_MODE_ASYNC,
+                           XCB_GRAB_MODE_ASYNC, XCB_CURRENT_TIME)) {
+    LOGW() << "couldn't grab the keyboard; not opening the unhide menu";
+    return;
+  }
+  pointer_return_ = Point{mouse.x, mouse.y};
+  keyboard_menu_open_ = true;
+  current_item_ = 0;
+
+  // The menu is mapped before the pointer moves onto it, so that the crossing
+  // event the warp generates has somewhere to land, and before the mask is
+  // changed so that the pointer-motion and leave events we're about to ask for
+  // can only describe a menu which is already there.
+  mapAndRaise(LScr::I->Menu(), x_min_, y_min_, width_, height_);
+  xlib::XChangeWindowAttributes(
+      LScr::I->Menu(), xlib::WindowAttrs().EventMask(kKeyboardMenuEventMask));
+  showHighlightBox(current_item_);
+  xlib::XWarpPointer(itemMiddle(current_item_));
+}
+
+Point Hider::itemMiddle(int itemIndex) const {
+  const int ih = menuItemHeight();
+  return Point{x_min_ + width_ / 2, y_min_ + itemIndex * ih + ih / 2};
+}
+
+void Hider::KeyboardMenuMove(int delta) {
+  if (!keyboard_menu_open_ || open_content_.empty()) {
+    return;
+  }
+  const int want =
+      clamp(current_item_ + delta, 0, int(open_content_.size()) - 1);
+  if (want == current_item_) {
+    return;
+  }
+  setCurrentItem(want);
+  xlib::XWarpPointer(itemMiddle(want));
+}
+
+void Hider::KeyboardMenuSelect() {
+  if (!keyboard_menu_open_) {
+    return;
+  }
+  Client* c = nullptr;
+  if (current_item_ >= 0 && current_item_ < open_content_.size()) {
+    // May be null: a client can go away while the menu is up.
+    c = LScr::I->GetClient(open_content_[current_item_].w);
+  }
+  KeyboardMenuClose(true);
+  if (c) {
+    Unhide(c);
+  }
+}
+
+void Hider::KeyboardMenuClose(bool warp_back) {
+  if (!keyboard_menu_open_) {
+    return;
+  }
+  // Cleared first: the unmap and the warp below both make the pointer leave the
+  // menu, and the LeaveNotify that follows must not be read as the user moving
+  // the mouse out of a menu which is still up.
+  keyboard_menu_open_ = false;
+  hideHighlightBox();
+  xlib::XUnmapWindow(LScr::I->Menu());
+  // Back to the mask a button-driven menu wants, so the extra events we asked
+  // for don't go on arriving for the rest of the session.
+  xlib::XChangeWindowAttributes(
+      LScr::I->Menu(), xlib::WindowAttrs().EventMask(kPopupEventMask));
+  xlib::XUngrabKeyboard(XCB_CURRENT_TIME);
+  if (warp_back) {
+    xlib::XWarpPointer(pointer_return_);
+  }
 }
 
 int Hider::itemAt(int x, int y) const {
@@ -323,21 +428,30 @@ void Hider::drawHighlight(int itemIndex) {
                        y, width_ - menuHighlightMargins(), ih);
 }
 
-void Hider::MouseMotion(const xcb_motion_notify_event_t* ev) {
+void Hider::setCurrentItem(int itemIndex) {
   const int old = current_item_;  // Old menu position.
-  current_item_ = itemAt(ev->root_x, ev->root_y);
-  if (current_item_ != old) {
-    // In order to avoid too much flickering, and to avoid weird corruption
-    // in our popup window, we first make the red highlight box disappear,
-    // then update the menu item highlight (by EORing the old and new highlight
-    // positions), and then finally reopen the red highlight box in its new
-    // position. This seems to be the smoothest and least flickery/error-prone
-    // way of updating the menu.
-    hideHighlightBox();
-    drawHighlight(old);
-    drawHighlight(current_item_);
-    showHighlightBox(current_item_);
+  if (itemIndex == old) {
+    return;
   }
+  current_item_ = itemIndex;
+  // In order to avoid too much flickering, and to avoid weird corruption
+  // in our popup window, we first make the red highlight box disappear,
+  // then update the menu item highlight (by EORing the old and new highlight
+  // positions), and then finally reopen the red highlight box in its new
+  // position. This seems to be the smoothest and least flickery/error-prone
+  // way of updating the menu.
+  hideHighlightBox();
+  drawHighlight(old);
+  drawHighlight(current_item_);
+  showHighlightBox(current_item_);
+}
+
+void Hider::MouseMotion(const xcb_motion_notify_event_t* ev) {
+  // The selection is wherever the pointer is, whether the user put it there or
+  // an arrow key did. An arrow key has already called setCurrentItem for the
+  // item it warped to, so the motion event the warp generates finds the same
+  // item and changes nothing.
+  setCurrentItem(itemAt(ev->root_x, ev->root_y));
 }
 
 void Hider::MouseRelease(const xcb_button_release_event_t* ev) {

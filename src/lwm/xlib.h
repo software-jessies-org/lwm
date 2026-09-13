@@ -37,15 +37,22 @@ constexpr int WithdrawnState = XCB_ICCCM_WM_STATE_WITHDRAWN;
 constexpr int NormalState = XCB_ICCCM_WM_STATE_NORMAL;
 constexpr int IconicState = XCB_ICCCM_WM_STATE_ICONIC;
 
-// Keysyms for the four arrow keys. X11's keysymdef.h calls these XK_Left and
+// Keysyms for the keys lwm binds. X11's keysymdef.h calls these XK_Left and
 // so on, but it arrives with the rest of Xlib, which only xbridge.cc and
 // xfont.cc may include (see docs/code-map.md). They're protocol constants and
-// will not change, so repeating the four we need is cheaper than the
+// will not change, so repeating the handful we need is cheaper than the
 // alternatives.
+constexpr uint32_t kKeysymSpace = 0x0020;
+constexpr uint32_t kKeysymTab = 0xff09;
+constexpr uint32_t kKeysymReturn = 0xff0d;
+constexpr uint32_t kKeysymEscape = 0xff1b;
 constexpr uint32_t kKeysymLeft = 0xff51;
 constexpr uint32_t kKeysymUp = 0xff52;
 constexpr uint32_t kKeysymRight = 0xff53;
 constexpr uint32_t kKeysymDown = 0xff54;
+// The numeric keypad's own Enter, which is a different keysym from Return and
+// which a user hitting 'the enter key' may well mean.
+constexpr uint32_t kKeysymKPEnter = 0xff8d;
 
 struct MousePos {
   int x;
@@ -461,6 +468,18 @@ extern bool XGrabPointer(Window grab_window,
                          Cursor cursor,
                          Time time);
 extern void XUngrabPointer(Time time);
+
+// Takes an active keyboard grab, so that every key press comes to lwm
+// whatever the pointer is over and whoever holds the input focus. Returns
+// true if we got it; like XGrabPointer, this one waits for the server's
+// answer, because a caller which has no other route to the keys has nothing
+// useful to do if the grab was refused.
+extern bool XGrabKeyboard(Window grab_window,
+                          bool owner_events,
+                          int pointer_mode,
+                          int keyboard_mode,
+                          Time time);
+extern void XUngrabKeyboard(Time time);
 
 // Moves the pointer to the given position in root coordinates. The server
 // reports the move as if the user had made it: crossing events are generated

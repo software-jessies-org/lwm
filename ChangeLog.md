@@ -1,5 +1,10 @@
 # Change Log for "lwm"
 
+## 2026-09-13 (pn)
+
+Windows+Tab opens the unhide menu on the monitor the pointer is on, and the
+arrow keys, Return, space and Escape drive it.
+
 ## 2026-08-30 (pn, Basel)
 
 Plugging a monitor in or unplugging one now works without a SIGHUP: gummiband

@@ -424,6 +424,23 @@ class RealServer : public Server {
 
   void UngrabPointer(Time time) override { xcb_ungrab_pointer(conn, time); }
 
+  int GrabKeyboard(Window grab_window,
+                   bool owner_events,
+                   int pointer_mode,
+                   int keyboard_mode,
+                   Time time) override {
+    Reply<xcb_grab_keyboard_reply_t> r(xcb_grab_keyboard_reply(
+        conn,
+        xcb_grab_keyboard(conn, owner_events, grab_window, time, pointer_mode,
+                          keyboard_mode),
+        nullptr));
+    // No reply means the request failed outright; report that as a refusal
+    // rather than pretending we hold a grab we don't.
+    return r ? int(r->status) : int(XCB_GRAB_STATUS_NOT_VIEWABLE);
+  }
+
+  void UngrabKeyboard(Time time) override { xcb_ungrab_keyboard(conn, time); }
+
   void WarpPointer(Point to) override {
     xcb_warp_pointer(conn, XCB_NONE, Root(), 0, 0, 0, 0, to.x, to.y);
   }

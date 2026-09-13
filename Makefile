@@ -93,6 +93,7 @@ LWM_SRCS = $(addprefix $(SRCDIR)/lwm/, \
 	gesture.cc \
 	gesture_test.cc \
 	hider.cc \
+	hider_test.cc \
 	icon_test.cc \
 	keyboard.cc \
 	keyboard_test.cc \

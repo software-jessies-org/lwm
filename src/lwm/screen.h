@@ -14,6 +14,21 @@
 
 class CursorMap;
 
+// The event mask lwm's two popup windows (the resize feedback popup and the
+// unhide menu) carry: enough for a menu driven by holding a mouse button down,
+// which is how the unhide menu has always worked.
+constexpr uint32_t kPopupEventMask =
+    ButtonMask | XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_EXPOSURE;
+
+// What the unhide menu carries instead while the keyboard is driving it. With
+// no button held there is no button-motion to hear, so the pointer moving over
+// the menu has to be asked for outright; and the pointer leaving the menu is
+// what closes it, so LeaveWindow matters too. Hider puts the mask back to
+// kPopupEventMask when it closes the menu.
+constexpr uint32_t kKeyboardMenuEventMask =
+    kPopupEventMask | XCB_EVENT_MASK_POINTER_MOTION |
+    XCB_EVENT_MASK_LEAVE_WINDOW;
+
 // Screen information.
 class LScr {
  public:

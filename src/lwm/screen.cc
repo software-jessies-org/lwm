@@ -79,8 +79,7 @@ void LScr::Init() {
 
   // Create the popup window, to be used for the resize feedback window,
   // and the menu window.
-  const uint32_t popup_events =
-      ButtonMask | XCB_EVENT_MASK_BUTTON_MOTION | XCB_EVENT_MASK_EXPOSURE;
+  const uint32_t popup_events = kPopupEventMask;
   const unsigned int fg = Resources::I->GetColour(Resources::POPUP_TEXT_COLOUR);
   const unsigned int bg =
       Resources::I->GetColour(Resources::POPUP_BACKGROUND_COLOUR);

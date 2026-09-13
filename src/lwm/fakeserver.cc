@@ -216,6 +216,26 @@ std::vector<Window> FakeServer::ChildrenOf(Window w) {
   return win ? win->children : std::vector<Window>();
 }
 
+Window FakeServer::WindowNamed(const std::string& name) const {
+  for (const auto& it : windows_) {
+    const auto p = it.second.properties.find(XCB_ATOM_WM_NAME);
+    if (p != it.second.properties.end() && p->second.data8 == name) {
+      return it.first;
+    }
+  }
+  return 0;
+}
+
+bool FakeServer::IsMapped(Window w) const {
+  const auto it = windows_.find(w);
+  return it != windows_.end() && it->second.mapped;
+}
+
+uint32_t FakeServer::EventMaskOf(Window w) const {
+  const auto it = windows_.find(w);
+  return it == windows_.end() ? 0 : it->second.event_mask;
+}
+
 Atom FakeServer::Intern(const std::string& name) {
   auto it = atoms_.find(name);
   if (it != atoms_.end()) {
@@ -688,10 +708,10 @@ void FakeServer::UngrabKey(uint8_t keycode,
 }
 
 KeyboardMapping FakeServer::GetKeyboardMapping() {
-  // A keyboard with nothing on it but the four arrow keys, at the keycodes a
-  // PC keyboard really uses for them. Two keysyms per keycode, because that's
-  // the commonest shape of a real mapping and it means the flattening
-  // arithmetic in xlib.cc is exercised rather than sidestepped.
+  // A keyboard with nothing on it but the keys lwm binds, at the keycodes a PC
+  // keyboard really uses for them. Two keysyms per keycode, because that's the
+  // commonest shape of a real mapping and it means the flattening arithmetic
+  // in xlib.cc is exercised rather than sidestepped.
   KeyboardMapping res;
   res.min_keycode = 8;
   res.keysyms_per_keycode = 2;
@@ -700,13 +720,12 @@ KeyboardMapping FakeServer::GetKeyboardMapping() {
   const struct {
     uint8_t keycode;
     uint32_t keysym;
-  } arrows[] = {
-      {113, kKeysymLeft},
-      {111, kKeysymUp},
-      {114, kKeysymRight},
-      {116, kKeysymDown},
+  } keys[] = {
+      {113, kKeysymLeft},   {111, kKeysymUp},     {114, kKeysymRight},
+      {116, kKeysymDown},   {23, kKeysymTab},     {9, kKeysymEscape},
+      {36, kKeysymReturn},  {65, kKeysymSpace},   {104, kKeysymKPEnter},
   };
-  for (const auto& a : arrows) {
+  for (const auto& a : keys) {
     res.keysyms[(a.keycode - res.min_keycode) * res.keysyms_per_keycode] =
         a.keysym;
   }
@@ -742,6 +761,24 @@ int FakeServer::GrabPointer(Window grab_window,
 void FakeServer::UngrabPointer(Time time) {
   (void)time;
   Record("UngrabPointer()");
+}
+
+int FakeServer::GrabKeyboard(Window grab_window,
+                             bool owner_events,
+                             int pointer_mode,
+                             int keyboard_mode,
+                             Time time) {
+  (void)owner_events;
+  (void)pointer_mode;
+  (void)keyboard_mode;
+  (void)time;
+  Record("GrabKeyboard(" + hex(grab_window) + ")");
+  return keyboard_grab_status_;
+}
+
+void FakeServer::UngrabKeyboard(Time time) {
+  (void)time;
+  Record("UngrabKeyboard()");
 }
 
 MousePos FakeServer::QueryPointer() {

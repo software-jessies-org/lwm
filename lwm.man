@@ -58,6 +58,22 @@ Releasing the button while over an item will unhide or raise the named window,
 and give it focus.  The menu has two sections: the items above the dotted
 line refer to hidden windows; those below to already visible windows.
 .PP
+The same menu can be opened from the keyboard with \fBWindows+Tab\fP.  It
+appears in the middle of whichever monitor the pointer is on, and the pointer
+moves to the middle of its top item.  From there the pointer is still what
+picks an item, so the coloured box shows the outline of the window under it
+exactly as it does for a button 3 drag; the up and down arrow keys move the
+pointer one item at a time, and stop at the ends of the menu rather than
+wrapping round.  Return, Enter or space unhides and raises the window the
+pointer is on; Escape closes the menu without doing anything.  Either way the
+pointer goes back to where it was before the menu opened.  Moving the mouse
+off the menu also closes it, again leaving everything as it was.
+.PP
+While this menu is up \fIlwm\fP holds the keyboard, so none of these keys
+reach the application underneath, and neither does anything else typed while
+the menu is open.  If some other program already holds the keyboard the menu
+does not open at all, since there would be no way to drive it or to close it.
+.PP
 A button 3 click in the frame while Shift is held down pushes the window
 to the back, under any other windows.
 .PP

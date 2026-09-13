@@ -1,3 +1,5 @@
+Claude: do not read or change this file.
+
 2018-12-08 (pn) Done a bit of clean-up in here. I've also set up a bunch of
 sections, generally from most to least important. At the top we have crashes,
 and at the bottom clean-ups.
@@ -5,44 +7,28 @@ and at the bottom clean-ups.
 Right at the bottom of the file there's a cheat sheet of debugging tools.
 
 
-=== CRASHES ===
 
+=== STEAM ===
 
-=== FUNCTIONAL BREAKAGES ===
+Some games, running under 'wine' (aka proton) on Steam, fail to grab the mouse
+pointer if run on a system with multiple monitors. Apparently Proton  mistakes
+the fact that the window doesn't cover the whole desktop for it running in a
+window. I've seen this on the game 'Tomb Raider'. The workaround is to find the
+user registry for that game (for me that's
+~/.local/share/Steam/steamapps/compatdata/203160/pfx/user.reg) and add the
+following chunk of text to it:
 
-I believe LWM isn't properly extracting struts on start-up; several times I've
-had to pkill -HUP menu, after which its struts reappear. Not sure precisely why.
-
-
-=== THINGS THAT LOOK SILLY ===
-
-
-=== ERROR LOGS ===
-
-LWM may still produce errors at certain times. These should be tracked down and
-fixed. I've recently fixed a bunch, though.
+--- 8<---
+[Software\\Wine\\X11 Driver] 1788198417
+#time=1dd3970b80c29e8
+"GrabFullscreen"="Y"
+--- 8<---
 
 
 === FEATURES ===
 
 Detect when mouse pointer switches between displays (for multiple xrandr
 monitors) and bring up some visual indication of where the pointer has gone.
-
-Make the size of the mouse pointer configurable. Some people have poor vision,
-and would benefit from a larger pointer (and 4k displays exacerbate this).
-
-Maybe implement keyboard control? Grabbing the 'Menu' key, for example, might be
-a reasonable thing to do (although probably best to specify the key to grab as
-an Xresource, and let the user define it). This could be used to open the unhide
-menu where the mouse is, warp the pointer to the middle of the menu item which
-currently has focus, and then (as the pointer is over the menu) take control of
-the arrow keys to navigate up and down the menu, using pointer-warping. Hitting
-Return would do the normal unhide action on the selected window, and warp the
-pointer to its middle.
-  Half of this now exists: keyboard.cc grabs Super+arrow on the root window
-  and moves the input focus with it, so the grabbing machinery (including the
-  lock-modifier repetition and the MappingNotify re-grab) is written and
-  tested. What's missing is the menu part, and making the key configurable.
 
 
 === CLEANUPS ===

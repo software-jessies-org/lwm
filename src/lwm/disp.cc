@@ -96,6 +96,10 @@ void startDragging(DragHandler* handler, xcb_generic_event_t* ev) {
   }
 }
 
+bool IsDragging() {
+  return current_dragger != nullptr;
+}
+
 // Stops the dragging, calling the Stop handler of current_dragger if there is
 // one.
 void stopDragging(xcb_generic_event_t* ev) {
@@ -106,17 +110,26 @@ void stopDragging(xcb_generic_event_t* ev) {
 }
 
 void EvButtonPress(xcb_generic_event_t* ev) {
+  const xcb_button_press_event_t* e = (const xcb_button_press_event_t*)ev;
   if (current_dragger) {
     // A press of a second button while a drag is running. Some drags read
     // that as a chord; the rest want nothing to do with it, and lwm never
     // starts a second drag on top of the first.
-    if (current_dragger->ChordPress((const xcb_button_press_event_t*)ev)) {
+    if (current_dragger->ChordPress(e)) {
       return;
     }
     LOGI() << "Already doing something";
-    return;  // Already doing something.
+    return;
   }
-  startDragging(getDragHandlerForEvent((xcb_button_press_event_t*)ev), ev);
+  // If we opened the unhide menu via the keyboard, and the user chose to click
+  // on an item with the mouse, we unhide the window.
+  if (e->event == LScr::I->Menu() &&
+      LScr::I->GetHider()->KeyboardMenuIsOpen()) {
+    LScr::I->GetHider()->MouseRelease(e);
+    LOGI() << "Unhide after click on keyboard-opened menu";
+    return;
+  }
+  startDragging(getDragHandlerForEvent(e), ev);
 }
 
 void EvButtonRelease(xcb_generic_event_t* ev) {
@@ -717,6 +730,14 @@ void EvMotionNotify(xcb_generic_event_t* ev) {
     return;
   }
   const xcb_motion_notify_event_t* e = (const xcb_motion_notify_event_t*)ev;
+  // While the keyboard is driving the unhide menu there's no drag, and so no
+  // dragger, to route the pointer's movement over the menu: the menu asks for
+  // pointer motion itself for exactly this. See Hider::OpenMenuForKeyboard.
+  if (e->event == LScr::I->Menu() &&
+      LScr::I->GetHider()->KeyboardMenuIsOpen()) {
+    LScr::I->GetHider()->MouseMotion(e);
+    return;
+  }
   Client* c = LScr::I->GetClient(e->event);
   if (c == nullptr) {
     return;
@@ -732,10 +753,18 @@ void EvMotionNotify(xcb_generic_event_t* ev) {
   }
 }
 
+void EvLeaveNotify(xcb_generic_event_t* ev) {
+  const xcb_leave_notify_event_t* e = (const xcb_leave_notify_event_t*)ev;
+  if (e->event == LScr::I->Menu() &&
+      LScr::I->GetHider()->KeyboardMenuIsOpen()) {
+    // We don't allow the pointer to warp back to where it was when the menu was
+    // opened (by keyboard), as the user's moving the mouse, and wrestling
+    // control of the mouse from the user would be rude.
+    LScr::I->GetHider()->KeyboardMenuClose(false);
+  }
+}
+
 static void EvKeyPress(xcb_generic_event_t* ev) {
-  // The only keys lwm grabs are the Windows-key navigation ones, so an
-  // unrecognised press means the grab and this handler have got out of step.
-  // Nothing to do about it but let it go.
   if (!HandleKeyPress((xcb_key_press_event_t*)ev)) {
     LOGI() << "unexpected KeyPress, keycode "
            << int(((xcb_key_press_event_t*)ev)->detail);
@@ -779,6 +808,7 @@ extern void DispatchXEvent(xcb_generic_event_t* ev) {
     EV(XCB_CIRCULATE_REQUEST, CirculateRequest);
     EV(XCB_CONFIGURE_NOTIFY, ConfigureNotify);
     EV(XCB_KEY_PRESS, KeyPress);
+    EV(XCB_LEAVE_NOTIFY, LeaveNotify);
     EV(XCB_MAPPING_NOTIFY, MappingNotify);
 #undef EV
 
@@ -790,13 +820,13 @@ extern void DispatchXEvent(xcb_generic_event_t* ev) {
       HandleXError((const xcb_generic_error_t*)ev);
       break;
 
-    case XCB_LEAVE_NOTIFY:
     case XCB_CREATE_NOTIFY:
     case XCB_GRAVITY_NOTIFY:
     case XCB_MAP_NOTIFY:
-    // Grabbing a key gets us its release as well as its press. The navigation
-    // gestures act on the press alone, so the release is of no interest -
-    // but it has to be named here, or it would be logged as unknown.
+    // Grabbing a key gets us its release as well as its press, and while the
+    // unhide menu holds the keyboard we get every key's. The gestures and the
+    // menu both act on the press alone, so the release is of no interest - but
+    // it has to be named here, or it would be logged as unknown.
     case XCB_KEY_RELEASE:
     case XCB_SELECTION_CLEAR:
     case XCB_SELECTION_NOTIFY:

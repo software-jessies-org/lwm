@@ -1,12 +1,15 @@
 #include "keyboard.h"
 
 #include <map>
+#include <set>
+#include <utility>
 #include <vector>
 
 #include "client.h"
 #include "debug.h"
 #include "disp.h"
 #include "focus.h"
+#include "hider.h"
 #include "log.h"
 #include "navigate.h"
 #include "screen.h"
@@ -43,12 +46,75 @@ const ArrowKey kArrowKeys[] = {
     {kKeysymDown, Direction::kDown},
 };
 
+// What a key does to the unhide menu while that menu holds the keyboard. These
+// aren't grabbed, and can't be: they're keys applications use, and lwm wants
+// them only for the moment the menu is up. The active keyboard grab the menu
+// takes is what brings them here instead.
+enum class MenuKey {
+  kUp,      // Previous item.
+  kDown,    // Next item.
+  kSelect,  // Unhide the selected window.
+  kCancel,  // Close the menu, changing nothing.
+};
+
+struct MenuKeysym {
+  uint32_t keysym;
+  MenuKey key;
+};
+
+const MenuKeysym kMenuKeys[] = {
+    {kKeysymUp, MenuKey::kUp},
+    {kKeysymDown, MenuKey::kDown},
+    {kKeysymReturn, MenuKey::kSelect},
+    {kKeysymKPEnter, MenuKey::kSelect},
+    {kKeysymSpace, MenuKey::kSelect},
+    {kKeysymEscape, MenuKey::kCancel},
+};
+
 // Which keycodes we grabbed last time, and what each one means. Kept so that
 // a KeyPress is a lookup rather than a round trip to the server, and so that
 // a re-grab knows what to release.
 std::map<uint8_t, Direction>& grabbedKeys() {
   static std::map<uint8_t, Direction> keys;
   return keys;
+}
+
+// The keycodes carrying Tab, which opens the unhide menu.
+std::set<uint8_t>& menuOpenKeys() {
+  static std::set<uint8_t> keys;
+  return keys;
+}
+
+// The keycode-to-action map for the menu's own keys. Built at the same time as
+// the grabs, and for the same reason: a layout switch moves the keycode a
+// keysym sits on, and MappingNotify is when we find out.
+std::map<uint8_t, MenuKey>& menuKeys() {
+  static std::map<uint8_t, MenuKey> keys;
+  return keys;
+}
+
+// Exactly which (keycode, modifiers) pairs we asked the server for, so that a
+// re-grab releases precisely those. Keeping the list rather than recomputing it
+// matters because the keys aren't all grabbed under the same modifier sets: the
+// arrows want Super and Super+Shift, Tab only Super.
+std::vector<std::pair<uint8_t, unsigned int>>& activeGrabs() {
+  static std::vector<std::pair<uint8_t, unsigned int>> grabs;
+  return grabs;
+}
+
+// Asks for one keycode under the given modifier set, and under both lock
+// modifiers and their combination: a passive grab matches the modifier state
+// exactly, so without these the gesture stops working the moment Num Lock is
+// on.
+void grabKey(uint8_t keycode, unsigned int modifiers) {
+  for (unsigned int locks : lockModifiers) {
+    // Asynchronous on both devices: lwm swallows these presses whole and never
+    // replays them, so there's no reason to freeze anything while it makes up
+    // its mind.
+    xlib::XGrabKey(keycode, modifiers | locks, LScr::I->Root(), false,
+                   XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+    activeGrabs().push_back({keycode, modifiers | locks});
+  }
 }
 
 // The frames of the windows in front of c, bottom-most first: everything
@@ -246,27 +312,33 @@ void moveWindow(Client* c, Direction dir) {
 
 void GrabNavigationKeys() {
   const Window root = LScr::I->Root();
-  for (const auto& it : grabbedKeys()) {
-    for (unsigned int mods : kArrowModifiers) {
-      for (unsigned int locks : lockModifiers) {
-        xlib::XUngrabKey(it.first, mods | locks, root);
-      }
-    }
+  for (const auto& grab : activeGrabs()) {
+    xlib::XUngrabKey(grab.first, grab.second, root);
   }
+  activeGrabs().clear();
   grabbedKeys().clear();
+  menuOpenKeys().clear();
+  menuKeys().clear();
 
   for (const ArrowKey& arrow : kArrowKeys) {
     for (uint8_t keycode : xlib::KeycodesForKeysym(arrow.keysym)) {
       grabbedKeys()[keycode] = arrow.dir;
       for (unsigned int mods : kArrowModifiers) {
-        for (unsigned int locks : lockModifiers) {
-          // Asynchronous on both devices: lwm swallows these presses whole and
-          // never replays them, so there's no reason to freeze anything while
-          // it makes up its mind.
-          xlib::XGrabKey(keycode, mods | locks, root, false,
-                         XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
-        }
+        grabKey(keycode, mods);
       }
+    }
+  }
+  // Super+Tab opens the unhide menu. Shift isn't grabbed with it: there's only
+  // one thing to do, and the menu it opens takes the keyboard for itself the
+  // moment it's up.
+  for (uint8_t keycode : xlib::KeycodesForKeysym(kKeysymTab)) {
+    menuOpenKeys().insert(keycode);
+    grabKey(keycode, SUPER_MASK);
+  }
+  // The menu's own keys are looked up, not grabbed: see kMenuKeys.
+  for (const MenuKeysym& mk : kMenuKeys) {
+    for (uint8_t keycode : xlib::KeycodesForKeysym(mk.keysym)) {
+      menuKeys()[keycode] = mk.key;
     }
   }
 }
@@ -276,6 +348,43 @@ void ForgetNavigationState() {
 }
 
 bool HandleKeyPress(xcb_key_press_event_t* ev) {
+  Hider* hider = LScr::I->GetHider();
+  if (hider->KeyboardMenuIsOpen()) {
+    // lwm holds an active keyboard grab, so this press is the menu's whatever
+    // it is. Modifiers are ignored: the user reaching for Escape with a finger
+    // still on Shift means Escape.
+    const auto mk = menuKeys().find(ev->detail);
+    if (mk == menuKeys().end()) {
+      return true;  // Not a key the menu uses. Swallow it; nobody else can act
+                    // on it while we hold the keyboard.
+    }
+    switch (mk->second) {
+      case MenuKey::kUp:
+        hider->KeyboardMenuMove(-1);
+        break;
+      case MenuKey::kDown:
+        hider->KeyboardMenuMove(1);
+        break;
+      case MenuKey::kSelect:
+        hider->KeyboardMenuSelect();
+        break;
+      case MenuKey::kCancel:
+        hider->KeyboardMenuClose(true);
+        break;
+    }
+    return true;
+  }
+  if (menuOpenKeys().count(ev->detail)) {
+    // Not in the middle of a mouse gesture. The button-3 unhide menu is itself
+    // a drag, and it uses the very window this would put up, so opening one
+    // over the other would leave the keyboard menu believing it owns a window
+    // the button release is about to unmap - and holding a keyboard grab that
+    // nothing was left to release.
+    if (!IsDragging()) {
+      hider->OpenMenuForKeyboard();
+    }
+    return true;
+  }
   const auto it = grabbedKeys().find(ev->detail);
   if (it == grabbedKeys().end()) {
     return false;

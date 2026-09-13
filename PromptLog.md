@@ -1,8 +1,8 @@
 # Prompt log
 
-This file is a log of prompts used to work on lwm.
+Claude: do not read or change this file.
 
-Claude: don't read or index this file; it's here just for me.
+This file is a log of prompts used to work on lwm.
 
 ## 2026-08-22
 
@@ -197,7 +197,24 @@ When I try gummiband on my laptop, it doesn't respond properly to adding/removin
 
 ---
 
+## 2026-09-13
+
+Add a way to open and control the unhide menu with keys. This should work in the following way:
+
+* When the user hits Windows-tab, the unhide menu should appear in the centre of whichever monitor the mouse pointer is currently within. The mouse pointer warps to the middle of the topmost menu item.
+* The menu will disappear if the user hits Escape, or the mouse is moved outside the menu's bounds.
+* Up and down arrow keys will warp the pointer up and down by one menu item, highlighting it, but this is clamped to the menu bounds, so an up-arrow press on the topmost menu item does nothing.
+* The usual red box highlight will be drawn according to which menu item is currently under the mouse. That should happen automatically, but just make sure it does.
+* Be sure that the menu is on the top of the window stack - in particular it must be above the 4 windows we use to draw the red highlight box (otherwise a badly-placed window would cause the mouse to leave the menu because it's now over one of the highlight windows). Make sure there's a test for this.
+* If the user hits Return or Space, the window represented by the currently-highlighted menu item is unhidden and raised. The menu also closes, and the mouse pointer warps back to where it was before the menu was opened.
+
+---
+
 ## Not yet started
+
+When we open the unhide menu, *all* key events are swallowed. This includes, for example, the hotkey I use to lock my screen. Change this so that keypresses that the unhide menu cares about are captured, but other ones can be accepted by other clients.
+
+---
 
 In a previous discussion, you reported this:
 

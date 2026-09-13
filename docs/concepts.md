@@ -169,7 +169,56 @@ furniture-free window types are not.
 
 The red outline box is four 1px-wide override windows (`highlightL/R/T/B`),
 hidden and re-shown around each menu repaint to avoid corruption — the menu GC
-uses `GXxor` so highlights are drawn by EORing.
+uses `GXxor` so highlights are drawn by EORing. Re-showing them raises all four
+to the top of the stack, so `showHighlightBox` puts the menu back above them
+afterwards. Under the mouse that is merely cosmetic; under the keyboard it is
+load-bearing — see below.
+
+### The unhide menu from the keyboard
+
+`Super+Tab` opens the same menu without a button held (`OpenMenuForKeyboard`).
+The layout code is shared; what differs is everything that a held button used
+to provide.
+
+**The pointer is the selection.** The menu is hit-tested against the pointer
+(`itemAt`) whichever way it was opened, so the arrow keys don't track a
+selection of their own: they *warp the pointer* by one item
+(`KeyboardMenuMove`), and the highlight and the red box follow from that the
+same way they follow the mouse. That's why the pointer is warped onto the top
+item as the menu opens, and why the arrows are clamped to the menu rather than
+wrapping — a wrap would have to put the pointer outside the menu on the way
+past, which closes it.
+
+**Three consequences to keep in mind when touching this code:**
+
+* The menu must stay **above the four highlight windows**. The pointer really
+  is inside the menu now, so a highlight window mapped over the pointer is a
+  `LeaveNotify` for the menu, which closes it. A badly-placed window would
+  close the menu the moment it was highlighted. `hider_test.cc` has the test.
+* There's no pointer grab, so the menu has to **ask for the events it needs**:
+  `kKeyboardMenuEventMask` (in `screen.h`) adds `PointerMotion` and
+  `LeaveWindow` to the button-drag mask, and `KeyboardMenuClose` puts
+  `kPopupEventMask` back. `disp.cc` routes a motion or leave event on the menu
+  window to `Hider` only while `KeyboardMenuIsOpen()`.
+* There's nothing to deliver the keys either. The menu takes an **active
+  keyboard grab** on the root, which is why `OpenMenuForKeyboard` can fail:
+  Escape wouldn't close a menu it couldn't hear, so a menu it can't grab for
+  isn't opened. `keyboard.cc`'s `HandleKeyPress` checks
+  `KeyboardMenuIsOpen()` first and swallows every press that isn't the menu's,
+  since with the keyboard grabbed there's nobody else they could go to. The
+  menu's own keys are looked up rather than grabbed (`kMenuKeys`) — they're
+  keys applications use, and lwm wants them only while the menu is up.
+
+`keyboard_menu_open_` is cleared *before* the unmap and the warp home, because
+both of those generate a `LeaveNotify` for the menu which must not be read as
+the user moving the mouse out of a menu that is still there.
+
+Closing always puts the pointer back where it was (`pointer_return_`), Escape
+and Return alike. Under the default sloppy focus that means the focus can
+follow it home, off the window `Return` just unhid, if the raised window isn't
+under that point — which is the same bargain every other sloppy-focus action
+makes, and the reason `KeyboardMenuSelect` closes the menu *before* calling
+`Unhide`, so the focus it grants is the last thing lwm asks for.
 
 ## The client lifecycle and the save-set
 

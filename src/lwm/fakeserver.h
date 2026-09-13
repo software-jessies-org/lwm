@@ -140,6 +140,10 @@ class FakeServer : public Server {
   // already grabbed by somebody else.
   void SetPointerGrabStatus(int status) { pointer_grab_status_ = status; }
 
+  // The same for GrabKeyboard(), which is how a test stands up "somebody else
+  // has the keyboard" in front of the keyboard-driven unhide menu.
+  void SetKeyboardGrabStatus(int status) { keyboard_grab_status_ = status; }
+
   // ---------------------------------------------------------------------
   // Inspection: what the code under test did.
   // ---------------------------------------------------------------------
@@ -178,6 +182,23 @@ class FakeServer : public Server {
   // children (bottom-most first).
   Window FocusedWindow() const { return focused_; }
   std::vector<Window> ChildrenOf(Window w);
+
+  // The window whose WM_NAME is exactly the given string, or 0 if there is
+  // none. lwm names every window it creates for itself (CreateNamedWindow),
+  // so this is how a test gets hold of one - such as the four windows which
+  // draw the unhide menu's red highlight box - without the code under test
+  // having to expose its ids.
+  Window WindowNamed(const std::string& name) const;
+
+  // True if the given window is mapped, which for lwm's own windows is the
+  // difference between a highlight box being shown and hidden.
+  bool IsMapped(Window w) const;
+
+  // The event mask lwm has selected on the given window. Not the same as
+  // GetWindowAttributes' all_event_masks, which is the union over every client
+  // and so only ever grows: this is the current selection, which is what a test
+  // needs to see a mask being put back to what it was.
+  uint32_t EventMaskOf(Window w) const;
 
   // ---------------------------------------------------------------------
   // Pixmaps.
@@ -303,6 +324,12 @@ class FakeServer : public Server {
                   Cursor cursor,
                   Time time) override;
   void UngrabPointer(Time time) override;
+  int GrabKeyboard(Window grab_window,
+                   bool owner_events,
+                   int pointer_mode,
+                   int keyboard_mode,
+                   Time time) override;
+  void UngrabKeyboard(Time time) override;
   MousePos QueryPointer() override;
   void WarpPointer(Point to) override;
 
@@ -389,6 +416,7 @@ class FakeServer : public Server {
   Window focused_ = 0;
   MousePos mouse_{};
   int pointer_grab_status_ = XCB_GRAB_STATUS_SUCCESS;
+  int keyboard_grab_status_ = XCB_GRAB_STATUS_SUCCESS;
   uint32_t next_id_ = 0x100;
   Atom next_atom_ = 1000;
   uint32_t sequence_ = 1;

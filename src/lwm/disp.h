@@ -69,6 +69,10 @@ extern void DispatchXEvent(xcb_generic_event_t*);
 // Drains and dispatches every event currently queued.
 extern void ProcessPendingEvents();
 
+// True while a DragHandler is running: the user is part-way through a mouse
+// gesture, and a new gesture should not be started.
+extern bool IsDragging();
+
 class DragHandler {
  public:
   DragHandler() = default;

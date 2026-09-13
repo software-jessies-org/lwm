@@ -110,7 +110,13 @@ clicks to expand a window up to its neighbours or its monitor, clicks to raise
 or hide it, the Super+Control click that turns its furniture on and off,
 Super+arrow to move the input focus between windows, Super+Shift+arrow to
 move a window between monitor edges, and the arrows still working when the
-current window is one which doesn't take the input focus.
+current window is one which doesn't take the input focus. It also drives the
+unhide menu from the keyboard (Super+Tab): where the menu opens, the arrows
+warping the pointer from item to item and stopping at the ends, Escape and the
+pointer leaving it closing it, Return unhiding the window it was on, the
+pointer going home every time, and the keyboard being given back afterwards.
+That last group runs after the hide check, because the window hidden there is
+what there is to unhide.
 These need a real server - the passive grabs, the modifier bits in the
 `ButtonPress` and the pointer grab that keeps a drag alive are all things
 `FakeServer` doesn't model - so `drag_test.cc` covers the same gestures at

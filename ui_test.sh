@@ -1070,10 +1070,9 @@ place "${CLIENT}" 400 400 200 200
 
 # --- hide -------------------------------------------------------------------
 #
-# Button 3 hides, exactly as it does on the frame. This goes last: there's no
-# way to unhide from here (the unhide menu is a button 3 drag on the root
-# window, and driving it would be a test of the menu, not of the gestures),
-# so every check that needs to see this window has already run.
+# Button 3 hides, exactly as it does on the frame. This goes near the end: the
+# only way back from here is the unhide menu, which the next section drives, so
+# every check that needs to see this window undisturbed has already run.
 
 place "${CLIENT}" 400 400 200 200
 read -r FX FY FW FH <<<"$(geom "${FRAME}")"
@@ -1089,6 +1088,166 @@ check_eq "a Super+button 3 drag neither hides nor resizes the window" \
 super_click 3 "${CX}" "${CY}"
 check_eq "Super+button 3 click hides the window" \
   "$(map_state "${FRAME}")" "IsUnMapped"
+
+# --- the unhide menu from the keyboard --------------------------------------
+#
+# Super+Tab opens the unhide menu in the middle of the monitor the pointer is
+# on, warps the pointer onto its top item, and takes an active keyboard grab so
+# that the arrows, Return, space and Escape drive it. hider_test.cc covers the
+# same thing at the event level; this covers the parts only a real server does:
+# the passive Super+Tab grab, the keyboard grab which is the menu's only route
+# to keys nobody grabbed, and the crossing events the pointer warps generate.
+#
+# The window hidden just above is what there is to unhide, so this section runs
+# straight after it.
+
+# A second window, so that the menu has more than one item and the arrows have
+# somewhere to go. The window hidden above is listed first (hidden windows come
+# before the rest), so the top item - the one the pointer opens on - is the one
+# this section is going to unhide.
+start_client lwmtest7 '200x200+900+150'
+MENU_OTHER="${NEW_CLIENT}"
+MENU_OTHER_PID="${NEW_CLIENT_PID}"
+if [ -z "${MENU_OTHER}" ]; then
+  fail "the second window for the unhide-menu checks never appeared"
+fi
+
+# The menu window exists from start-up (LScr creates it), so it's the map state
+# that says whether the menu is open.
+MENU=$(xwininfo -root -tree 2>/dev/null |
+  grep -o '0x[0-9a-f]\+ "LWM unhide menu"' | head -1 | awk '{print $1}')
+if [ -z "${MENU}" ]; then
+  fail "lwm's unhide menu window was never created"
+else
+  # Somewhere well away from the middle of the screen, so that the menu opening
+  # in the middle is a real move and the pointer coming back here is visible.
+  xdotool mousemove 1100 900
+  sleep 0.2
+  read -r POINTER_WAS_X POINTER_WAS_Y <<<"$(pointer_position)"
+
+  xdotool key super+Tab
+  sleep 0.5
+
+  check_eq "Super+Tab opens the unhide menu" "$(map_state "${MENU}")" \
+    "IsViewable"
+
+  read -r MX MY MW MH <<<"$(geom "${MENU}")"
+  # Centred on the screen, give or take the pixel an odd-sized menu leaves
+  # over. Xvfb gives us one monitor, so that's the whole screen.
+  MENU_DX=$(( (MX + MW / 2) - SCREEN_W / 2 ))
+  MENU_DY=$(( (MY + MH / 2) - SCREEN_H / 2 ))
+  check "the menu opens in the middle of the pointer's monitor" \
+    [ "${MENU_DX#-}" -le 1 ] && [ "${MENU_DY#-}" -le 1 ]
+
+  # The pointer is on the top item: down the middle horizontally, and within
+  # the first item's band vertically. One item's height is the menu's height
+  # divided by however many windows it's listing, which we don't know from out
+  # here - but the pointer must be in the top half of a menu with at least two
+  # items in it, and above its second row whatever the row height is.
+  read -r PX PY <<<"$(pointer_position)"
+  check "the pointer is warped onto the menu" pointer_on "${MENU}"
+  check_eq "the pointer is centred horizontally on the menu" "${PX}" \
+    "$((MX + MW / 2))"
+  FIRST_ITEM_Y="${PY}"
+
+  # The menu must be in front of the four windows which draw the red highlight
+  # box. They're raised every time the selection changes, and if the menu went
+  # behind one of them the pointer would count as having left the menu - which
+  # closes it. hider_test.cc checks the stacking directly; this checks the
+  # consequence, which is that the menu is still open after a move.
+  MENU_STILL_IN_FRONT=1
+  for SIDE in L R T B; do
+    HL=$(xwininfo -root -tree 2>/dev/null |
+      grep -o "0x[0-9a-f]\+ \"LWM highlight ${SIDE}\"" | head -1 |
+      awk '{print $1}')
+    if [ -z "${HL}" ]; then
+      MENU_STILL_IN_FRONT=0
+    elif ! in_front "$((MENU))" "$((HL))"; then
+      MENU_STILL_IN_FRONT=0
+    fi
+  done
+  check_eq "the menu is in front of the red highlight box windows" \
+    "${MENU_STILL_IN_FRONT}" "1"
+
+  # Down moves the pointer to the next item, and up brings it back.
+  xdotool key Down
+  sleep 0.3
+  read -r PX PY <<<"$(pointer_position)"
+  SECOND_ITEM_Y="${PY}"
+  check "the down arrow moves the pointer down the menu" \
+    [ "${SECOND_ITEM_Y}" -gt "${FIRST_ITEM_Y}" ]
+  check "the down arrow leaves the pointer on the menu" pointer_on "${MENU}"
+  check_eq "the down arrow leaves the menu open" "$(map_state "${MENU}")" \
+    "IsViewable"
+
+  xdotool key Up
+  sleep 0.3
+  read -r PX PY <<<"$(pointer_position)"
+  check_eq "the up arrow moves the pointer back one item" "${PY}" \
+    "${FIRST_ITEM_Y}"
+
+  # And up on the top item does nothing at all: it doesn't wrap round to the
+  # bottom, and it doesn't take the pointer off the top of the menu, which
+  # would close it.
+  xdotool key Up
+  sleep 0.3
+  read -r PX PY <<<"$(pointer_position)"
+  check_eq "up on the top item leaves the pointer where it is" "${PY}" \
+    "${FIRST_ITEM_Y}"
+  check_eq "up on the top item leaves the menu open" "$(map_state "${MENU}")" \
+    "IsViewable"
+
+  # Escape closes the menu, changes nothing, and gives the pointer back.
+  xdotool key Escape
+  sleep 0.4
+  check_eq "Escape closes the menu" "$(map_state "${MENU}")" "IsUnMapped"
+  check_eq "Escape puts the pointer back where it was" \
+    "$(pointer_position)" "${POINTER_WAS_X} ${POINTER_WAS_Y}"
+  check_eq "Escape leaves the hidden window hidden" \
+    "$(map_state "${FRAME}")" "IsUnMapped"
+
+  # The keyboard has to come back afterwards, or the whole session is deaf.
+  # Super+arrow is a key lwm itself acts on, so if it still works the grab is
+  # gone: a keyboard grab lwm never released would deliver the press to the
+  # menu instead, which isn't there any more to act on it.
+  xdotool key super+Right
+  sleep 0.3
+  check_eq "the keyboard works again after the menu closes" \
+    "$(map_state "${MENU}")" "IsUnMapped"
+
+  # Moving the pointer out of the menu closes it too.
+  xdotool mousemove 1100 900
+  sleep 0.2
+  xdotool key super+Tab
+  sleep 0.5
+  check_eq "Super+Tab opens the menu a second time" "$(map_state "${MENU}")" \
+    "IsViewable"
+  read -r MX MY MW MH <<<"$(geom "${MENU}")"
+  xdotool mousemove $((MX - 20)) $((MY - 20))
+  sleep 0.4
+  check_eq "moving the pointer off the menu closes it" \
+    "$(map_state "${MENU}")" "IsUnMapped"
+  check_eq "the pointer goes home when the menu closes that way too" \
+    "$(pointer_position)" "1100 900"
+
+  # And finally Return, which is the point of the whole thing: the window the
+  # pointer is on is unhidden and raised, and the pointer goes home.
+  xdotool key super+Tab
+  sleep 0.5
+  if [ "$(map_state "${MENU}")" != "IsViewable" ]; then
+    fail "Super+Tab opens the menu for the Return check"
+  else
+    xdotool key Return
+    sleep 0.5
+    check_eq "Return closes the menu" "$(map_state "${MENU}")" "IsUnMapped"
+    check_eq "Return unhides the window the pointer was on" \
+      "$(map_state "${FRAME}")" "IsViewable"
+    check_eq "Return puts the pointer back where it was" \
+      "$(pointer_position)" "1100 900"
+  fi
+fi
+kill "${MENU_OTHER_PID:-}" >/dev/null 2>&1
+sleep 0.3
 
 # --- undecorated windows ----------------------------------------------------
 #
